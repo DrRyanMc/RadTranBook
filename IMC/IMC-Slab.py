@@ -18,13 +18,17 @@ def move_particle(weight, mu, position, cell_l, cell_r,sigma_a, sigma_s, distanc
     distance_to_scatter = random.expovariate(sigma_s)
     #find which distance is smaller
     distance_to_next_event = min(distance_to_boundary, distance_to_scatter, distance_to_census)
+    #assert positive distance
+    assert distance_to_next_event > 0, "Negative distance"
     dx = cell_r - cell_l
     #variable to hold where particle moves, -1 to left, 0 to census, 1 to right
     new_location = 0
     #which event is next
     #move particle to the collision site
     position = position + mu*distance_to_next_event
-    if distance_to_next_event == distance_to_boundary:
+    #check if the position is close to the boundary
+    if math.fabs(distance_to_boundary - distance_to_next_event) < 1e-10:
+        #move particle to the boundary
         if mu>0:
             position = cell_r
             new_location = 1
@@ -39,17 +43,28 @@ def move_particle(weight, mu, position, cell_l, cell_r,sigma_a, sigma_s, distanc
     else:
         #census
         True
+    #check that particle is in the cell
+    if position < cell_l or position > cell_r:
+        #print out a lot of detail
+        print("Particle not in cell - after move")
+        print("Particle position: ", position)
+        print("Cell position: ", cell_l, cell_r)
+        print("Particle weight: ", weight)
+    assert position >= cell_l and position <= cell_r, "Particle not in cell position"
     #update distance to census
     distance_to_census = distance_to_census - distance_to_next_event
     #update weight with implicit caputure
     weight = weight * math.exp(-sigma_a*distance_to_next_event)
     #compute deposited weight, this is the integral of the weight over the distance traveled
-    deposited_intensity = weight*(1-math.exp(-sigma_a*distance_to_next_event))/sigma_a/dx
+    if (sigma_a > 1e-10):
+        deposited_intensity = weight*(1-math.exp(-sigma_a*distance_to_next_event))/sigma_a/dx
+    else:
+        deposited_intensity = weight*distance_to_next_event/dx
     deposited_weight = deposited_intensity*sigma_a
     return weight, mu, position, new_location, deposited_weight, deposited_intensity/dt, distance_to_census
     
 #this function loops over all particles and moves them to the next cell or census
-@jit(nopython=True, cache=True)
+#@jit(nopython=True, cache=True)
 def move_particles(weights, mus, times, positions,cell_indices, mesh, sigma_a, sigma_s,dt):
     #cell_indices is a list of the indices of the cells that the particles are in
     #mesh is a 2-D array of length I where I is the number of cells, each row is the left and right boundary of the cell
@@ -68,6 +83,17 @@ def move_particles(weights, mus, times, positions,cell_indices, mesh, sigma_a, s
         #move particle until it reaches census
         while distance_to_census > 0:
             loc = cell_indices[i]
+            #check that particle is in the cell
+            if positions[i] < mesh[loc][0] or positions[i] > mesh[loc][1]:
+                #print out a lot of detail
+                print("Particle not in cell")
+                print("Particle position: ", positions[i])
+                print("Cell position: ", mesh[loc][0], mesh[loc][1])
+                print("Cell index: ", loc)
+                print("Particle index: ", i)
+                print("Particle weight: ", weights[i])
+            assert positions[i] >= mesh[loc][0] and positions[i] <= mesh[loc][1], "Particle not in cell position"
+            #move particle
             output = move_particle(weights[i], mus[i], positions[i], mesh[loc][0], mesh[loc][1], sigma_a[loc], sigma_s[loc], distance_to_census)
             #update arrays
             weights[i] = output[0]
@@ -79,6 +105,7 @@ def move_particles(weights, mus, times, positions,cell_indices, mesh, sigma_a, s
             elif output[3] == -1:
                 cell_indices[i] = cell_indices[i] - 1
             #update deposited weight
+            #assert output[4] >= 0, "Negative deposited weight"
             deposited_weights[loc] += output[4]
             #update scalar intensity
             scalar_intensity[loc] += output[5]
@@ -89,10 +116,26 @@ def move_particles(weights, mus, times, positions,cell_indices, mesh, sigma_a, s
                 distance_to_census = 0
             elif cell_indices[i] == -1:
                 distance_to_census = 0
+            #if weight < 1e-10, kill particle and add energy to deposited_weights
+            if weights[i] < 1e-10:
+                deposited_weights[loc] += weights[i]
+                weights[i] = 0
+                distance_to_census = 0
 
     return deposited_weights, scalar_intensity
 
+#simple comb function to control particle number
+def comb(Ntarget, N):
+    if (N < Ntarget):
+        return np.arange(N)
+    spacing = N/Ntarget
+    xi = random.random()
+    comb_vals = np.arange(0,NMax)*spacing+xi
+    mask = np.floor(comb_vals).astype("int")
+    return mask
+
 #function for sampling surface source
+@jit(nopython=True, cache=True)
 def create_boundary(N,T,dt):
     assert (N > 0)
     total_emission = a*c*T**4/2*dt
@@ -100,13 +143,68 @@ def create_boundary(N,T,dt):
     mus = np.sqrt(np.random.uniform(0,1,N))
     times = np.random.uniform(0,dt,N)
     positions = np.zeros(N)
-    cell_indices = np.zeros(N,dtype=int)
+    cell_indices = np.zeros(N,dtype="int")
     return weights, mus, times, positions, cell_indices
 
+@jit(nopython=True, cache=True)
+def sample_linear_density(dx, s, T, N, adjust_slope=True):
+    """
+    Samples N points from a probability density function P(x) ~ s*x + (a - s*dx/2),
+    ensuring that density is maximum at f(dx/2) = a and follows slope s.
+
+    Parameters:
+        dx (float): Size of the cell (range [0, dx]).
+        s (float): Desired slope of the density function.
+        N (int): Number of samples to generate.
+        adjust_slope (bool): Whether to automatically adjust invalid slopes.
+
+    Returns:
+        np.array: Array of sampled positions.
+    """
+    # Compute valid slope limits
+    if (math.fabs(s) < 1e-6):
+        return np.random.uniform(0, dx, N)
+    s_min = -2 *T/ dx**2
+    s_max = 2 *T/ dx**2
+
+    # Validate or adjust the slope
+    if s < s_min or s > s_max:
+        if adjust_slope:
+            s = max(s_min, min(s, s_max))  # Clamp s within valid range
+            print(f"Warning: Slope adjusted to {s} to stay within valid limits.")
+        else:
+            raise ValueError(f"Invalid slope {s}. Must be within [{s_min}, {s_max}].")
+
+    # Compute the points
+    xis = np.random.uniform(0, 1, N)
+    #assert sqrt is positive
+    assert (s/(2*T) - 1/dx)**2 + (2*s)/(T*dx) >= 0, "{T} {dx} {s} {xis} gives negative square root"
+    x_samples = (-2*T + s*dx + 2*T*dx*np.sqrt((s/(2.*T) - 1/dx)**2 + (2*s*xis)/(T*dx)))/(2.*s)
+    
+    return x_samples
 #function for sampling during time step
+#@jit(nopython=True, cache=True)
 def source_particles(Ntarget, Temperatures, dt, mesh, sigma_a):
+    #compute slopes
+    slopes = np.zeros(Temperatures.shape)
     dx = mesh[:,1] - mesh[:,0]
-    emitted_energies = a*c*Temperatures**4*dt*dx*sigma_a
+    slopes[1:-1] = (Temperatures[2:] - Temperatures[:-2])/(dx[2:]+dx[:-2])*0.5
+    slopes[0] = (Temperatures[1] - Temperatures[0])/(dx[1] + dx[0])*0.5
+    slopes[-1] = (Temperatures[-1] - Temperatures[-2])/(dx[-1] + dx[-2])*0.5
+    #check that the interpolants are non-negative at the cell boundaries
+    #evaluate T(x) = s*x + (a - s*dx/2) at the cell boundaries
+    #if the interpolant is negative, set the slope to 0
+    #do it withouth a for loop
+    left_vals = slopes*0 + (Temperatures - slopes*dx/2)
+    right_vals = slopes*dx + (Temperatures - slopes*dx/2)
+    mask = left_vals < 0
+    slopes[mask] = 0
+    mask = right_vals < 0
+    slopes[mask] = 0
+    #assert that all temperatures are positive
+    assert np.all(Temperatures > 0), "Negative temperature"
+    #compute emitted energy
+    emitted_energies = a*c*Temperatures**4*dt*sigma_a*dx
     total_emission = np.sum(emitted_energies)
     #loop over cells and sample particles
     weights = []
@@ -115,27 +213,51 @@ def source_particles(Ntarget, Temperatures, dt, mesh, sigma_a):
     positions = []
     cell_indices = []
     for i in range(len(emitted_energies)):
-        N = math.ceil(Ntarget*emitted_energies[i]/total_emission)
+        N = int(math.ceil(Ntarget*emitted_energies[i]/total_emission))
+        temp_weights = np.zeros(N) + emitted_energies[i]/N
+        temp_mus = np.sqrt(np.random.uniform(0,1,N))
+        temp_times = np.random.uniform(0,dt,N)
+        temp_positions = np.random.uniform(mesh[i,0],mesh[i,1],N) #sample_linear_density(dx[i],slopes[i],Temperatures[i],N)+mesh[i,0]
+        temp_cell_indices = np.zeros(N) + i
+        weights.extend(temp_weights)
+        mus.extend(temp_mus)
+        times.extend(temp_times)
+        positions.extend(temp_positions)# + mesh[i,0])
+        cell_indices.extend(temp_cell_indices)
+        """ old way of sampling
         for j in range(N):
             weights.append(emitted_energies[i]/N)
-            mus.append(np.random.uniform(-1,1))
-            times.append(np.random.uniform(0,dt))
-            positions.append(np.random.uniform(mesh[i,0],mesh[i,1]))
-            cell_indices.append(i)
+            mus.append(random.uniform(-1,1))
+            times.append(random.uniform(0,dt))
+            positions.append(sample_linear_density(dx[i],slopes[i],Temperatures[i],1)[0] + mesh[i,0])
+            cell_indices.append(i)"
+        """
     weights = np.array(weights)
     mus = np.array(mus)
     times = np.array(times)
     positions = np.array(positions)
-    cell_indices = np.array(cell_indices, dtype=int)
+    # for i in range(positions.size):
+    #     loc = int(cell_indices[i])
+    #     #check that particle is in the cell at birth
+    #     if positions[i] < mesh[loc][0] or positions[i] > mesh[loc][1]:
+    #         #print out a lot of detail
+    #         print("Particle not in cell at birth")
+    #         print("Particle position: ", positions[i])
+    #         print("Cell position: ", mesh[loc][0], mesh[loc][1])
+    #         print("Cell index: ", i)
+    #         print("Particle index: ", i)
+    #         print("Particle weight: ", weights[i])
+    #     assert positions[i] >= mesh[loc][0] and positions[i] <= mesh[loc][1], "Particle not in cell position"
+    cell_indices = np.array(cell_indices, dtype="int")
     return weights, mus, times, positions, cell_indices
 
 #function to run simulation
-def run_simulation(Ntarget,Nboundary, Tinit, T_boundary, dt, mesh, sigma_a_func,eos,inv_eos,cv, final_time):
+def run_simulation(Ntarget,Nboundary,NMax, Tinit, T_boundary, dt, mesh, sigma_a_func,eos,inv_eos,cv, final_time):
     #T_boundary is a tuple with the left and right boundary temperatures
     I = mesh.shape[0]
-    deposited_energies = np.zeros_like(mesh.shape[0])
+    deposited_energies = np.zeros(mesh.shape[0])
     internal_energy = eos(Tinit)
-    radiation_temperature = np.zeros_like(mesh.shape[0])
+    radiation_temperature = np.zeros(mesh.shape[0])
     temperature = Tinit.copy()
     time = 0
     weights = np.empty(0)
@@ -179,7 +301,7 @@ def run_simulation(Ntarget,Nboundary, Tinit, T_boundary, dt, mesh, sigma_a_func,
             positions = np.concatenate((positions,mesh[-1,1]))
             cell_indices = np.concatenate((cell_indices,I-1))
         #sample from internal source
-        internal_source = source_particles(Ntarget, Tinit, dt, mesh, sigma_a)
+        internal_source = source_particles(Ntarget, temperature, dt, mesh, sigma_a)
         #add the particles to the appropriate lists
         weights = np.concatenate((weights,internal_source[0]))
         mus = np.concatenate((mus,internal_source[1]))
@@ -199,20 +321,22 @@ def run_simulation(Ntarget,Nboundary, Tinit, T_boundary, dt, mesh, sigma_a_func,
         #update time
         time += dt
         #clean up particles that left the slab and store their weights in boundary_loss
-        mask = cell_indices >= 0
+        #only need one mask for this
+        mask = (cell_indices >= 0)*(cell_indices < I)
         boundary_loss += np.sum(weights[~mask])/c
         weights = weights[mask]
         mus = mus[mask]
         times = times[mask]
         positions = positions[mask]
         cell_indices = cell_indices[mask]
-        mask = cell_indices < I
-        boundary_loss += np.sum(weights[~mask])/c
-        weights = weights[mask]
-        mus = mus[mask]
-        times = times[mask]
-        positions = positions[mask]
-        cell_indices = cell_indices[mask]
+        #apply particle combing
+        # mask = comb(NMax, len(weights))
+        # weights = weights[mask]
+        # mus = mus[mask]
+        # times = times[mask]
+        # positions = positions[mask]
+        # cell_indices = cell_indices[mask]
+
         #set all particle times to 0
         times = np.zeros(times.shape)
         total_internal_energy = np.sum(internal_energy*dxs)
@@ -230,23 +354,25 @@ if __name__ == "__main__":
     #set parameters
     Ntarget = 1000
     Nboundary = 1000
+    NMax = 2000
     dt = 0.01
-    L = 0.5 #length of slab
+    L = 1 #length of slab
     I = 50 #number of cells
     mesh = np.zeros((I,2))
     dx = L/I
     for i in range(I):
         mesh[i] = [i*dx,(i+1)*dx]
-    Tinit = np.zeros(I) + 1e-1
-    Tinit[0] = 1.0
-    T_boundary = (1.0,0)
+    Tinit = np.zeros(I) + 1.0
+    #Tinit[0] = 1.0
+    T_boundary = (0.0,0)
     sigma_a = lambda T: 300*T**-3
     eos = lambda T: 0.3*T
     inv_eos = lambda u: u/0.3
     cv = lambda T:T*0+0.3
-    final_time = dt*5
+    final_time = dt*10
     #run simulation
-    internal_energy, temperature, radiation_temperature = run_simulation(Ntarget,Nboundary, Tinit, T_boundary, dt, mesh, sigma_a,eos,inv_eos,cv, final_time)
+    internal_energy, temperature, radiation_temperature = run_simulation(Ntarget,Nboundary, NMax,
+                                                                         Tinit, T_boundary, dt, mesh, sigma_a,eos,inv_eos,cv, final_time)
     #print("Internal Energy", internal_energy)
     #print("Temperature", temperature)
     #print("Radiation Temperature", radiation_temperature)
