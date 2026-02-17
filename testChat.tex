@@ -1,0 +1,77 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{color}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{pgfplotstable}
+\usepackage{pgfplotstable}
+
+\title{A new basis in energy space}
+\author{RM}
+\date{\today}
+\begin{document}
+\maketitle
+Consider the infinite medium equations of radiative transfer in the form
+\begin{equation}
+\frac{\partial \phi(\nu,t)}{\partial t} = -\sigma_\mathrm{a}(\nu,t) \phi(\nu,t) + 4\pi \sigma_\mathrm{a} B(\nu,T)
+\end{equation}
+\begin{equation}
+    C_\mathrm{v} \frac{\partial T(t)}{\partial t} = \int_0^\infty d\nu\, \left(\sigma_\mathrm{a}(\nu,t) \phi(\nu,t) + 4\pi \sigma_\mathrm{a} B(\nu,T)\right)
+\end{equation}
+Here $\nu$ has energy units, $t$ is time, $\sigma_\mathrm{a}(\nu,t)$ is the absorption cross section, $B(\nu,T)$ is the Planck function, and $e(t)$ is the material energy density.
+In terms of photon energy, the Planck function is given by
+\begin{equation}
+    B(\nu,T) = \frac{a c}{4\pi}\frac{15}{\pi^4}\frac{\nu^3}{e^{\frac{h\nu}{T}} - 1} 
+\end{equation}
+
+Now we are going to write the basis in energy space in terms of the local temperature. Assume that 
+\begin{equation}
+    \phi(\nu,t) = \alpha(t) \frac{15}{\pi^4} \frac{u^3}{e^u-1},
+\end{equation}
+where $u = \frac{\nu}{T}$, and $\alpha(t)$ is a function of time. 
+
+To convert between the forms of the distribution in energy space, we need to invoke the identity
+\begin{equation}
+    \phi(\nu,t) d\nu = \phi(u,t) d u.
+\end{equation}
+Given that $d\nu = T(t) du$, we can write
+\begin{equation}
+    \phi(\nu,t) = \phi(u,t)T(t) = \alpha(t) \frac{15}{\pi^4} \frac{u^3}{e^u-1} T(t) \equiv \alpha(t)T(t) f(u).
+\end{equation}
+Also, to convert the Planck function, we have $B(\nu,T) d\nu = B(u,T) d u$, and using the same argument as above, we have
+\begin{align}
+    B(\nu,T) &= \frac{a c}{4\pi}\frac{15}{\pi^4}\frac{\nu^3}{e^{\frac{\nu}{T}}T(t) - 1}\nonumber \\
+     &= \frac{a c}{4\pi}\frac{15}{\pi^4}\frac{T^4 u^3}{e^{u} - 1} \nonumber \\
+        &= \frac{a c}{4\pi}\frac{15}{\pi^4}T^4 f(u).
+\end{align}
+
+Now we need to evaluate the time derivative of $\phi(\nu,t)$ in terms of $u$ and $T(t)$. 
+Using the chain rule and that \[\frac{du}{dt} = \frac{-\nu}{T^2}\frac{dT}{dt} = -\frac{u}{T} \frac{dT}{dt},\] we have
+\begin{align}
+\frac{\partial \phi(\nu,t)}{\partial t} &= \alpha (t) T(t) u'(t) f'(u(t))+
+\alpha (t) f(u(t)) T'(t)+T(t) f(u(t)) \alpha '(t) \nonumber \\
+&= -\alpha u \frac{dT}{dt}\frac{d f(u)}{du} + \alpha  f(u) \frac{dT}{dt} + T f(u)\frac{d \alpha}{dt} \nonumber \\
+&= \left(\alpha  f(u) - \alpha u \frac{d f(u)}{du}\right) \frac{dT}{dt} + T f(u)\frac{d \alpha}{dt}.
+\end{align}
+This makes the system of equations
+\begin{equation} \label{eq:rad_eq}
+    \left(\alpha  f(u) - \alpha u \frac{d f(u)}{du}\right) \frac{dT}{dt} + T f(u)\frac{d \alpha}{dt} = 
+    -\sigma_\mathrm{a} \alpha(t)T(t) f(u) +  \sigma_\mathrm{a} ac\frac{15}{\pi^4}T^4 f(u),
+\end{equation}
+\begin{equation}
+    C_\mathrm{v} \frac{dT}{dt} = \int_0^\infty d\nu\, \left(\sigma_\mathrm{a}\alpha(t)T(t) f(u)  -
+    + 4\pi \sigma_\mathrm{a}ac\frac{15}{\pi^4}T^4 f(u)\right).
+\end{equation}
+
+Next steps, integrate \eqref{eq:rad_eq} over $u$ and use the fact that
+\begin{equation}
+    \int_0^\infty f(u) du = \int_0^\infty \frac{15}{\pi^4} \frac{u^3}{e^u-1} du = 1.
+\end{equation}
+and that the integral of the derivative of $f(u)$ over $u$ is zero to get an equation for $\alpha(t)$.
+Also, to proceed let's have $\sigma = (1-e^{-u}).$
+\end{document}
