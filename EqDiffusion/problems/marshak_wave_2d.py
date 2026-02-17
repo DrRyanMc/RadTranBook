@@ -12,6 +12,9 @@ Problem setup:
 - Plot solutions at specified times and compare with self-similar solution
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from twoDFV import (

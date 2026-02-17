@@ -3,6 +3,9 @@
 Debug matrix assembly issues with small k_coupling
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 from oneDFV import RadiationDiffusionSolver, temperature_from_Er, A_RAD, C_LIGHT
 

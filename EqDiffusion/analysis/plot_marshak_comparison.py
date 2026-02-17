@@ -4,6 +4,9 @@ Compare analytical self-similar Marshak solution with numerical solutions
 using Implicit Euler, Crank-Nicolson, and TR-BDF2 methods
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path

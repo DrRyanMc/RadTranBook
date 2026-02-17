@@ -6,6 +6,9 @@ Demonstrates how to use spatially-varying opacity, specific heat, and
 material energy density in the 2D radiation diffusion solver.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from twoDFV import RadiationDiffusionSolver2D, temperature_from_Er, A_RAD

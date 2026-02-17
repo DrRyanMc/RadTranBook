@@ -6,6 +6,9 @@ This script creates a simple test case to verify the physics direction
 of the nonlinear corrections.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import (

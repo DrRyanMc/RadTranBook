@@ -15,6 +15,9 @@ this should be well-behaved and we can check:
 4. No blow-up or instabilities
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import (

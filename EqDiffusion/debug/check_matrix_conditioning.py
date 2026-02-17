@@ -3,6 +3,9 @@
 Check matrix conditioning in BDF2 vs other methods with small k
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 from oneDFV import RadiationDiffusionSolver, temperature_from_Er, A_RAD, C_LIGHT, solve_tridiagonal, apply_tridiagonal
 

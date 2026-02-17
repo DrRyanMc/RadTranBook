@@ -3,6 +3,9 @@
 Plot linear Gaussian solution at initial and final times
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from plotfuncs import show

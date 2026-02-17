@@ -3,6 +3,9 @@
 Debug why Marshak wave doesn't propagate with theta < 1
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import RadiationDiffusionSolver, A_RAD, temperature_from_Er

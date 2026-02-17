@@ -3,6 +3,9 @@
 Test if modifying BDF2 assembly affects TR stage due to shared state
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 from oneDFV import RadiationDiffusionSolver, temperature_from_Er, A_RAD
 

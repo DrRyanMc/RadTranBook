@@ -3,6 +3,9 @@
 Check if the matrix assembly has correct signs for diffusion
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 from oneDFV import RadiationDiffusionSolver, temperature_from_Er, A_RAD, apply_tridiagonal
 

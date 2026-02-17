@@ -6,6 +6,9 @@ Loads two npz files (refined and uniform mesh) and plots fiducial point
 temperature histories on the same plot for comparison.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from plotfuncs import show

@@ -3,6 +3,9 @@
 Verify theta method with the nonlinear Marshak wave problem
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 from oneDFV import RadiationDiffusionSolver, A_RAD
 

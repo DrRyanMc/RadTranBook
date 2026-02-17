@@ -8,6 +8,9 @@ This test uses a simplified linear diffusion problem where we can verify:
 3. Energy/solution evolution is physically reasonable
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import RadiationDiffusionSolver, A_RAD

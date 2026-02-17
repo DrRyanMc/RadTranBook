@@ -5,6 +5,9 @@ Stage 1: theta=0.5 from t^n to t^{n+gamma}
 Stage 2: theta=0.5 from t^{n+gamma} to t^{n+1}
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')

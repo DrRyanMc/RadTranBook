@@ -9,6 +9,9 @@ This is linearized using Newton's method in a special form.
 Let me trace through what happens for a simple case.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 from oneDFV import RadiationDiffusionSolver, A_RAD
 

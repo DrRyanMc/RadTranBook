@@ -28,6 +28,9 @@ where σ(t)² = σ0² + 2*D*t
 This test verifies the solver correctly reproduces this analytical solution.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import (

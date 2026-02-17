@@ -3,6 +3,9 @@
 Simple test to understand why theta=0.5 crashes
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 from oneDFV import RadiationDiffusionSolver, A_RAD, temperature_from_Er
 

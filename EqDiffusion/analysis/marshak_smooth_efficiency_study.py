@@ -15,6 +15,9 @@ Metrics:
 Initial condition: T(x) = 1 + (0.2 - 1)*(1 + Tanh[50*(x - .125)])/2
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle

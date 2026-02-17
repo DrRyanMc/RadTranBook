@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Debug TR-BDF2 with verbose output"""
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 from oneDFV import *
 

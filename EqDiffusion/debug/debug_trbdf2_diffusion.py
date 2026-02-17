@@ -4,6 +4,9 @@ Debug TR-BDF2 diffusion rate
 Compare TR-BDF2 vs Implicit Euler step-by-step to diagnose why diffusion is too slow
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import RadiationDiffusionSolver, temperature_from_Er, A_RAD, C_LIGHT

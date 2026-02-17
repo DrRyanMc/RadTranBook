@@ -6,6 +6,9 @@ Simple 3-cell problem with known gradient to check if nonlinear corrections
 enhance or suppress diffusion correctly.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import (

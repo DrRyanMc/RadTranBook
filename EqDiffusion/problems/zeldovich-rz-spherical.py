@@ -12,6 +12,9 @@ Problem setup:
 - Compare with spherical 1D self-similar solution (N=3)
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 import sys

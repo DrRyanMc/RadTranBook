@@ -29,6 +29,9 @@ This test uses TR-BDF2 time integration and verifies the solver correctly reprod
 the analytical solution.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import (

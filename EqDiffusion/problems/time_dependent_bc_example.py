@@ -6,6 +6,9 @@ Demonstrates how to use time-dependent boundary conditions in the 2D solver.
 Example problem: Heat source that ramps up over time at the left boundary.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from twoDFV import RadiationDiffusionSolver2D, temperature_from_Er, A_RAD

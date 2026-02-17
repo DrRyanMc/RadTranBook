@@ -5,6 +5,9 @@ Test nonlinear correction at boundaries with simple D ~ T case
 Focus on what happens at the first interior cell next to a Dirichlet boundary
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import (

@@ -10,6 +10,9 @@ spatially-varying material properties:
 Source: T = 300 eV (0.3 keV) at z=0.0 and r∈(0.0, 0.5)
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from twoDFV import RadiationDiffusionSolver2D, temperature_from_Er, A_RAD

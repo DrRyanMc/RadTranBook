@@ -10,6 +10,9 @@ Problem setup:
 - Plot solutions at 10, 30, and 50 ns
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import (

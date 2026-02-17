@@ -6,6 +6,9 @@ Test if nonlinear corrections affect wave front speed correctly.
 For Marshak wave: higher T → lower opacity → higher diffusion → faster wave front.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import (

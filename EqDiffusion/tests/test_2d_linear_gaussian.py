@@ -24,6 +24,10 @@ where:
   D_eff = D/(1+k)  (with material coupling k)
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
+
 import numpy as np
 import matplotlib.pyplot as plt
 from twoDFV import (

@@ -3,6 +3,9 @@ Test Marshak wave boundary behavior with nonlinear corrections
 Focus on the first few cells to understand the boundary interface
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 import sys

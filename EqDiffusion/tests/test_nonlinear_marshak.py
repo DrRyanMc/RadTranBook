@@ -8,6 +8,9 @@ Verifies:
 3. Compare analytical vs numerical derivatives
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import (

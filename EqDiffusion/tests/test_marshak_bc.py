@@ -1,6 +1,9 @@
 """
 Test script to diagnose Marshak boundary condition issue
 """
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import RadiationDiffusionSolver, A_RAD, C_LIGHT, RHO
