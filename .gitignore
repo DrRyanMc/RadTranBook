@@ -1,1 +1,3 @@
-*.pdfhuman_play_data.pkl
+*.pdf
+*.png
+human_play_data.pkl

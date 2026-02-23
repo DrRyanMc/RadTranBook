@@ -110,7 +110,7 @@ def zeldovich_material_energy(T, r_val, z_val):
 # ZELDOVICH WAVE BOUNDARY CONDITIONS (all reflecting)
 # =============================================================================
 
-def zeldovich_bc_reflecting(Er_boundary, coord1_val, coord2_val, geometry='cylindrical'):
+def zeldovich_bc_reflecting(Er_boundary, coord1_val, coord2_val, geometry='cylindrical', time=None):
     """Reflecting boundary: zero flux
     
     Robin BC: A*E_r + B*(dE_r/dn) = C

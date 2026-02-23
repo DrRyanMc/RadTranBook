@@ -140,7 +140,7 @@ def generate_self_similar_solution(t_final=0.1, r_max=0.2, n_cells=400):
             0.0  # Beyond wave front
         )
     #load in data from MarshakP04573.csv, first column is xi/xi_max, third column is thf
-    loaded_table = np.loadtxt(Path(__file__).parent / 'MarshakP04573.csv', delimiter=',', skiprows=0)
+    loaded_table = np.loadtxt(Path(__file__).parent.parent / 'data' / 'MarshakP04573.csv', delimiter=',', skiprows=0)
     xi_table = loaded_table[:,0]*xi_max
     thf_table = loaded_table[:,2]
 

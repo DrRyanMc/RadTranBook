@@ -4,6 +4,10 @@ Test that the self-similar analytical solution is working correctly
 for the Marshak efficiency study
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'analysis'))
+
 import numpy as np
 import matplotlib.pyplot as plt
 from marshak_efficiency_study import (

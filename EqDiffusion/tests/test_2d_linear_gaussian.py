@@ -85,18 +85,18 @@ def test_2d_linear_gaussian(direction='x'):
     print(f"  Constant opacity: σ_R = {sigma_R} cm⁻¹")
     print(f"  Diffusion coefficient: D = c/(3σ_R) = {D:.6e} cm²/sh")
     
-    def constant_opacity(Er):
+    def constant_opacity(Er, coord1_val, coord2_val):
         """Constant opacity for constant D"""
         return sigma_R
     
     # Linear coupling: e_mat ∝ Er
     k_coupling = 1.0e-5  # Small coupling for stability
     
-    def cubic_cv(T):
+    def cubic_cv(T, coord1_val, coord2_val):
         """cv ∝ T³ for linear e_mat-Er coupling"""
         return 4.0 * k_coupling * A_RAD * T**3
     
-    def linear_material_energy(T):
+    def linear_material_energy(T, coord1_val, coord2_val):
         """e_mat = k*A_RAD*T⁴ ∝ Er for linear coupling"""
         return k_coupling * A_RAD * T**4
     
@@ -158,19 +158,19 @@ def test_2d_linear_gaussian(direction='x'):
     print(f"  Peak Er: {Er_peak:.6e} GJ/cm³")
     
     # Boundary conditions
-    def left_bc(Er_boundary, coord1_val, coord2_val, geometry):
+    def left_bc(Er_boundary, coord1_val, coord2_val, geometry='cartesian', time=0.0):
         """Zero flux at x_min"""
         return 0.0, 1.0, 0.0
     
-    def right_bc(Er_boundary, coord1_val, coord2_val, geometry):
+    def right_bc(Er_boundary, coord1_val, coord2_val, geometry='cartesian', time=0.0):
         """Zero flux at x_max"""
         return 0.0, 1.0, 0.0
     
-    def bottom_bc(Er_boundary, coord1_val, coord2_val, geometry):
+    def bottom_bc(Er_boundary, coord1_val, coord2_val, geometry='cartesian', time=0.0):
         """Zero flux at y_min (reflecting)"""
         return 0.0, 1.0, 0.0
     
-    def top_bc(Er_boundary, coord1_val, coord2_val, geometry):
+    def top_bc(Er_boundary, coord1_val, coord2_val, geometry='cartesian', time=0.0):
         """Zero flux at y_max (reflecting)"""
         return 0.0, 1.0, 0.0
     

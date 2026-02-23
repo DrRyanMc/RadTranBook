@@ -17,8 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 import numpy as np
 import matplotlib.pyplot as plt
-import sys
-from pathlib import Path
+import warnings
 from twoDFV import (
     RadiationDiffusionSolver2D,
     temperature_from_Er,
@@ -36,13 +35,17 @@ from zeldovich import T_of_r_t
 # ZELDOVICH WAVE MATERIAL PROPERTIES
 # =============================================================================
 
-def zeldovich_opacity(Er):
+def zeldovich_opacity(Er, coord1_val, coord2_val):
     """Temperature-dependent Rosseland opacity: σ_R = 300 * T^-3
     
     Parameters:
     -----------
     Er : float
         Radiation energy density (GJ/cm^3)
+    coord1_val : float
+        First coordinate (x or r)
+    coord2_val : float
+        Second coordinate (y or z)
     
     Returns:
     --------
@@ -57,7 +60,7 @@ def zeldovich_opacity(Er):
     return 300.0 * T**(-n)
 
 
-def zeldovich_specific_heat(T):
+def zeldovich_specific_heat(T, coord1_val, coord2_val):
     """Specific heat: c_v = 3e-6 GJ/(cm^3·keV)
     
     Note: This is volumetric heat capacity, but the solver expects
@@ -67,6 +70,10 @@ def zeldovich_specific_heat(T):
     -----------
     T : float
         Temperature (keV)
+    coord1_val : float
+        First coordinate (x or r)
+    coord2_val : float
+        Second coordinate (y or z)
     
     Returns:
     --------
@@ -77,13 +84,17 @@ def zeldovich_specific_heat(T):
     return cv_volumetric / RHO  # GJ/(g·keV)
 
 
-def zeldovich_material_energy(T):
+def zeldovich_material_energy(T, coord1_val, coord2_val):
     """Material energy density: e = c_v * T (volumetric)
     
     Parameters:
     -----------
     T : float
         Temperature (keV)
+    coord1_val : float
+        First coordinate (x or r)
+    coord2_val : float
+        Second coordinate (y or z)
     
     Returns:
     --------
@@ -98,7 +109,7 @@ def zeldovich_material_energy(T):
 # ZELDOVICH WAVE BOUNDARY CONDITIONS (all reflecting)
 # =============================================================================
 
-def zeldovich_bc_reflecting(Er_boundary, coord1_val, coord2_val, geometry='cartesian'):
+def zeldovich_bc_reflecting(Er_boundary, coord1_val, coord2_val, geometry='cartesian', time=0.0):
     """Reflecting boundary: zero flux
     
     Robin BC: A*E_r + B*(dE_r/dn) = C
@@ -195,15 +206,15 @@ def run_zeldovich_wave_2d():
     # x direction
     x_min = -2.0
     x_max = 2.0
-    n_x_cells = 80
+    n_x_cells = 40
     
     # z direction
     z_min = -2.0
     z_max = 2.0
-    n_z_cells = 80
+    n_z_cells = 40
     
     # Time stepping parameters
-    dt = 0.001  # ns (small time step for stability)
+    dt = 0.01  # ns (small time step for stability)
     target_times = [0.1, 0.3, 1.0]#, 3.0]  # ns
     if n_z_cells > 30:
         target_times = [0.1, 0.3, 1.0]  # high res means run to later times
@@ -317,7 +328,15 @@ def run_zeldovich_wave_2d():
         # Also check energy conservation
         total_Er = np.sum(Er_2d * solver.V_cells)
         T_2d = temperature_from_Er(Er_2d)
-        total_mat = np.sum(zeldovich_material_energy(T_2d) * solver.V_cells)
+        
+        # Compute material energy with spatial coordinates
+        e_mat_2d = np.zeros_like(T_2d)
+        for i in range(solver.n1_cells):
+            for j in range(solver.n2_cells):
+                e_mat_2d[i, j] = zeldovich_material_energy(T_2d[i, j], 
+                                                           solver.coord1_centers[i], 
+                                                           solver.coord2_centers[j])
+        total_mat = np.sum(e_mat_2d * solver.V_cells)
         total_energy = total_Er + total_mat
         
         solutions.append((current_time, r_vals.copy(), T_vals.copy(), Er_2d.copy()))
@@ -344,7 +363,9 @@ def plot_zeldovich_wave_2d(solutions):
         
         # Cylindrical 1D analytical solution (N=2)
         try:
-            T_analytical, R_front = T_of_r_t(r, t, N=2)
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', category=RuntimeWarning)
+                T_analytical, R_front = T_of_r_t(r, t, N=2)
             ax.plot(r, T_analytical, color=color, linewidth=1.5, linestyle='--', 
                     alpha=0.7, label=f'1D Cylindrical t = {t:.2f} ns')
             # Mark wave front
@@ -468,14 +489,18 @@ def plot_publication_comparison(solver, solutions, times=[0.3, 1.0]):
             r = np.sqrt(x**2 + z**2)
             
             try:
-                T_val, _ = T_of_r_t(np.array([r]), time1, N=2)
-                T_ana_1[i, j] = T_val[0]
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', category=RuntimeWarning)
+                    T_val, _ = T_of_r_t(np.array([r]), time1, N=2)
+                    T_ana_1[i, j] = T_val[0]
             except:
                 T_ana_1[i, j] = 0.0
                 
             try:
-                T_val, _ = T_of_r_t(np.array([r]), time2, N=2)
-                T_ana_2[i, j] = T_val[0]
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', category=RuntimeWarning)
+                    T_val, _ = T_of_r_t(np.array([r]), time2, N=2)
+                    T_ana_2[i, j] = T_val[0]
             except:
                 T_ana_2[i, j] = 0.0
     
@@ -554,14 +579,18 @@ def plot_publication_comparison(solver, solutions, times=[0.3, 1.0]):
 
     #add dashed circle to indicate wavefront at early time
     try:
-        r_front_1 = T_of_r_t(np.array([0.0]), time1, N=2)[1]
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=RuntimeWarning)
+            r_front_1 = T_of_r_t(np.array([0.0]), time1, N=2)[1]
         circle_1 = plt.Circle((0, 0), r_front_1, fill=False, color='white', linestyle='--', alpha=0.3, linewidth=1)
         ax.add_patch(circle_1)
     except:
         pass
     #now a dashed circle for late time
     try:
-        r_front_2 = T_of_r_t(np.array([0.0]), time2, N=2)[1]
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=RuntimeWarning)
+            r_front_2 = T_of_r_t(np.array([0.0]), time2, N=2)[1]
         circle_2 = plt.Circle((0, 0), r_front_2, fill=False, color='white', linestyle='--', alpha=0.3, linewidth=1)
         ax.add_patch(circle_2)
     except:

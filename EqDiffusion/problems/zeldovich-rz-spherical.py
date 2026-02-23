@@ -110,7 +110,7 @@ def zeldovich_material_energy(T, r_val, z_val):
 # ZELDOVICH WAVE BOUNDARY CONDITIONS (all reflecting)
 # =============================================================================
 
-def zeldovich_bc_reflecting(Er_boundary, coord1_val, coord2_val, geometry='cylindrical'):
+def zeldovich_bc_reflecting(Er_boundary, coord1_val, coord2_val, geometry='cylindrical', time=None):
     """Reflecting boundary: zero flux
     
     Robin BC: A*E_r + B*(dE_r/dn) = C
@@ -221,7 +221,7 @@ def run_zeldovich_wave_rz_spherical():
     z_source = (z_min + z_max) / 2.0  # Center of z domain
     
     # Time stepping parameters
-    dt = 0.001  # ns (small time step for stability)
+    dt = 0.01  # ns (small time step for stability)
     target_times = [0.1, 0.3, 1.0]#, 1.0, 3.0]  # ns
     
     # Create 2D solver with cylindrical geometry

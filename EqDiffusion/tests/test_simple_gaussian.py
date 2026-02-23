@@ -37,7 +37,7 @@ def test_simple_gaussian():
     print("="*70)
     
     # Constant opacity
-    sigma_R = 100.0  # cm^-1
+    sigma_R = 1.0  # cm^-1
     D = C_LIGHT / (3.0 * sigma_R)
     
     print(f"\nPhysical setup:")
@@ -77,7 +77,7 @@ def test_simple_gaussian():
     
     # Time stepping
     dt = 0.01
-    n_steps = 10
+    n_steps = 50
     t_final = dt * n_steps
     
     print(f"\nTime integration:")
