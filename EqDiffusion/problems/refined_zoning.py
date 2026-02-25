@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mesh Refinement Test Problem - 2D Cylindrical (r-z) Geometry
+Mesh Refinement Test Problem - 2D cartesian (x-z) Geometry
 
 This problem tests radiation diffusion through a complex geometry with
 spatially-varying material properties:

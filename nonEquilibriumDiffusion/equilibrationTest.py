@@ -3,7 +3,7 @@ from scipy.optimize import brentq, newton
 from scipy.integrate import quad
 import matplotlib.pyplot as plt
 import sys
-sys.path.insert(0, '../Problems')
+sys.path.insert(0, '../EqDiffusion/utils')
 from plotfuncs import show
 
 C_v = 0.01 #GJ/keV/cm^3
@@ -82,7 +82,7 @@ for i, t in enumerate(t_plot):
 
 #now solve discrete equations to get solution
 
-def BE_update(Tstar, Tn, Ern, max_iters=20):
+def BE_update(Tstar, Tn, Ern, max_iters=200):
     iteration_count = 0
     converged = False
     while (iteration_count < max_iters) and not(converged):
@@ -151,7 +151,7 @@ T_backward_euler = np.array(T_backward_euler)
 # plt.show()
 
 #now do the same for Crank-Nicolson
-def CN_update(Tstar, Tn, Ern, max_iters=20, dt=Delta_t):
+def CN_update(Tstar, Tn, Ern, max_iters=200, dt=Delta_t):
     iteration_count = 0
     converged = False
     while (iteration_count < max_iters) and not(converged):
