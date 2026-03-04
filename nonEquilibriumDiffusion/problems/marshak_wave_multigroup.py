@@ -5,10 +5,10 @@ Classic radiative heat wave test problem with 2 energy groups
 
 Problem setup:
 - Two energy groups with same absorption coefficient
-- Left boundary: incoming flux from blackbody at 1 keV
-- Material opacity: σ_R = σ_P = σ_a = 300 * T^-3 (cm^-1, T in keV)
-- Heat capacity: c_v = 0.3 GJ/(cm^3·keV)
-- Plot solutions at 1, 10, and 20 ns
+- Left boundary: Robin BC with A=0.5, B=1/900 cm, C=0.5*B_g(T_b), T_b=1 keV
+- Material opacity: σ_R = σ_P = σ_a = 300 cm⁻¹ (constant)
+- Heat capacity: c_v = 0.3 GJ/(cm³·keV)
+- Plot solutions at 0.1, 0.5, and 1.0 ns
 """
 
 import sys
@@ -28,27 +28,33 @@ RHO = 1.0  # g/cm³
 # =============================================================================
 
 def marshak_opacity(T, r):
-    """Temperature-dependent opacity: σ = 10 * T^-3
+    """Constant opacity: σ = 300 cm⁻¹
     
     Parameters:
     -----------
-    T : float
-        Temperature (keV)
-    r : float
-        Position (cm) - not used, but needed for solver interface
+    T : float or ndarray
+        Temperature in keV (unused for constant opacity)
+    r : float or ndarray
+        Position in cm (unused, but required for interface)
     
     Returns:
     --------
-    sigma : float
-        Opacity (cm^-1)
+    float or ndarray
+        Absorption coefficient in cm⁻¹
     """
-    T_min = 0.01  # Minimum temperature to prevent overflow (keV)
-    T_safe = max(T, T_min)
-    return 10.0 * T_safe**(-3.0)
+    T_safe = 0.01
+    if np.isscalar(T):
+        if T < T_safe:
+            T = T_safe
+        return 300.0*T**-3
+    else:
+
+        T[T < T_safe] = T_safe
+        return 300.0*T**-3
 
 
 def marshak_diffusion_coeff(T, r):
-    """Diffusion coefficient: D = c/(3σ_R)
+    """Diffusion coefficient: D = 1/(3σ_R)
     
     Parameters:
     -----------
@@ -56,14 +62,15 @@ def marshak_diffusion_coeff(T, r):
         Temperature (keV)
     r : float
         Position (cm)
-    
+
     Returns:
     --------
     D : float
         Diffusion coefficient (cm²/ns)
     """
     sigma_R = marshak_opacity(T, r)
-    return C_LIGHT / (3.0 * sigma_R)
+    return 1.0 / (3.0 * sigma_R)
+
 
 
 # =============================================================================
@@ -86,12 +93,12 @@ def run_marshak_wave_multigroup():
     # Problem setup
     n_groups = 2
     r_min = 0.0      # cm
-    r_max = 0.5      # cm
-    n_cells = 20     # Reasonable resolution
+    r_max = 0.1      # cm
+    n_cells = 40     # Reasonable resolution
     
     # Energy group structure (keV)
     # Split spectrum: low energy [0.01, 2.0] keV and high energy [2.0, 10.0] keV
-    energy_edges = np.array([0.01, 2.0, 10.0])
+    energy_edges = np.array([0.1, 2.0, 50.0])
     
     # Time stepping parameters
     dt = 0.01        # ns - larger timestep for efficiency
@@ -99,7 +106,13 @@ def run_marshak_wave_multigroup():
     
     # Material properties
     rho = RHO  # g/cm³
-    cv = 0.3 / rho  # GJ/(g·keV) - specific heat per unit mass
+    
+    # Material specific heat - choose testing or realistic value
+    # Use LARGE c_v for testing (to keep T nearly constant and check radiation transport)
+    # Use c_v = 0.3/rho for realistic Marshak wave
+    cv_test = 10.0 / rho  # GJ/(g·keV) - moderately large for testing
+    cv_realistic = 0.3 / rho  # GJ/(g·keV) - realistic value
+    cv = cv_realistic  # <<< Choose which one to use
     
     # Boundary conditions
     T_bc = 1.0  # keV (blackbody temperature)
@@ -117,27 +130,39 @@ def run_marshak_wave_multigroup():
     print(f"\nEnergy group edges: {energy_edges} keV")
     print(f"Emission fractions at T = {T_bc} keV: {chi}")
     
-    # Total blackbody flux at boundary
-    phi_bc_total = C_LIGHT * A_RAD * T_bc**4
+    # Compute incoming flux for boundary condition
+    # For blackbody: F = sigma*T^4 = (a*c*T^4)/4
+    # For multigroup: F_g = chi_g * F_total
+    F_total = (A_RAD * C_LIGHT * T_bc**4) / 2.0 # Total blackbody flux
+    F_g_values = [chi[g] * F_total for g in range(n_groups)]
     
-    # Split by emission fractions
-    phi_bc_groups = [chi[g] * phi_bc_total for g in range(n_groups)]
+    # Robin BC parameters: A*phi + B*dphi/dr = C
+    # For Marshak BC at r=0: phi/2 + D*dphi/dr = F_in
+    # A = 0.5, B = D = 1/(3*sigma), C = F_g = chi_g * (a*c*T^4)/4
+    sigma_const = 300.0  # cm⁻¹
+    BC_A = 0.5
+    BC_B = 1.0 / (3.0 * sigma_const)
+    BC_C_values = F_g_values  # Incoming flux for each group
     
-    print(f"Left boundary φ_bc,total = {phi_bc_total:.6e} GJ/cm³")
-    print(f"Left boundary φ_bc per group: {phi_bc_groups}")
+    print(f"\nBoundary condition (Robin type - Marshak):")
+    print(f"  A = {BC_A}, B = {BC_B:.6e} cm")
+    print(f"  F_total(T_b) = {F_total:.6e} GJ/(cm²·ns)")
+    print(f"  Expected steady-state: phi_boundary ~ {2.0*F_total:.6e} GJ/(cm²·ns)")
+    for g in range(n_groups):
+        print(f"  Group {g}: C = F_g = {BC_C_values[g]:.6e} GJ/(cm²·ns)")
     
     # Define boundary condition functions
-    def make_left_bc_func(phi_bc_val):
-        """Create Dirichlet BC function for left boundary"""
+    def make_left_bc_func(C_val):
+        """Create Robin BC function for left boundary (incoming radiation)"""
         def left_bc(phi, r):
-            return 1.0, 0.0, phi_bc_val
+            return BC_A, BC_B, C_val
         return left_bc
     
     def right_bc_func(phi, r):
         """Neumann BC at right: ∇φ = 0 (zero flux)"""
         return 0.0, 1.0, 0.0
     
-    left_bc_funcs = [make_left_bc_func(phi_bc_groups[g]) for g in range(n_groups)]
+    left_bc_funcs = [make_left_bc_func(BC_C_values[g]) for g in range(n_groups)]
     right_bc_funcs = [right_bc_func] * n_groups
     
     # Create solver
@@ -158,34 +183,82 @@ def run_marshak_wave_multigroup():
         cv=cv
     )
     
-    # Initial condition: cold material (more realistic Marshak wave)
-    T_init = 0.1  # keV (cold material, but opacity is now manageable)
-    solver.T = np.full(n_cells, T_init)
+    # Initial condition: self-similar solution at t=0.1 ns
+    t_init = 0.0000001  # ns - start from self-similar solution
+    
+    # Self-similar solution parameters (from plotting code)
+    xi_max = 1.11305
+    omega = 0.05989
+    K_const = 8*A_RAD*C_LIGHT/((4+3)*3*300*RHO*cv)
+    
+    # Compute self-similar temperature profile
+    r_centers = solver.r_centers
+    xi = r_centers / np.sqrt(K_const * t_init)
+    T_init = np.where(xi < xi_max, 
+                      np.power((1 - xi/xi_max)*(1+omega*xi/xi_max), 1/6),
+                      0.01)  # Small background temperature outside wave
+    
+    solver.T = T_init.copy()
     solver.T_old = solver.T.copy()
-    solver.E_r = np.full(n_cells, A_RAD * T_init**4)
+    solver.E_r = A_RAD * T_init**4
     solver.E_r_old = solver.E_r.copy()
     solver.kappa = np.zeros(n_cells)
     solver.kappa_old = np.zeros(n_cells)
     
-    sigma_init = marshak_opacity(T_init, 0.0)
-    print(f"Initial conditions: T = {T_init} keV, E_r = {solver.E_r[0]:.6e} GJ/cm³")
-    print(f"Initial opacity: σ = {sigma_init:.2e} cm⁻¹")
+    # Update time to match initialization
+    solver.t = t_init
+    current_time = t_init
+    
+    print(f"Initial conditions: Self-similar solution at t = {t_init} ns")
+    print(f"  T_max = {T_init.max():.6f} keV, T_min = {T_init.min():.6f} keV")
+    print(f"  E_r_max = {solver.E_r.max():.6e} GJ/cm³")
+    print(f"  Wave front position ≈ {np.sqrt(K_const * t_init) * xi_max:.4f} cm")
     
     # Time evolution
     print("\nTime evolution:")
     print(f"{'Step':<6} {'Time':<10} {'T_max':<12} {'T_min':<12} {'E_r_max':<15} {'Newton':<8} {'Conv':<4}")
     print("-" * 80)
     
-    current_time = 0.0
     solutions = []
     step_count = 0
+    
+    # Save initial condition at t=0.1 ns (first target time)
+    if current_time >= target_times[0]:
+        r = solver.r_centers.copy()
+        T = solver.T.copy()
+        E_r = solver.E_r.copy()
+        T_rad = (E_r / A_RAD)**0.25
+        
+        # Compute individual group solutions for initial condition
+        solver.update_absorption_coefficients(T)
+        solver.fleck_factor = solver.compute_fleck_factor(T)
+        xi_g_list = [solver.compute_source_xi(g, T, solver.t) for g in range(n_groups)]
+        
+        phi_groups = np.zeros((n_groups, n_cells))
+        E_r_groups = np.zeros((n_groups, n_cells))
+        for g in range(n_groups):
+            phi_g = solver.compute_phi_g(g, solver.kappa, T, xi_g_list)
+            phi_groups[g, :] = phi_g
+            E_r_groups[g, :] = phi_g / C_LIGHT
+        
+        solutions.append({
+            'time': current_time,
+            'r': r,
+            'T': T,
+            'E_r': E_r,
+            'T_rad': T_rad,
+            'phi_groups': phi_groups.copy(),
+            'E_r_groups': E_r_groups.copy()
+        })
+        print(f"{'IC':<6} {current_time:<10.4f} {T.max():<12.6f} {T.min():<12.6f} "
+              f"{E_r.max():<15.6e} {'--':<8} {'✓'}")
     
     for target_time in target_times:
         while current_time < target_time:
             # Take timestep
             verbose_this_step = (step_count < 3)  # Verbose on first 3 steps
             info = solver.step(max_newton_iter=10, newton_tol=1e-6,
-                              gmres_tol=1e-4, gmres_maxiter=200,
+                              gmres_tol=1e-8, gmres_maxiter=1000,
                               verbose=verbose_this_step)
             
             solver.advance_time()
@@ -208,7 +281,7 @@ def run_marshak_wave_multigroup():
         # Compute individual group solutions for analysis
         solver.update_absorption_coefficients(T)
         solver.fleck_factor = solver.compute_fleck_factor(T)
-        xi_g_list = [solver.compute_source_xi(g, T) for g in range(n_groups)]
+        xi_g_list = [solver.compute_source_xi(g, T, solver.t) for g in range(n_groups)]
         
         phi_groups = np.zeros((n_groups, n_cells))
         E_r_groups = np.zeros((n_groups, n_cells))

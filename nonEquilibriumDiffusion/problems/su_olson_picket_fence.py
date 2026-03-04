@@ -43,6 +43,10 @@ ref_data_U1 = np.array([
     [1.50, 0.00075, 0.01098, 0.06081, 0.16454],
     [1.75, 0.00023, 0.00649, 0.04793, 0.14418],
     [2.00, 0.00007, 0.00368, 0.03735, 0.12593],
+    [3.50, np.nan, np.nan, 0.00650, 0.05219],
+    [5.00, np.nan, np.nan, 0.00071, 0.01901],
+    [7.00, np.nan, np.nan, np.nan, 0.00395],
+    [9.00, np.nan, np.nan, np.nan, 0.00062],
 ])
 
 ref_data_U2 = np.array([
@@ -57,6 +61,10 @@ ref_data_U2 = np.array([
     [1.50, 0.00000, 0.00003, 0.00323, 0.03321],
     [1.75, 0.00000, 0.00001, 0.00125, 0.02023],
     [2.00, 0.00000, 0.00000, 0.00057, 0.01312],
+    [3.50, np.nan, np.nan, 0.00004, 0.00264],
+    [5.00, np.nan, np.nan, 0.00000, 0.00070],
+    [7.00, np.nan, np.nan, np.nan, 0.00010],
+    [9.00, np.nan, np.nan, np.nan, 0.00001],
 ])
 
 ref_data_V = np.array([
@@ -71,6 +79,10 @@ ref_data_V = np.array([
     [1.50, 0.00000, 0.00018, 0.00489, 0.05476],
     [1.75, 0.00000, 0.00009, 0.00314, 0.03754],
     [2.00, 0.00000, 0.00005, 0.00218, 0.02760],
+    [3.50, np.nan, np.nan, 0.00025, 0.00778],
+    [5.00, np.nan, np.nan, 0.00002, 0.00228],
+    [7.00, np.nan, np.nan, np.nan, 0.00036],
+    [9.00, np.nan, np.nan, np.nan, 0.00004],
 ])
 
 print("="*80)
@@ -321,12 +333,12 @@ for idx, tau_val in enumerate(output_times_mft):
     marker = markers[idx]
     
     # Plot U1 (Group 1 radiation)
-    mask = sol['r'] <= 3.5
+    mask = sol['r'] <= 10.0
     ax_U1.plot(sol['r'][mask], sol['U1'][mask], color=color, linestyle='-', 
               linewidth=2.5, alpha=0.8, label=f'τ={tau_val:.1f}')
     
     # Plot reference data for U1
-    ref_mask_U1 = ref_data_U1[:, 0] <= 3.5
+    ref_mask_U1 = ref_data_U1[:, 0] <= 10.0
     tau_idx = list(output_times_mft).index(tau_val)
     ax_U1.plot(ref_data_U1[ref_mask_U1, 0], ref_data_U1[ref_mask_U1, tau_idx+1],
               marker=marker, markerfacecolor=color, markeredgecolor=color,
@@ -337,7 +349,7 @@ for idx, tau_val in enumerate(output_times_mft):
               linewidth=2.5, alpha=0.8, label=f'τ={tau_val:.1f}')
     
     # Plot reference data for U2
-    ref_mask_U2 = ref_data_U2[:, 0] <= 3.5
+    ref_mask_U2 = ref_data_U2[:, 0] <= 10.0
     ax_U2.plot(ref_data_U2[ref_mask_U2, 0], ref_data_U2[ref_mask_U2, tau_idx+1],
               marker=marker, markerfacecolor=color, markeredgecolor=color,
               markersize=7, markeredgewidth=1.5, linestyle='', alpha=0.6)
@@ -347,7 +359,7 @@ for idx, tau_val in enumerate(output_times_mft):
              linewidth=2.5, alpha=0.8, label=f'τ={tau_val:.1f}')
     
     # Plot reference data for V
-    ref_mask_V = ref_data_V[:, 0] <= 3.5
+    ref_mask_V = ref_data_V[:, 0] <= 10.0
     ax_V.plot(ref_data_V[ref_mask_V, 0], ref_data_V[ref_mask_V, tau_idx+1],
              marker=marker, markerfacecolor=color, markeredgecolor=color,
              markersize=7, markeredgewidth=1.5, linestyle='', alpha=0.6)
@@ -359,7 +371,7 @@ ax_U1.set_ylabel(r'$U_1$ (Group 1 Radiation)', fontsize=12)
 ax_U1.set_title('Group 1: σ₁ = 2/11 (Thin)', fontsize=13)
 ax_U1.legend(fontsize=10, loc='best')
 ax_U1.grid(True, alpha=0.3)
-ax_U1.set_xlim([0, 3.5])
+ax_U1.set_xlim([0, 10.0])
 
 # Configure U2 plot
 ax_U2.axvline(x=source_region, color='gray', linestyle='--', alpha=0.3)
@@ -368,7 +380,7 @@ ax_U2.set_ylabel(r'$U_2$ (Group 2 Radiation)', fontsize=12)
 ax_U2.set_title('Group 2: σ₂ = 20/11 (Thick)', fontsize=13)
 ax_U2.legend(fontsize=10, loc='best')
 ax_U2.grid(True, alpha=0.3)
-ax_U2.set_xlim([0, 3.5])
+ax_U2.set_xlim([0, 10.0])
 
 # Configure V plot
 ax_V.axvline(x=source_region, color='gray', linestyle='--', alpha=0.3)
@@ -377,7 +389,7 @@ ax_V.set_ylabel(r'$V$ (Material Energy)', fontsize=12)
 ax_V.set_title('Material Energy Density', fontsize=13)
 ax_V.legend(fontsize=10, loc='best')
 ax_V.grid(True, alpha=0.3)
-ax_V.set_xlim([0, 3.5])
+ax_V.set_xlim([0, 10.0])
 
 plt.tight_layout()
 show('su_olson_picket_fence.pdf', close_after=True)

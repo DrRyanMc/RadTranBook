@@ -316,11 +316,15 @@ class DiffusionOperatorSolver1D:
             
         else:
             # Robin/Neumann BC: A·φ + B·(∂φ/∂n) = C
-            # For Neumann (A=0, B=1, C=0), this gives zero contribution
-            # For Marshak (A=1/2, B=1/(3σ), C=acT^4), use appropriate D
-            # The diffusion coefficient should be evaluated at the interior cell temperature
-            # to be consistent with the interior discretization
-            D_boundary = D_faces[0]
+            # For Marshak BC: A=1/2, B=1/(3σ_BC), C=0.5*B_g(T_b)
+            # 
+            # CRITICAL: For Robin BC, the diffusion coefficient should come from the BC parameter B,
+            # not from the interior material! B = 1/(3σ_BC) already encodes D_BC = c/(3σ_BC) = c*B
+            # 
+            # Using D_faces[0] (from cold interior) would make D tiny and prevent radiation entry!
+            # Instead, extract D from the BC: D = c·B (since B = 1/(3σ) and D = c/(3σ))
+            D_boundary = C_LIGHT * B_bc  # Extract D from BC parameter
+            
             flux_coeff = (self.A_faces[0] * D_boundary * A_bc) / (B_bc * self.V_cells[0])
             rhs_contribution = (self.A_faces[0] * D_boundary * C_bc) / (B_bc * self.V_cells[0])
             
@@ -350,8 +354,9 @@ class DiffusionOperatorSolver1D:
             rhs[-1] += flux_coeff * phi_boundary
             
         else:
-            # Robin/Neumann BC
-            D_boundary = D_faces[-1]
+            # Robin/Neumann BC: A·φ + B·(∂φ/∂n) = C
+            # Extract D from BC parameter to avoid using interior material properties
+            D_boundary = C_LIGHT * B_bc
             flux_coeff = (self.A_faces[-1] * D_boundary * A_bc) / (B_bc * self.V_cells[-1])
             rhs_contribution = (self.A_faces[-1] * D_boundary * C_bc) / (B_bc * self.V_cells[-1])
             
@@ -366,7 +371,9 @@ class DiffusionOperatorSolver1D:
              phi_guess: Optional[np.ndarray] = None,
              use_iterative: bool = False,
              max_iter: int = 10,
-             tol: float = 1e-6) -> np.ndarray:
+             tol: float = 1e-6,
+             override_left_bc: Optional[Callable] = None,
+             override_right_bc: Optional[Callable] = None) -> np.ndarray:
         """
         Solve A φ = b for φ.
         
@@ -385,6 +392,10 @@ class DiffusionOperatorSolver1D:
             Maximum iterations for flux limiting
         tol : float
             Tolerance for flux limiting iteration
+        override_left_bc : callable or None
+            Temporarily override left boundary condition for this solve
+        override_right_bc : callable or None
+            Temporarily override right boundary condition for this solve
             
         Returns:
         --------
@@ -393,6 +404,14 @@ class DiffusionOperatorSolver1D:
         """
         if phi_guess is None:
             phi_guess = np.zeros(self.n_cells)
+        
+        # Temporarily override boundary conditions if requested
+        saved_left_bc = self.left_bc_func
+        saved_right_bc = self.right_bc_func
+        if override_left_bc is not None:
+            self.left_bc_func = override_left_bc
+        if override_right_bc is not None:
+            self.right_bc_func = override_right_bc
         
         # Check if we need to iterate (for flux-limited diffusion)
         need_iteration = use_iterative
@@ -413,10 +432,20 @@ class DiffusionOperatorSolver1D:
             if need_iteration:
                 rel_change = np.linalg.norm(phi_new - phi) / (np.linalg.norm(phi_new) + 1e-14)
                 if rel_change < tol:
+                    # Restore original BCs
+                    self.left_bc_func = saved_left_bc
+                    self.right_bc_func = saved_right_bc
                     return phi_new
                 phi = phi_new
             else:
+                # Restore original BCs
+                self.left_bc_func = saved_left_bc
+                self.right_bc_func = saved_right_bc
                 return phi_new
+        
+        # Restore original BCs (if max iterations reached)
+        self.left_bc_func = saved_left_bc
+        self.right_bc_func = saved_right_bc
         
         if use_iterative:
             print(f"Warning: Flux limiting iteration did not converge after {max_iter} iterations")

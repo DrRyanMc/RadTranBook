@@ -724,6 +724,14 @@ class MultigroupDiffusionSolver1D:
         # Coupling term: [Σ_{g'} 4π·σ*_{a,g'}·B_{g'}(T_★) + Δe/Δt]
         coupling_term = sum_emission + Delta_e / self.dt
         
+        # Debug: Check for huge values
+        if np.any(np.abs(coupling_term) > 1e10):
+            print(f"    WARNING in compute_source_xi for group {g}:")
+            print(f"      sum_emission max: {np.max(np.abs(sum_emission)):.3e}")
+            print(f"      Delta_e/dt max: {np.max(np.abs(Delta_e / self.dt)):.3e}")
+            print(f"      coupling_term max: {np.max(np.abs(coupling_term)):.3e}")
+            print(f"      This will cause huge source terms and GMRES failure!")
+        
         # Assemble ξ_g
         # Use phi_g^n from stored fractional distribution
         phi_total_old = self.E_r_old * C_LIGHT
@@ -736,6 +744,10 @@ class MultigroupDiffusionSolver1D:
         # Add external source Q_g(r, t)
         Q_g = np.array([self.source_funcs[g](self.r_centers[i], t) for i in range(self.n_cells)])
         xi_g += Q_g
+        
+        # Debug: Check final xi_g
+        if np.any(np.abs(xi_g) > 1e10):
+            print(f"    WARNING: xi_{g} has huge values! max: {np.max(np.abs(xi_g)):.3e}")
         
         return xi_g
     
@@ -763,17 +775,46 @@ class MultigroupDiffusionSolver1D:
         f = self.fleck_factor
         result = kappa.copy().astype(np.float64)
         
+        # Debug: Check input
+        if np.any(np.abs(kappa) > 1e10) or np.any(~np.isfinite(kappa)):
+            print(f"    WARNING in B operator: bad input kappa! max: {np.max(np.abs(kappa)):.3e}")
+        
+        # Define homogeneous boundary conditions for B operator
+        # The actual BC forcing goes into the RHS, not the operator
+        # Use same A and B as actual BCs, but set C = 0
+        def make_homogeneous_bc(bc_func):
+            """Convert a Robin BC function to its homogeneous version (C=0)"""
+            def homogeneous_bc(phi, r):
+                A, B, C = bc_func(phi, r)
+                return A, B, 0.0  # Keep A and B, set C = 0
+            return homogeneous_bc
+        
         # Subtract Σ_g σ*_{a,g}·A_g^{-1}[χ_g(1-f)κ]
         for g in range(self.n_groups):
             # RHS for group g: χ_g(1-f)κ
             rhs_g = self.chi[g] * (1.0 - f) * kappa
             
-            # Solve A_g φ_g = rhs_g (use previous timestep's phi as guess for flux limiter)
-            # DO NOT update phi_g_stored here - that would make B operator non-linear during GMRES!
-            phi_g = self.solvers[g].solve(rhs_g, T_star, phi_guess=self.phi_g_stored[g, :])
+            # Solve A_g φ_g = rhs_g with HOMOGENEOUS BCs
+            # NOTE: This is critical! The B operator must use homogeneous BCs.
+            # The actual boundary forcing goes into the RHS computation.
+            homogeneous_left_bc = make_homogeneous_bc(self.solvers[g].left_bc_func)
+            homogeneous_right_bc = make_homogeneous_bc(self.solvers[g].right_bc_func)
+            
+            phi_g = self.solvers[g].solve(rhs_g, T_star, phi_guess=self.phi_g_stored[g, :],
+                                          override_left_bc=homogeneous_left_bc,
+                                          override_right_bc=homogeneous_right_bc)
+            
+            # Debug: Check if A_g solve produced bad values
+            if np.any(~np.isfinite(phi_g)) or np.any(np.abs(phi_g) > 1e10):
+                print(f"    WARNING: Group {g} A_g solve produced bad phi! max: {np.max(np.abs(phi_g)):.3e}")
+                print(f"             rhs_g max: {np.max(np.abs(rhs_g)):.3e}")
             
             # Subtract σ*_{a,g} φ_g
             result -= self.sigma_a[g, :] * phi_g
+        
+        # Debug: Check result
+        if np.any(np.abs(result) > 1e10) or np.any(~np.isfinite(result)):
+            print(f"    WARNING: B operator result has bad values! max: {np.max(np.abs(result)):.3e}")
         
         return result
     
@@ -804,6 +845,10 @@ class MultigroupDiffusionSolver1D:
             
             # Add σ*_{a,g} φ_g
             rhs += self.sigma_a[g, :] * phi_g
+        
+        # Debug: Check RHS magnitude
+        if np.any(np.abs(rhs) > 1e10):
+            print(f"    WARNING: RHS for kappa has huge values! max: {np.max(np.abs(rhs)):.3e}")
         
         return rhs
     
@@ -836,6 +881,9 @@ class MultigroupDiffusionSolver1D:
         # Compute RHS
         rhs = self.compute_rhs_for_kappa(T_star, xi_g_list)
         
+        if verbose:
+            print(f"  RHS for kappa: max = {np.max(np.abs(rhs)):.3e}, contains NaN/Inf: {np.any(~np.isfinite(rhs))}")
+        
         # Create linear operator for B
         def matvec(kappa_vec):
             return self.apply_operator_B(kappa_vec, T_star, xi_g_list)
@@ -844,7 +892,29 @@ class MultigroupDiffusionSolver1D:
         
         # Initial guess for kappa
         # Use E_r_old to estimate: kappa ≈ Σ_g σ_{a,g} * χ_g * E_r * c
-        kappa_initial = np.sum(self.sigma_a * self.chi[:, np.newaxis] * self.E_r_old * C_LIGHT, axis=0)
+        # Or use zero for robustness
+        # kappa_initial = np.sum(self.sigma_a * self.chi[:, np.newaxis] * self.E_r_old * C_LIGHT, axis=0)
+        kappa_initial = np.zeros(self.n_cells)  # Try zero initial guess for robustness
+        
+        if verbose:
+            print(f"  Initial kappa guess: max = {np.max(np.abs(kappa_initial)):.3e}")
+            # Test B operator with zero input (should give zero output with homogeneous BCs!)
+            test_zero = matvec(np.zeros(self.n_cells))
+            print(f"  B·0: max = {np.max(np.abs(test_zero)):.3e} (should be ~0)")
+            # Test B operator with initial guess
+            test_result = matvec(kappa_initial)
+            print(f"  B·kappa_initial: max = {np.max(np.abs(test_result)):.3e}")
+            print(f"  ||RHS - B·kappa_initial|| / ||RHS|| = {np.linalg.norm(rhs - test_result) / (np.linalg.norm(rhs) + 1e-30):.3e}")
+            
+            # Test if B is reasonable by checking diagonal scaling
+            # Compute B·e_i for first few basis vectors
+            diag_approx = []
+            for i in range(min(5, self.n_cells)):
+                ei = np.zeros(self.n_cells)
+                ei[i] = 1.0
+                Bei = matvec(ei)
+                diag_approx.append(Bei[i])
+            print(f"  B diagonal samples: {diag_approx[:5]}")
         
         # Solve using GMRES with restart
         if verbose:
@@ -906,6 +976,15 @@ class MultigroupDiffusionSolver1D:
             
             # Solve A_g φ_g = rhs_g (use previous timestep's phi as guess for flux limiter)
             phi_g = self.solvers[g].solve(rhs_g, T_star, phi_guess=self.phi_g_stored[g, :])
+            
+            # Check for negative phi (unphysical) - ignore machine precision noise
+            neg_threshold = -1e-10  # Only warn if significantly negative
+            significantly_negative = phi_g < neg_threshold
+            if np.any(significantly_negative):
+                n_neg = np.sum(significantly_negative)
+                min_phi = np.min(phi_g)
+                print(f"    WARNING: Group {g} has {n_neg} significantly negative phi values (min={min_phi:.3e})")
+                print(f"             This indicates GMRES did not converge sufficiently!")
             
             # Update stored phi values
             self.phi_g_stored[g, :] = phi_g
@@ -1009,6 +1088,9 @@ class MultigroupDiffusionSolver1D:
             
             # Compute local Fleck factor at T_★
             self.fleck_factor = self.compute_fleck_factor(T_star)
+            
+            if verbose:
+                print(f"  Fleck factor: min = {self.fleck_factor.min():.3e}, max = {self.fleck_factor.max():.3e}")
             
             # Compute source terms ξ_g for all groups
             xi_g_list = [self.compute_source_xi(g, T_star, self.t) for g in range(self.n_groups)]
@@ -1157,8 +1239,17 @@ if __name__ == "__main__":
     T_bc = 1.0  # keV (left boundary temperature)
     phi_bc_per_group = (A_RAD * C_LIGHT * T_bc**4) / n_groups  # φ = E_r·c = a·c·T^4, split equally
     
-    left_bc_values = [phi_bc_per_group] * n_groups
-    right_bc_values = [0.0] * n_groups
+    # Define BC functions
+    def make_dirichlet_left_bc(phi_val):
+        def left_bc(phi, r):
+            return 1.0, 0.0, phi_val  # Dirichlet: A*phi = C
+        return left_bc
+    
+    def dirichlet_right_bc(phi, r):
+        return 1.0, 0.0, 0.0  # Dirichlet: phi = 0
+    
+    left_bc_funcs = [make_dirichlet_left_bc(phi_bc_per_group) for _ in range(n_groups)]
+    right_bc_funcs = [dirichlet_right_bc] * n_groups
     
     # Initialize solver
     solver = MultigroupDiffusionSolver1D(
@@ -1171,10 +1262,8 @@ if __name__ == "__main__":
         energy_edges=energy_edges,
         diffusion_coeff_funcs=[diffusion_coeff] * n_groups,
         absorption_coeff_funcs=[absorption_coeff] * n_groups,
-        left_bc='dirichlet',
-        right_bc='dirichlet',
-        left_bc_values=left_bc_values,
-        right_bc_values=right_bc_values,
+        left_bc_funcs=left_bc_funcs,
+        right_bc_funcs=right_bc_funcs,
         rho=rho,
         cv=cv
     )
