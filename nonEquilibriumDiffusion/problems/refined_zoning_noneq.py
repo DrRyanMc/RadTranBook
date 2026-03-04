@@ -22,6 +22,14 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from functools import partial
 from twoDFV import NonEquilibriumRadiationDiffusionSolver2D, C_LIGHT, A_RAD, RHO, flux_limiter_larsen
+
+# Add utils to path for plotting
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'utils'))
+from plotfuncs import show
+
+# Add utils to path for plotting
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'utils'))
+from plotfuncs import show
 # =============================================================================
 # MATERIAL PROPERTY FUNCTIONS
 # =============================================================================
@@ -244,7 +252,7 @@ def bc_bottom_source(phi, pos, t, boundary='bottom', geometry='cartesian'):
     """
     x, z = pos
     
-    if t < 500.0 and (x >= 1.0 and x <= 2.0):
+    if t < 500.0: # and (x >= 1.0 and x <= 2.0):
         # Source region: blackbody radiation at T_source
         T_source = 0.3  # keV
         phi_source = C_LIGHT * A_RAD * T_source**4
@@ -274,7 +282,7 @@ def bc_top_source(phi, pos, t, boundary='top', geometry='cartesian'):
     """
     x, z = pos
     
-    if t < 500.0 and (x >= 3.0 and x <= 4.0):
+    if t < 500.0: # and (x >= 3.0 and x <= 4.0):
         # Source region
         T_source = 0.3  # keV
         phi_source = C_LIGHT * A_RAD * T_source**4
@@ -322,7 +330,7 @@ def plot_material_properties(x_centers, z_centers, x_faces=None, z_faces=None):
     im1 = ax1.pcolormesh(Z, X, opacity_field, shading='auto', cmap='RdYlBu_r')
     ax1.set_xlabel('z (cm)', fontsize=12)
     ax1.set_ylabel('x (cm)', fontsize=12)
-    ax1.set_title('Rosseland Opacity σ_R (cm⁻¹)', fontsize=13, fontweight='bold')
+    #ax1.set_title('Rosseland Opacity σ_R (cm⁻¹)', fontsize=13, fontweight='bold')
     cbar1 = plt.colorbar(im1, ax=ax1, label='σ_R (cm⁻¹)')
     ax1.set_aspect('equal')
     
@@ -341,7 +349,7 @@ def plot_material_properties(x_centers, z_centers, x_faces=None, z_faces=None):
     im2 = ax2.pcolormesh(Z, X, cv_field, shading='auto', cmap='RdYlBu_r')
     ax2.set_xlabel('z (cm)', fontsize=12)
     ax2.set_ylabel('x (cm)', fontsize=12)
-    ax2.set_title('Specific Heat ρc_v (GJ/(cm³·keV))', fontsize=13, fontweight='bold')
+    #ax2.set_title('Specific Heat ρc_v (GJ/(cm³·keV))', fontsize=13, fontweight='bold')
     cbar2 = plt.colorbar(im2, ax=ax2, label='ρc_v (GJ/(cm³·keV))')
     ax2.set_aspect('equal')
     
@@ -352,14 +360,14 @@ def plot_material_properties(x_centers, z_centers, x_faces=None, z_faces=None):
         for z in z_faces[::z_step]:
             ax2.axvline(z, color='black', alpha=0.2, linewidth=0.5)
     
-    plt.suptitle('Material Properties', fontsize=14, fontweight='bold')
+    #plt.suptitle('Material Properties', fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig('refined_zoning_noneq_materials.png', dpi=150, bbox_inches='tight')
     print("Saved: refined_zoning_noneq_materials.png")
     plt.close()
 
 
-def plot_solution(solver, time_value, save_prefix='refined_zoning_noneq', show_mesh=True):
+def plot_solution(solver, time_value, save_prefix='refined_zoning_noneq', show_mesh=False, first_one=False):
     """Plot temperature and radiation temperature with optional mesh overlay"""
     T_2d = solver.get_T_2d()
     phi_2d = solver.get_phi_2d()
@@ -369,27 +377,22 @@ def plot_solution(solver, time_value, save_prefix='refined_zoning_noneq', show_m
     x_centers = solver.x_centers
     z_centers = solver.y_centers
     
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-    
     X, Z = np.meshgrid(x_centers, z_centers, indexing='ij')
     
-    # Plot material temperature
+    # PLOT 1: Material temperature
+    fig1, ax1 = plt.subplots(1, 1, figsize=(6, 6))
+    if first_one:
+        fig1, ax1 = plt.subplots(1, 1, figsize=(6, 6*1.275))
+    
     im1 = ax1.pcolormesh(Z, X, T_2d, shading='auto', cmap='plasma', vmin=0.0, vmax=0.3)
-    ax1.set_xlabel('z (cm)', fontsize=12)
-    ax1.set_ylabel('x (cm)', fontsize=12)
-    ax1.set_title(f'Material Temperature at t = {time_value:.2f} ns', fontsize=13, fontweight='bold')
-    cbar1 = plt.colorbar(im1, ax=ax1, label='T (keV)')
+    ax1.set_xlabel('z (cm)', fontsize=15)
+    ax1.set_ylabel('x (cm)', fontsize=15)
+    #ax1.set_title(f'Material Temperature at t = {time_value:.2f} ns', fontsize=13, fontweight='bold')
+    
+    if first_one:
+        cbar1 = plt.colorbar(im1, ax=ax1, orientation='horizontal', location='top', pad=0.15, label='T (keV)')
+    
     ax1.set_aspect('equal')
-    
-    # Mark thin region boundaries
-    ax1.axhline(1.0, xmin=0.0, xmax=0.4, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5, label='Thin region boundaries')
-    ax1.axhline(2.0, xmin=0.0, xmax=0.4, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5)
-    ax1.axhline(3.0, xmin=0.6, xmax=1.0, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5)
-    ax1.axhline(4.0, xmin=0.6, xmax=1.0, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5)
-    
-    # Mark source regions at boundaries (thick lines at edges)
-    ax1.plot([0, 0], [1.0, 2.0], 'r-', linewidth=4, alpha=0.8, label='Radiation sources')
-    ax1.plot([5.0, 5.0], [3.0, 4.0], 'r-', linewidth=4, alpha=0.8)
     
     # Overlay sample mesh lines if requested
     if show_mesh:
@@ -404,25 +407,38 @@ def plot_solution(solver, time_value, save_prefix='refined_zoning_noneq', show_m
         for z in z_faces[::z_step]:
             ax1.axvline(z, color='white', alpha=0.2, linewidth=0.3)
     
-    ax1.legend(fontsize=9, loc='lower right')
+    plt.tight_layout()
+    filename1 = f'{save_prefix}_material_t_{time_value:.2f}ns.png'
+    if first_one:
+        show(filename1, close_after=True, cbar_ax=cbar1.ax)
+    else:
+        show(filename1, close_after=True)
+    print(f"Saved: {filename1}")
     
-    # Plot radiation temperature
+    # PLOT 2: Radiation temperature
+    fig2, ax2 = plt.subplots(1, 1, figsize=(6, 6))
+    if first_one:
+        fig2, ax2 = plt.subplots(1, 1, figsize=(6, 6*1.275))
+    
     im2 = ax2.pcolormesh(Z, X, T_rad_2d, shading='auto', cmap='plasma', vmin=0.0, vmax=0.3)
-    ax2.set_xlabel('z (cm)', fontsize=12)
-    ax2.set_ylabel('x (cm)', fontsize=12)
-    ax2.set_title(f'Radiation Temperature at t = {time_value:.2f} ns', fontsize=13, fontweight='bold')
-    cbar2 = plt.colorbar(im2, ax=ax2, label='T_rad (keV)')
+    ax2.set_xlabel('z (cm)', fontsize=15)
+    ax2.set_ylabel('x (cm)')
+    #ax2.set_title(f'Radiation Temperature at t = {time_value:.2f} ns', fontsize=13, fontweight='bold')
+    
+    if first_one:
+        cbar2 = plt.colorbar(im2, ax=ax2, orientation='horizontal', location='top', pad=0.15, label=r'$T_\mathrm{r}$ (keV)')
+    
     ax2.set_aspect('equal')
     
     # Mark thin region boundaries
-    ax2.axhline(1.0, xmin=0.0, xmax=0.4, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5, label='Thin region boundaries')
-    ax2.axhline(2.0, xmin=0.0, xmax=0.4, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5)
-    ax2.axhline(3.0, xmin=0.6, xmax=1.0, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5)
-    ax2.axhline(4.0, xmin=0.6, xmax=1.0, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5)
+    # ax2.axhline(1.0, xmin=0.0, xmax=0.4, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5, label='Thin region boundaries')
+    # ax2.axhline(2.0, xmin=0.0, xmax=0.4, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5)
+    # ax2.axhline(3.0, xmin=0.6, xmax=1.0, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5)
+    # ax2.axhline(4.0, xmin=0.6, xmax=1.0, color='cyan', linestyle='--', linewidth=1.5, alpha=0.5)
     
     # Mark source regions at boundaries
-    ax2.plot([0, 0], [1.0, 2.0], 'r-', linewidth=4, alpha=0.8, label='Radiation sources')
-    ax2.plot([5.0, 5.0], [3.0, 4.0], 'r-', linewidth=4, alpha=0.8)
+    # ax2.plot([0, 0], [1.0, 2.0], 'r-', linewidth=4, alpha=0.8, label='Radiation sources')
+    # ax2.plot([5.0, 5.0], [3.0, 4.0], 'r-', linewidth=4, alpha=0.8)
     
     # Overlay sample mesh lines
     if show_mesh:
@@ -431,14 +447,15 @@ def plot_solution(solver, time_value, save_prefix='refined_zoning_noneq', show_m
         for z in z_faces[::z_step]:
             ax2.axvline(z, color='white', alpha=0.2, linewidth=0.3)
     
-    ax2.legend(fontsize=9, loc='lower right')
+    #ax2.legend(fontsize=9, loc='lower right')
     
-    plt.suptitle(f'Non-Equilibrium Solution at t = {time_value:.2f} ns', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    filename = f'{save_prefix}_t_{time_value:.2f}ns.png'
-    plt.savefig(filename, dpi=150, bbox_inches='tight')
-    print(f"Saved: {filename}")
-    plt.close()
+    filename2 = f'{save_prefix}_radiation_t_{time_value:.2f}ns.png'
+    if first_one:
+        show(filename2, close_after=True, cbar_ax=cbar2.ax)
+    else:
+        show(filename2, close_after=True)
+    print(f"Saved: {filename2}")
 
 
 def plot_mesh(solver):
@@ -456,8 +473,8 @@ def plot_mesh(solver):
     
     ax1.set_xlabel('z (cm)', fontsize=12)
     ax1.set_ylabel('x (cm)', fontsize=12)
-    ax1.set_title(f'Computational Mesh ({len(x_faces)-1} × {len(z_faces)-1} cells)', 
-                  fontsize=13, fontweight='bold')
+    #ax1.set_title(f'Computational Mesh ({len(x_faces)-1} × {len(z_faces)-1} cells)', 
+    #              fontsize=13, fontweight='bold')
     ax1.set_xlim(z_faces[0], z_faces[-1])
     ax1.set_ylim(x_faces[0], x_faces[-1])
     ax1.set_aspect('equal')
@@ -477,9 +494,9 @@ def plot_mesh(solver):
     ax2.axvline(2.0, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
     ax2.axvline(3.0, color='blue', linestyle='--', linewidth=1.5, alpha=0.7)
     
-    ax2.set_xlabel('z (cm)', fontsize=12)
-    ax2.set_ylabel('x (cm)', fontsize=12)
-    ax2.set_title('Mesh at Material Interfaces (zoom)', fontsize=13, fontweight='bold')
+    ax2.set_xlabel('z (cm)', fontsize=15)
+    ax2.set_ylabel('x (cm)', fontsize=15)
+    #ax2.set_title('Mesh at Material Interfaces (zoom)', fontsize=13, fontweight='bold')
     ax2.set_xlim(1.5, 3.5)
     ax2.set_ylim(0.5, 4.5)
     ax2.set_aspect('equal')
@@ -497,7 +514,7 @@ def plot_mesh(solver):
             fontsize=10, verticalalignment='top',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
     
-    plt.suptitle('Computational Mesh Visualization', fontsize=14, fontweight='bold')
+    #plt.suptitle('Computational Mesh Visualization', fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig('refined_zoning_noneq_mesh.png', dpi=150, bbox_inches='tight')
     print("Saved: refined_zoning_noneq_mesh.png")
@@ -506,24 +523,39 @@ def plot_mesh(solver):
 
 def plot_fiducial_history(times, fiducial_data):
     """Plot temperature history at fiducial points"""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-    
     markers = ['o', 's', '^', 'd']
     colors = ['blue', 'red', 'green', 'purple']
     
+    # Plot 1: Material temperature
+    fig1, ax1 = plt.subplots(1, 1, figsize=(8, 5))
+    
     for idx, (label, data) in enumerate(fiducial_data.items()):
         T_mat = data['T_mat']
-        T_rad = data['T_rad']
         
-        # Material temperature
         ax1.loglog(times, T_mat,
                   marker=markers[idx % len(markers)],
                   color=colors[idx % len(colors)],
                   linewidth=2, markersize=6,
                   markevery=max(1, len(times)//20),
                   label=label, alpha=0.8)
+    
+    ax1.set_xlabel('Time (ns)', fontsize=13, fontweight='bold')
+    ax1.set_ylabel('Material Temperature (keV)', fontsize=13, fontweight='bold')
+    #ax1.set_title('Material Temperature History', fontsize=14, fontweight='bold')
+    ax1.legend(fontsize=10, loc='best', framealpha=0.9)
+    ax1.grid(True, which='both', alpha=0.3, linestyle='--')
+    ax1.grid(True, which='minor', alpha=0.15, linestyle=':')
+    
+    plt.tight_layout()
+    show('refined_zoning_noneq_history_material.pdf', close_after=True)
+    print("Saved: refined_zoning_noneq_history_material.pdf")
+    
+    # Plot 2: Radiation temperature
+    fig2, ax2 = plt.subplots(1, 1, figsize=(8, 5))
+    
+    for idx, (label, data) in enumerate(fiducial_data.items()):
+        T_rad = data['T_rad']
         
-        # Radiation temperature
         ax2.loglog(times, T_rad,
                   marker=markers[idx % len(markers)],
                   color=colors[idx % len(colors)],
@@ -531,23 +563,16 @@ def plot_fiducial_history(times, fiducial_data):
                   markevery=max(1, len(times)//20),
                   label=label, alpha=0.8)
     
-    ax1.set_xlabel('Time (ns)', fontsize=12)
-    ax1.set_ylabel('Material Temperature (keV)', fontsize=12)
-    ax1.set_title('Material Temperature History', fontsize=13, fontweight='bold')
-    ax1.legend(fontsize=10)
-    ax1.grid(True, which='both', alpha=0.3)
+    ax2.set_xlabel('Time (ns)', fontsize=13, fontweight='bold')
+    ax2.set_ylabel('Radiation Temperature (keV)', fontsize=13, fontweight='bold')
+    #ax2.set_title('Radiation Temperature History', fontsize=14, fontweight='bold')
+    ax2.legend(fontsize=10, loc='best', framealpha=0.9)
+    ax2.grid(True, which='both', alpha=0.3, linestyle='--')
+    ax2.grid(True, which='minor', alpha=0.15, linestyle=':')
     
-    ax2.set_xlabel('Time (ns)', fontsize=12)
-    ax2.set_ylabel('Radiation Temperature (keV)', fontsize=12)
-    ax2.set_title('Radiation Temperature History', fontsize=13, fontweight='bold')
-    ax2.legend(fontsize=10)
-    ax2.grid(True, which='both', alpha=0.3)
-    
-    plt.suptitle('Temperature History at Fiducial Points', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.savefig('refined_zoning_noneq_history.png', dpi=150, bbox_inches='tight')
-    print("Saved: refined_zoning_noneq_history.png")
-    plt.close()
+    show('refined_zoning_noneq_history_radiation.pdf', close_after=True)
+    print("Saved: refined_zoning_noneq_history_radiation.pdf")
 
 
 # =============================================================================
@@ -611,14 +636,14 @@ def main(output_times=None, use_refined_mesh=True, dt_initial=1e-3, dt_max=1.0):
             z_max=5.0,
             interface_locations=[3.0, 4.0],
             n_refine=10,
-            n_coarse=50
+            n_coarse=100
         )
         z_faces = generate_refined_z_faces(
             z_min=0.0,
             z_max=5.0,
             interface_locations=[3.0],
             n_refine=10,
-            n_coarse=50
+            n_coarse=100
         )
         
         print(f"  Refined mesh: {len(x_faces)-1} × {len(z_faces)-1} cells")
@@ -640,8 +665,8 @@ def main(output_times=None, use_refined_mesh=True, dt_initial=1e-3, dt_max=1.0):
             material_energy_func=material_energy,
             inverse_material_energy_func=inverse_material_energy,
             boundary_funcs=boundary_funcs,
-            theta=1.0#,
-            #flux_limiter_func=partial(flux_limiter_larsen, n=2)
+            theta=1.0,
+            flux_limiter_func=partial(flux_limiter_larsen, n=2)
         )
     else:
         # Use uniform mesh
@@ -658,8 +683,8 @@ def main(output_times=None, use_refined_mesh=True, dt_initial=1e-3, dt_max=1.0):
             material_energy_func=material_energy,
             inverse_material_energy_func=inverse_material_energy,
             boundary_funcs=boundary_funcs,
-            theta=1.0
-            #flux_limiter_func=partial(flux_limiter_larsen, n=2)
+            theta=1.0,
+            flux_limiter_func=partial(flux_limiter_larsen, n=2)
         )
     
     # Initial condition: cold material
@@ -678,10 +703,10 @@ def main(output_times=None, use_refined_mesh=True, dt_initial=1e-3, dt_max=1.0):
     
     # Define fiducial points
     fiducial_points = {
-        'Thick-Thin (1.5, 1.95)': (1.5, 1.95),
-        'Thin-Thick (1.5, 2.05)': (1.5, 2.05),
-        'Thick-Thin (3.5, 2.95)': (3.5, 2.95),
-        'Thin-Thick (3.5, 3.05)': (3.5, 3.05),
+        'Point1: x=1.5, z=1.95': (1.5, 1.95),
+        'Point2: x=1.5, z=2.05': (1.5, 2.05),
+        'Point3: x=3.5, z=3.05': (3.5, 3.05),
+        'Point4: x=3.5, z=2.95': (3.5, 2.95),
     }
     
     # Find indices
@@ -704,6 +729,7 @@ def main(output_times=None, use_refined_mesh=True, dt_initial=1e-3, dt_max=1.0):
     t_final = max(output_times)
     t = 0.0
     step = 0
+    first_one = True
     
     while t < t_final:
         step += 1
@@ -728,8 +754,9 @@ def main(output_times=None, use_refined_mesh=True, dt_initial=1e-3, dt_max=1.0):
         for output_t in output_times:
             if output_t not in output_times_saved and abs(t - output_t) < 1e-6:
                 print(f"  Saving solution at t = {t:.2f} ns")
-                plot_solution(solver, t)
+                plot_solution(solver, t, first_one=first_one)
                 output_times_saved.add(output_t)
+                first_one = False
         
         # Save fiducial data
         if step % 1 == 0:
@@ -783,5 +810,6 @@ def main(output_times=None, use_refined_mesh=True, dt_initial=1e-3, dt_max=1.0):
 
 
 if __name__ == "__main__":
-    #solver = main(output_times=[1.0, 10.0, 100.0, 500.0], dt_max=10.0)
-    solver = main(output_times=[0.001,.01,0.1,1.0], dt_max=10.0)
+    #solver = main(output_times=[.001,.01,0.1,1.0, 10.0, 100.0, 500.0], dt_max=10.0)
+    solver = main(output_times=[1.0,10.,100.0,501.0,700.,1000.0], dt_max=10.0)
+    #solver = main(output_times=[0.001,.01,0.1,1.0,10.], dt_max=10.0)

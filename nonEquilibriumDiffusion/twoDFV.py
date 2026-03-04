@@ -672,6 +672,102 @@ def assemble_implicit_matrix_coo(nx, ny, dt, theta, C_LIGHT,
 
 
 @njit
+def assemble_trbdf2_matrix_coo(nx, ny, dt, c_np1, C_LIGHT,
+                                 D_x_faces, D_y_faces,
+                                 Ax_faces, Ay_faces,
+                                 x_centers, y_centers,
+                                 V_cells, sigma_P, f_TB):
+    """
+    Assemble the TR-BDF2 implicit matrix in COO format.
+    
+    TR-BDF2 uses c_np1/(c*dt) instead of 1/(c*dt) for time derivative.
+    Fully implicit (no theta parameter).
+    
+    Returns:
+        rows: row indices
+        cols: column indices  
+        data: matrix values
+    """
+    # Estimate max entries: diagonal + 4 neighbors per cell
+    max_entries = nx * ny * 5
+    rows = np.zeros(max_entries, dtype=np.int32)
+    cols = np.zeros(max_entries, dtype=np.int32)
+    data = np.zeros(max_entries, dtype=np.float64)
+    
+    entry_idx = 0
+    
+    for i in range(nx):
+        for j in range(ny):
+            idx = i * ny + j
+            V = V_cells[i, j]
+            
+            # Diagonal: time derivative + coupling term
+            diag_val = c_np1 / (C_LIGHT * dt) + f_TB[idx] * sigma_P[idx]
+            
+            # X-direction contribution to diagonal and off-diagonal
+            if i > 0:  # Left face
+                A_left = Ax_faces[i, j]
+                dx_left = x_centers[i] - x_centers[i-1]
+                coeff = A_left * D_x_faces[i, j] / (dx_left * V)
+                diag_val += coeff
+                
+                # Off-diagonal: left neighbor
+                idx_left = (i-1) * ny + j
+                rows[entry_idx] = idx
+                cols[entry_idx] = idx_left
+                data[entry_idx] = -coeff
+                entry_idx += 1
+            
+            if i < nx - 1:  # Right face
+                A_right = Ax_faces[i+1, j]
+                dx_right = x_centers[i+1] - x_centers[i]
+                coeff = A_right * D_x_faces[i+1, j] / (dx_right * V)
+                diag_val += coeff
+                
+                # Off-diagonal: right neighbor
+                idx_right = (i+1) * ny + j
+                rows[entry_idx] = idx
+                cols[entry_idx] = idx_right
+                data[entry_idx] = -coeff
+                entry_idx += 1
+            
+            # Y-direction contribution to diagonal and off-diagonal
+            if j > 0:  # Bottom face
+                A_bottom = Ay_faces[i, j]
+                dy_bottom = y_centers[j] - y_centers[j-1]
+                coeff = A_bottom * D_y_faces[i, j] / (dy_bottom * V)
+                diag_val += coeff
+                
+                # Off-diagonal: bottom neighbor
+                idx_bottom = i * ny + (j-1)
+                rows[entry_idx] = idx
+                cols[entry_idx] = idx_bottom
+                data[entry_idx] = -coeff
+                entry_idx += 1
+            
+            if j < ny - 1:  # Top face
+                A_top = Ay_faces[i, j+1]
+                dy_top = y_centers[j+1] - y_centers[j]
+                coeff = A_top * D_y_faces[i, j+1] / (dy_top * V)
+                diag_val += coeff
+                
+                # Off-diagonal: top neighbor
+                idx_top = i * ny + (j+1)
+                rows[entry_idx] = idx
+                cols[entry_idx] = idx_top
+                data[entry_idx] = -coeff
+                entry_idx += 1
+            
+            # Diagonal entry
+            rows[entry_idx] = idx
+            cols[entry_idx] = idx
+            data[entry_idx] = diag_val
+            entry_idx += 1
+    
+    return rows[:entry_idx], cols[:entry_idx], data[:entry_idx]
+
+
+@njit
 def compute_rhs_vector(nx, ny, dt, theta, C_LIGHT,
                        phi_prev, sigma_P, f, acT4_star, Delta_e):
     """
@@ -2342,31 +2438,47 @@ class NonEquilibriumRadiationDiffusionSolver2D:
         c_nL = -1.0 / (Lambda * (1.0 - Lambda))   # Coefficient of solution at n+Λ
         c_n = (1.0 - Lambda) / Lambda             # Coefficient of solution at n
         
-        # Initialize sparse matrix (LIL format)
-        A = lil_matrix((n_total, n_total))
-        rhs = np.zeros(n_total)
-        
         # Reshape arrays to 2D
         phi_star_2d = phi_star.reshape((nx, ny), order='C')
         T_star_2d = T_star.reshape((nx, ny), order='C')
         phi_n_2d = phi_n.reshape((nx, ny), order='C')
         phi_Lambda_2d = phi_Lambda.reshape((nx, ny), order='C')
         
-        # Evaluate material energies
-        e_star = np.zeros(n_total)
-        e_nL = np.zeros(n_total)
-        e_n = np.zeros(n_total)
-        sigma_P = np.zeros(n_total)
-        f_TB = np.zeros(n_total)
-        for k in range(n_total):
-            i_cell, j_cell = index_1d_to_2d(k, nx)
-            x_cell = self.x_centers[i_cell]
-            y_cell = self.y_centers[j_cell]
-            e_star[k] = self.material_energy_func(T_star[k], x_cell, y_cell)
-            e_nL[k] = self.material_energy_func(T_Lambda[k], x_cell, y_cell)
-            e_n[k] = self.material_energy_func(T_n[k], x_cell, y_cell)
-            sigma_P[k] = self.planck_opacity_func(T_star[k], x_cell, y_cell)
-            f_TB[k] = self.get_f_factor_trbdf2(T_star[k], x_cell, y_cell, dt, Lambda)
+        # Evaluate material energies using vectorized operations
+        X_mesh, Y_mesh = np.meshgrid(self.x_centers, self.y_centers, indexing='ij')
+        
+        T_star_2d_full = T_star.reshape((nx, ny), order='C')
+        T_Lambda_2d = T_Lambda.reshape((nx, ny), order='C')
+        T_n_2d = T_n.reshape((nx, ny), order='C')
+        
+        e_star_2d = self.material_energy_func(T_star_2d_full, X_mesh, Y_mesh)
+        e_nL_2d = self.material_energy_func(T_Lambda_2d, X_mesh, Y_mesh)
+        e_n_2d = self.material_energy_func(T_n_2d, X_mesh, Y_mesh)
+        sigma_P_2d = self.planck_opacity_func(T_star_2d_full, X_mesh, Y_mesh)
+        
+        # Handle scalar returns
+        if np.isscalar(e_star_2d):
+            e_star_2d = np.full((nx, ny), e_star_2d)
+        if np.isscalar(e_nL_2d):
+            e_nL_2d = np.full((nx, ny), e_nL_2d)
+        if np.isscalar(e_n_2d):
+            e_n_2d = np.full((nx, ny), e_n_2d)
+        if np.isscalar(sigma_P_2d):
+            sigma_P_2d = np.full((nx, ny), sigma_P_2d)
+        
+        # Compute f_TB for each cell
+        f_TB_2d = np.zeros((nx, ny))
+        for i in range(nx):
+            for j in range(ny):
+                f_TB_2d[i, j] = self.get_f_factor_trbdf2(T_star_2d_full[i, j], 
+                                                         self.x_centers[i], self.y_centers[j], dt, Lambda)
+        
+        # Flatten to 1D
+        e_star = e_star_2d.flatten(order='C')
+        e_nL = e_nL_2d.flatten(order='C')
+        e_n = e_n_2d.flatten(order='C')
+        sigma_P = sigma_P_2d.flatten(order='C')
+        f_TB = f_TB_2d.flatten(order='C')
         
         # Compute Δe from equation (8.62)
         Delta_e = c_np1 * e_star + c_nL * e_nL + c_n * e_n
@@ -2437,59 +2549,24 @@ class NonEquilibriumRadiationDiffusionSolver2D:
                         T_left, T_right, x_left, y_left, x_right, y_right,
                         phi_left, phi_right, dy_left, dy_right)
         
-        # Assemble matrix and RHS for each cell
-        for i in range(nx):
-            for j in range(ny):
-                idx = index_2d_to_1d(i, j, nx, ny)
-                V = self.V_cells[i, j]
-                
-                # Time derivative term: c_np1/(c·Δt)
-                A[idx, idx] = c_np1 / (C_LIGHT * dt)
-                
-                # Diffusion operator: ∇·D∇φ^{n+1} (fully implicit)
-                # X-direction
-                if i > 0:
-                    A_left = self.Ax_faces[i, j]
-                    dx_left = self.x_centers[i] - self.x_centers[i-1]
-                    coeff = A_left * D_x_faces[i, j] / (dx_left * V)
-                    A[idx, idx] += coeff
-                    idx_left = index_2d_to_1d(i-1, j, nx, ny)
-                    A[idx, idx_left] = -coeff
-                
-                if i < nx - 1:
-                    A_right = self.Ax_faces[i+1, j]
-                    dx_right = self.x_centers[i+1] - self.x_centers[i]
-                    coeff = A_right * D_x_faces[i+1, j] / (dx_right * V)
-                    A[idx, idx] += coeff
-                    idx_right = index_2d_to_1d(i+1, j, nx, ny)
-                    A[idx, idx_right] = -coeff
-                
-                # Y-direction
-                if j > 0:
-                    A_bottom = self.Ay_faces[i, j]
-                    dy_bottom = self.y_centers[j] - self.y_centers[j-1]
-                    coeff = A_bottom * D_y_faces[i, j] / (dy_bottom * V)
-                    A[idx, idx] += coeff
-                    idx_bottom = index_2d_to_1d(i, j-1, nx, ny)
-                    A[idx, idx_bottom] = -coeff
-                
-                if j < ny - 1:
-                    A_top = self.Ay_faces[i, j+1]
-                    dy_top = self.y_centers[j+1] - self.y_centers[j]
-                    coeff = A_top * D_y_faces[i, j+1] / (dy_top * V)
-                    A[idx, idx] += coeff
-                    idx_top = index_2d_to_1d(i, j+1, nx, ny)
-                    A[idx, idx_top] = -coeff
-                
-                # Coupling term: f_TB·σ_P
-                A[idx, idx] += f_TB[idx] * sigma_P[idx]
-                
-                # RHS from equation 8.61a
-                # Time derivative history terms
-                rhs[idx] = (-c_nL * phi_Lambda[idx] - c_n * phi_n[idx]) / (C_LIGHT * dt)
-                # Source terms
-                rhs[idx] += f_TB[idx] * sigma_P[idx] * acT4_star[idx]
-                rhs[idx] -= (1.0 - f_TB[idx]) * Delta_e[idx] / dt
+        # Assemble matrix using Numba-accelerated function (COO format)
+        rows, cols, data = assemble_trbdf2_matrix_coo(
+            nx, ny, dt, c_np1, C_LIGHT,
+            D_x_faces, D_y_faces,
+            self.Ax_faces, self.Ay_faces,
+            self.x_centers, self.y_centers,
+            self.V_cells, sigma_P, f_TB
+        )
+        
+        # Build sparse matrix from COO format
+        from scipy.sparse import coo_matrix
+        A_csr = coo_matrix((data, (rows, cols)), shape=(n_total, n_total)).tocsr()
+        
+        # Compute RHS vector
+        rhs = np.zeros(n_total)
+        rhs = (-c_nL * phi_Lambda - c_n * phi_n) / (C_LIGHT * dt)
+        rhs += f_TB * sigma_P * acT4_star
+        rhs -= (1.0 - f_TB) * Delta_e / dt
         
         # Add external source if provided
         if source is not None:
@@ -2501,8 +2578,6 @@ class NonEquilibriumRadiationDiffusionSolver2D:
             else:
                 rhs += source
         
-        # Convert to CSR format
-        A_csr = A.tocsr()
         return A_csr, rhs
     
     def solve_T_equation_trbdf2(self, phi_np1, T_star, phi_n, T_n, phi_Lambda, T_Lambda, Lambda):
@@ -2526,40 +2601,55 @@ class NonEquilibriumRadiationDiffusionSolver2D:
         c_nL = -1.0 / (Lambda * (1.0 - Lambda))
         c_n = (1.0 - Lambda) / Lambda
         
-        # Evaluate material energies
-        e_nL = np.zeros(n_total)
-        e_n = np.zeros(n_total)
-        e_star = np.zeros(n_total)
-        sigma_P = np.zeros(n_total)
-        f_TB = np.zeros(n_total)
-        for k in range(n_total):
-            i_cell, j_cell = index_1d_to_2d(k, self.nx_cells)
-            x_cell = self.x_centers[i_cell]
-            y_cell = self.y_centers[j_cell]
-            e_nL[k] = self.material_energy_func(T_Lambda[k], x_cell, y_cell)
-            e_n[k] = self.material_energy_func(T_n[k], x_cell, y_cell)
-            e_star[k] = self.material_energy_func(T_star[k], x_cell, y_cell)
-            sigma_P[k] = self.planck_opacity_func(T_star[k], x_cell, y_cell)
-            f_TB[k] = self.get_f_factor_trbdf2(T_star[k], x_cell, y_cell, dt, Lambda)
+        # Evaluate material energies using vectorized operations
+        X_mesh, Y_mesh = np.meshgrid(self.x_centers, self.y_centers, indexing='ij')
+        
+        T_Lambda_2d = T_Lambda.reshape((self.nx_cells, self.ny_cells), order='C')
+        T_n_2d = T_n.reshape((self.nx_cells, self.ny_cells), order='C')
+        T_star_2d = T_star.reshape((self.nx_cells, self.ny_cells), order='C')
+        
+        e_nL_2d = self.material_energy_func(T_Lambda_2d, X_mesh, Y_mesh)
+        e_n_2d = self.material_energy_func(T_n_2d, X_mesh, Y_mesh)
+        e_star_2d = self.material_energy_func(T_star_2d, X_mesh, Y_mesh)
+        sigma_P_2d = self.planck_opacity_func(T_star_2d, X_mesh, Y_mesh)
+        
+        # Handle scalar returns
+        if np.isscalar(e_nL_2d):
+            e_nL_2d = np.full((self.nx_cells, self.ny_cells), e_nL_2d)
+        if np.isscalar(e_n_2d):
+            e_n_2d = np.full((self.nx_cells, self.ny_cells), e_n_2d)
+        if np.isscalar(e_star_2d):
+            e_star_2d = np.full((self.nx_cells, self.ny_cells), e_star_2d)
+        if np.isscalar(sigma_P_2d):
+            sigma_P_2d = np.full((self.nx_cells, self.ny_cells), sigma_P_2d)
+        
+        # Compute f_TB for each cell
+        f_TB_2d = np.zeros((self.nx_cells, self.ny_cells))
+        for i in range(self.nx_cells):
+            for j in range(self.ny_cells):
+                f_TB_2d[i, j] = self.get_f_factor_trbdf2(T_star_2d[i, j], 
+                                                         self.x_centers[i], self.y_centers[j], dt, Lambda)
+        
+        # Flatten to 1D
+        e_nL = e_nL_2d.flatten(order='C')
+        e_n = e_n_2d.flatten(order='C')
+        e_star = e_star_2d.flatten(order='C')
+        sigma_P = sigma_P_2d.flatten(order='C')
+        f_TB = f_TB_2d.flatten(order='C')
         
         Delta_e = c_np1 * e_star + c_nL * e_nL + c_n * e_n
         acT4_star = A_RAD * C_LIGHT * T_star**4
         
-        # Solve for T_{n+1} at each cell
-        for k in range(n_total):
-            i_cell, j_cell = index_1d_to_2d(k, self.nx_cells)
-            x_cell = self.x_centers[i_cell]
-            y_cell = self.y_centers[j_cell]
-            
-            rhs_T = (-c_nL * e_nL[k] - c_n * e_n[k]) / dt
-            rhs_T += f_TB[k] * sigma_P[k] * (phi_np1[k] - acT4_star[k])
-            rhs_T += (1.0 - f_TB[k]) * Delta_e[k] / dt
-            
-            # e_{n+1} = (Δt/c_np1) * rhs_T
-            e_np1 = (dt / c_np1) * rhs_T
-            
-            # Invert material energy to get T
-            T_np1[k] = self.inverse_material_energy_func(e_np1, x_cell, y_cell)
+        # Solve for T_{n+1} at each cell (vectorized)
+        rhs_T = (-c_nL * e_nL - c_n * e_n) / dt
+        rhs_T += f_TB * sigma_P * (phi_np1 - acT4_star)
+        rhs_T += (1.0 - f_TB) * Delta_e / dt
+        
+        # e_{n+1} = (Δt/c_np1) * rhs_T
+        e_np1 = (dt / c_np1) * rhs_T
+        
+        # Invert material energy to get T (vectorized)
+        T_np1 = self.compute_temperature_from_energy_vectorized(e_np1)
         
         return T_np1
     

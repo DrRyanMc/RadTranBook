@@ -157,7 +157,7 @@ def run_zeldovich_wave_2d():
     
     # Initial condition: approximate Dirac delta at origin
     # Put high temperature in small region near (r_min, z=0)
-    t_init = 0.05  # ns - start from analytical solution
+    t_init = 0.01  # ns - start from analytical solution
     
     print(f"\nSetting initial condition at t_init = {t_init} ns...")
     
@@ -234,6 +234,11 @@ def run_zeldovich_wave_2d():
     solutions = []
     step_count = 0
     
+    # Timing diagnostics
+    import time as time_module
+    wall_time_start = time_module.time()
+    wall_time_last_print = wall_time_start
+    
     for target_time_physical in target_times:
         target_time_numerical = target_time_physical - t_init
         
@@ -254,24 +259,36 @@ def run_zeldovich_wave_2d():
             phi_old = solver.phi.copy()
             T_old = solver.T.copy()
             
-            # Take timestep
-            verbose_step = (step_count < 3 or step_count % 100 == 0)
-            solver.time_step(n_steps=1, verbose=verbose_step)
+            # Take timestep with timing
+            step_start = time_module.time()
+            verbose_step = (step_count < 3 or step_count % 10 == 0)
+            solver.time_step_trbdf2(n_steps=1,verbose=verbose_step)
+            #solver.time_step(n_steps=1, verbose=verbose_step)
+            step_elapsed = time_module.time() - step_start
             
             # Check changes for adaptive dt
             phi_change = np.max(np.abs(solver.phi - phi_old) / (np.abs(phi_old) + 1e-10))
             T_change = np.max(np.abs(solver.T - T_old) / (np.abs(T_old) + 1e-10))
             
+            # Print timing every 10 steps
+            if step_count % 10 == 0:
+                wall_elapsed = time_module.time() - wall_time_start
+                recent_elapsed = time_module.time() - wall_time_last_print
+                print(f"    Step {step_count}: t={current_time:.4e} ns, dt={dt:.3e} ns, "
+                      f"step_time={step_elapsed:.3f}s, total_time={wall_elapsed:.1f}s "
+                      f"(+{recent_elapsed:.1f}s)")
+                wall_time_last_print = time_module.time()
+            
             # Adaptive timestep
             if phi_change < 0.1 and T_change < 0.1 and dt < dt_max:
                 dt_new = min(dt * 1.5, dt_max)
-                if step_count % 100 == 0 and dt_new > dt:
-                    print(f"    Step {step_count}: t={current_time:.6e} ns, increasing dt {dt:.2e} → {dt_new:.2e} ns")
+                if step_count % 10 == 0 and dt_new > dt:
+                    print(f"      → Increasing dt {dt:.2e} → {dt_new:.2e} ns")
                 dt = dt_new
             elif phi_change > 0.5 or T_change > 0.5:
                 dt = max(dt * 0.5, dt_initial)
                 if verbose_step:
-                    print(f"    Step {step_count}: Large changes, reducing dt to {dt:.2e} ns")
+                    print(f"      → Large changes, reducing dt to {dt:.2e} ns")
             
             current_time += solver.dt
             step_count += 1

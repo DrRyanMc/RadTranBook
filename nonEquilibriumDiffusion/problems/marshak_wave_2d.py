@@ -155,13 +155,15 @@ def bc_reflecting(phi, pos, t, boundary='left', geometry='cartesian'):
 # MARSHAK WAVE SIMULATION
 # =============================================================================
 
-def run_marshak_wave_2d(direction='x'):
+def run_marshak_wave_2d(direction='x', theta=1.0):
     """Run 2D Marshak wave simulation with wave propagating in x or y direction
     
     Parameters:
     -----------
     direction : str
         'x' for wave propagating in x-direction, 'y' for y-direction
+    theta : float
+        Time integration parameter: 1.0=Backward Euler, 0.5=Crank-Nicolson, 0.0=Forward Euler
     
     Returns:
     --------
@@ -178,6 +180,12 @@ def run_marshak_wave_2d(direction='x'):
     print("  Opacity: σ_R = σ_P = 300 * T^-3 (cm^-1)")
     print("  Heat capacity: c_v = 0.3 GJ/(cm^3·keV)")
     print(f"  Wave direction: {direction}")
+    if theta == 1.0:
+        print("  Time integration: Backward Euler (theta=1.0)")
+    elif theta == 0.5:
+        print("  Time integration: Crank-Nicolson (theta=0.5)")
+    else:
+        print(f"  Time integration: theta={theta}")
     print("="*80)
     
     # Problem setup
@@ -239,7 +247,7 @@ def run_marshak_wave_2d(direction='x'):
         material_energy_func=marshak_material_energy,
         inverse_material_energy_func=marshak_inverse_material_energy,
         boundary_funcs=boundary_funcs,
-        theta=1.0  # Backward Euler for stability
+        theta=theta  # Time integration parameter
     )
     
     # Initial condition: cold material
@@ -512,45 +520,208 @@ def compute_differences(profiles_x, profiles_y):
             print(f"  ✗ WARNING: Significant differences detected")
 
 
+def plot_theta_comparison(profiles_be, profiles_cn):
+    """Plot comparison of Backward Euler vs Crank-Nicolson
+    
+    Parameters:
+    -----------
+    profiles_be : list of dict
+        1D profiles from Backward Euler (theta=1.0)
+    profiles_cn : list of dict
+        1D profiles from Crank-Nicolson (theta=0.5)
+    """
+    
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    
+    colors = ['blue', 'red']  # Two times
+    times = [prof['time'] for prof in profiles_be]
+    
+    # Self-similar solution parameters
+    xi_max = 1.11305
+    omega = 0.05989
+    self_similar = lambda xi: (xi < xi_max) * np.power((1 - xi/xi_max)*(1+omega*xi/xi_max), 1/6)
+    xi_vals = np.linspace(0, xi_max, 200)
+    K_const = 8*A_RAD*C_LIGHT/((4+3)*3*300*RHO*0.3)
+    
+    for idx, (prof_be, prof_cn, color) in enumerate(zip(profiles_be, profiles_cn, colors)):
+        t = prof_be['time']
+        
+        # Plot 1: Material temperature - Backward Euler
+        ax = axes[0, 0]
+        ax.plot(prof_be['r'], prof_be['T'], color=color, linewidth=2, 
+                linestyle='-', label=f't = {t:.0f} ns (BE)')
+        
+        # Self-similar solution
+        r_ref = xi_vals * (K_const * t)**0.5
+        T_ref = self_similar(xi_vals)
+        ax.plot(r_ref, T_ref, 'k:', linewidth=1.5, alpha=0.5, label='Self-similar' if idx == 0 else '')
+        
+        ax.set_xlabel('Position x (cm)', fontsize=11)
+        ax.set_ylabel('T (keV)', fontsize=11)
+        ax.set_title('Material T: Backward Euler (θ=1.0)', fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=9)
+        
+        # Plot 2: Material temperature - Crank-Nicolson
+        ax = axes[0, 1]
+        ax.plot(prof_cn['r'], prof_cn['T'],  color=color, linewidth=2,
+                linestyle='-', label=f't = {t:.0f} ns (CN)')
+        
+        # Self-similar solution
+        ax.plot(r_ref, T_ref, 'k:', linewidth=1.5, alpha=0.5, label='Self-similar' if idx == 0 else '')
+        
+        ax.set_xlabel('Position x (cm)', fontsize=11)
+        ax.set_ylabel('T (keV)', fontsize=11)
+        ax.set_title('Material T: Crank-Nicolson (θ=0.5)', fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=9)
+        
+        # Plot 3: Comparison - overlay both methods
+        ax = axes[0, 2]
+        ax.plot(prof_be['r'], prof_be['T'], color=color, linewidth=2,
+                linestyle='-', label=f't = {t:.0f} ns (BE)', alpha=0.7)
+        ax.plot(prof_cn['r'], prof_cn['T'], color=color, linewidth=2,
+                linestyle='--', label=f't = {t:.0f} ns (CN)', alpha=0.7)
+        
+        ax.plot(r_ref, T_ref, 'k:', linewidth=1.5, alpha=0.5, label='Self-similar' if idx == 0 else '')
+        
+        ax.set_xlabel('Position x (cm)', fontsize=11)
+        ax.set_ylabel('T (keV)', fontsize=11)
+        ax.set_title('BE vs CN Comparison', fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8, ncol=2)
+        
+        # Plot 4: Radiation temperature - Backward Euler
+        ax = axes[1, 0]
+        ax.plot(prof_be['r'], prof_be['T_rad'], color=color, linewidth=2,
+                linestyle='-', label=f't = {t:.0f} ns (BE)')
+        
+        ax.set_xlabel('Position x (cm)', fontsize=11)
+        ax.set_ylabel('$T_{rad}$ (keV)', fontsize=11)
+        ax.set_title('Radiation T: Backward Euler', fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=9)
+        
+        # Plot 5: Radiation temperature - Crank-Nicolson
+        ax = axes[1, 1]
+        ax.plot(prof_cn['r'], prof_cn['T_rad'], color=color, linewidth=2,
+                linestyle='-', label=f't = {t:.0f} ns (CN)')
+        
+        ax.set_xlabel('Position x (cm)', fontsize=11)
+        ax.set_ylabel('$T_{rad}$ (keV)', fontsize=11)
+        ax.set_title('Radiation T: Crank-Nicolson', fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=9)
+        
+        # Plot 6: Difference between BE and CN (last time only)
+        if idx == len(profiles_be) - 1:
+            ax = axes[1, 2]
+            
+            # Interpolate to common grid for difference
+            r_common = np.linspace(0, 0.5, 200)
+            T_be_interp = np.interp(r_common, prof_be['r'], prof_be['T'])
+            T_cn_interp = np.interp(r_common, prof_cn['r'], prof_cn['T'])
+            T_diff = T_be_interp - T_cn_interp
+            
+            ax.plot(r_common, T_diff, 'k-', linewidth=2)
+            ax.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+            
+            ax.set_xlabel('Position x (cm)', fontsize=11)
+            ax.set_ylabel('$T_{BE} - T_{CN}$ (keV)', fontsize=11)
+            ax.set_title(f'Difference at t = {t:.0f} ns', fontsize=12, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
+    
+    plt.suptitle('2D Marshak Wave: Theta Method Comparison (BE vs CN)', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig('marshak_wave_2d_theta_comparison.png', dpi=150, bbox_inches='tight')
+    print("\nTheta comparison plot saved as 'marshak_wave_2d_theta_comparison.png'")
+
+
 # =============================================================================
 # MAIN EXECUTION
 # =============================================================================
 
-def main():
-    """Main execution function"""
+def main(test_theta_comparison=True):
+    """Main execution function
     
-    print("\n" + "="*80)
-    print("2D MARSHAK WAVE - DIRECTIONAL SYMMETRY TEST")
-    print("="*80)
-    print("\nThis test runs the Marshak wave in both X and Y directions")
-    print("with reflecting boundaries in the perpendicular direction.")
-    print("The results should be identical, demonstrating directional symmetry.")
-    print("="*80)
+    Parameters:
+    -----------
+    test_theta_comparison : bool
+        If True, compare Backward Euler vs Crank-Nicolson
+        If False, run standard directional symmetry test
+    """
     
-    # Run in X direction
-    print("\n" + "╔" + "="*78 + "╗")
-    print("║" + " "*25 + "PART 1: X-DIRECTION WAVE" + " "*29 + "║")
-    print("╚" + "="*78 + "╝")
-    solutions_x, solver_x, _ = run_marshak_wave_2d(direction='x')
-    profiles_x = extract_1d_profile(solutions_x, 'x')
-    
-    # Run in Y direction
-    print("\n" + "╔" + "="*78 + "╗")
-    print("║" + " "*25 + "PART 2: Y-DIRECTION WAVE" + " "*29 + "║")
-    print("╚" + "="*78 + "╝")
-    solutions_y, solver_y, _ = run_marshak_wave_2d(direction='y')
-    profiles_y = extract_1d_profile(solutions_y, 'y')
-    
-    # Compare results
-    compute_differences(profiles_x, profiles_y)
-    
-    # Plot comparison
-    print("\nGenerating comparison plots...")
-    plot_comparison(profiles_x, profiles_y)
-    
-    print("\n" + "="*80)
-    print("2D Marshak wave directional symmetry test completed successfully!")
-    print("="*80)
+    if test_theta_comparison:
+        # Test both Backward Euler and Crank-Nicolson
+        print("\n" + "="*80)
+        print("2D MARSHAK WAVE - THETA COMPARISON TEST")
+        print("="*80)
+        print("\nThis test runs the Marshak wave with both Backward Euler (theta=1.0)")
+        print("and Crank-Nicolson (theta=0.5) to compare convergence behavior.")
+        print("="*80)
+        
+        # Run with Backward Euler (theta=1.0)
+        print("\n" + "╔" + "="*78 + "╗")
+        print("║" + " "*22 + "PART 1: BACKWARD EULER (θ=1.0)" + " "*25 + "║")
+        print("╚" + "="*78 + "╝")
+        solutions_be, solver_be, _ = run_marshak_wave_2d(direction='x', theta=1.0)
+        profiles_be = extract_1d_profile(solutions_be, 'x')
+        
+        # Run with Crank-Nicolson (theta=0.5)
+        print("\n" + "╔" + "="*78 + "╗")
+        print("║" + " "*21 + "PART 2: CRANK-NICOLSON (θ=0.5)" + " "*25 + "║")
+        print("╚" + "="*78 + "╝")
+        solutions_cn, solver_cn, _ = run_marshak_wave_2d(direction='x', theta=0.5)
+        profiles_cn = extract_1d_profile(solutions_cn, 'x')
+        
+        # Compare results
+        print("\n" + "="*80)
+        print("COMPARING BACKWARD EULER vs CRANK-NICOLSON")
+        print("="*80)
+        compute_differences(profiles_be, profiles_cn)
+        
+        # Plot comparison
+        print("\nGenerating theta comparison plots...")
+        plot_theta_comparison(profiles_be, profiles_cn)
+        
+        print("\n" + "="*80)
+        print("2D Marshak wave theta comparison test completed successfully!")
+        print("="*80)
+    else:
+        # Standard directional symmetry test
+        print("\n" + "="*80)
+        print("2D MARSHAK WAVE - DIRECTIONAL SYMMETRY TEST")
+        print("="*80)
+        print("\nThis test runs the Marshak wave in both X and Y directions")
+        print("with reflecting boundaries in the perpendicular direction.")
+        print("The results should be identical, demonstrating directional symmetry.")
+        print("="*80)
+        
+        # Run in X direction
+        print("\n" + "╔" + "="*78 + "╗")
+        print("║" + " "*25 + "PART 1: X-DIRECTION WAVE" + " "*29 + "║")
+        print("╚" + "="*78 + "╝")
+        solutions_x, solver_x, _ = run_marshak_wave_2d(direction='x', theta=1.0)
+        profiles_x = extract_1d_profile(solutions_x, 'x')
+        
+        # Run in Y direction
+        print("\n" + "╔" + "="*78 + "╗")
+        print("║" + " "*25 + "PART 2: Y-DIRECTION WAVE" + " "*29 + "║")
+        print("╚" + "="*78 + "╝")
+        solutions_y, solver_y, _ = run_marshak_wave_2d(direction='y', theta=1.0)
+        profiles_y = extract_1d_profile(solutions_y, 'y')
+        
+        # Compare results
+        compute_differences(profiles_x, profiles_y)
+        
+        # Plot comparison
+        print("\nGenerating comparison plots...")
+        plot_comparison(profiles_x, profiles_y)
+        
+        print("\n" + "="*80)
+        print("2D Marshak wave directional symmetry test completed successfully!")
+        print("="*80)
 
 
 if __name__ == "__main__":

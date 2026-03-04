@@ -1,0 +1,150 @@
+OMP: Info #273: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.
+================================================================================
+0-D Multigroup Equilibration Test
+================================================================================
+Parameters:
+  Groups: 2
+  σ_a = 5.0 cm^-1 (both groups)
+  C_v = 0.01 GJ/(g·keV)
+  ρ = 1.0 g/cm³
+  Energy edges: [ 0.01  2.   10.  ] keV
+Initialized multigroup solver:
+  Groups: 2
+  Cells: 1
+  Geometry: planar
+  Energy edges (keV): [ 0.01  2.   10.  ]
+  Fleck factor: computed locally for each cell
+  Emission fractions χ: [0.08709016 0.91290984]
+
+Initial conditions:
+  Material temperature: T = 0.4 keV
+  Radiation temperature: T_r = 1.0 keV
+  Radiation energy: E_r = 1.372000e-02 GJ/cm³
+  Expected equilibrium: T_eq ≈ 1.000 keV (hot radiation heats cold material)
+
+Initial energy budget:
+  Material energy: e = 4.000000e-03 GJ/cm³
+  Radiation energy: E_r = 1.372000e-02 GJ/cm³
+  Total energy: E_total = 1.772000e-02 GJ/cm³
+
+Step   Time       T (keV)      T_rad (keV)  E_r (GJ/cm³)    ΔE/E_0       Newton   Conv
+-----------------------------------------------------------------------------------------------
+
+Newton iteration 1/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  GMRES converged successfully
+  Temperature change: 6.235e-01
+  T max: 1.062358, T min: 1.062358
+  E_r max: 7.096419e-03, min: 7.096419e-03
+  κ max: 1.063726e+00, min: 1.063726e+00
+
+Newton iteration 2/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  GMRES converged successfully
+  Temperature change: 3.886e-02
+  T max: 1.105309, T min: 1.105309
+  E_r max: 2.464080e-02, min: 2.464080e-02
+  κ max: 3.693562e+00, min: 3.693562e+00
+
+Newton iteration 3/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  GMRES converged successfully
+  Temperature change: 1.232e-02
+  T max: 1.119093, T min: 1.119093
+  E_r max: 2.585801e-02, min: 2.585801e-02
+  κ max: 3.876018e+00, min: 3.876018e+00
+
+Newton iteration 4/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  GMRES converged successfully
+  Temperature change: 4.151e-03
+  T max: 1.123758, T min: 1.123758
+  E_r max: 2.624546e-02, min: 2.624546e-02
+  κ max: 3.934096e+00, min: 3.934096e+00
+
+Newton iteration 5/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  GMRES converged successfully
+  Temperature change: 1.425e-03
+  T max: 1.125362, T min: 1.125362
+  E_r max: 2.637623e-02, min: 2.637623e-02
+  κ max: 3.953697e+00, min: 3.953697e+00
+
+Newton iteration 6/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  GMRES converged successfully
+  Temperature change: 4.923e-04
+  T max: 1.125916, T min: 1.125916
+  E_r max: 2.642114e-02, min: 2.642114e-02
+  κ max: 3.960430e+00, min: 3.960430e+00
+
+Newton iteration 7/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  GMRES converged successfully
+  Temperature change: 1.704e-04
+  T max: 1.126108, T min: 1.126108
+  E_r max: 2.643666e-02, min: 2.643666e-02
+  κ max: 3.962756e+00, min: 3.962756e+00
+
+Newton iteration 8/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  GMRES converged successfully
+  Temperature change: 5.904e-05
+  T max: 1.126174, T min: 1.126174
+  E_r max: 2.644204e-02, min: 2.644204e-02
+  κ max: 3.963562e+00, min: 3.963562e+00
+
+Newton iteration 9/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  GMRES converged successfully
+  Temperature change: 2.046e-05
+  T max: 1.126197, T min: 1.126197
+  E_r max: 2.644390e-02, min: 2.644390e-02
+  κ max: 3.963841e+00, min: 3.963841e+00
+
+Newton iteration 10/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  GMRES converged successfully
+  Temperature change: 7.090e-06
+  T max: 1.126205, T min: 1.126205
+  E_r max: 2.644454e-02, min: 2.644454e-02
+  κ max: 3.963937e+00, min: 3.963937e+00
+Warning: Newton did not converge after 10 iterations
+1      0.0100     1.126205     1.178272     2.644454e-02    1.127912e+00 10       ✗
+Warning: Newton did not converge after 10 iterations
+2      0.0200     1.196167     1.191951     2.769415e-02    1.237914e+00 10       ✗
+Warning: Newton did not converge after 10 iterations
+3      0.0300     1.202286     1.193127     2.780361e-02    1.247543e+00 10       ✗
+4      0.0400     1.202817     1.193229     2.781310e-02    1.248379e+00 9        ✓
+5      0.0500     1.202863     1.193238     2.781393e-02    1.248451e+00 7        ✓
+6      0.0600     1.202867     1.193239     2.781400e-02    1.248458e+00 6        ✓
+7      0.0700     1.202867     1.193239     2.781400e-02    1.248458e+00 2        ✓
+8      0.0800     1.202867     1.193239     2.781400e-02    1.248458e+00 2        ✓
+9      0.0900     1.202867     1.193239     2.781400e-02    1.248458e+00 1        ✓
+10     0.1000     1.202867     1.193239     2.781400e-02    1.248458e+00 1        ✓
+
+================================================================================
+0-D test completed!
+================================================================================
+
+Final state at t = 0.10 ns:
+  Material temperature: T = 1.202867 keV
+  Radiation temperature: T_r = 1.193239 keV
+  ΔT = T - T_r = 9.628725e-03 keV
+  Radiation energy: E_r = 2.781400e-02 GJ/cm³
+  Material energy: e = 1.202867e-02 GJ/cm³
+
+Energy conservation:
+  Initial total: E_0 = 1.7720000000e-02 GJ/cm³
+  Final total:   E_f = 3.9842672831e-02 GJ/cm³
+  Absolute error: ΔE = 2.2122672831e-02 GJ/cm³
+  Relative error: ΔE/E_0 = 1.2484578347e+00
+  Max deviation: 2.2122672831e-02 GJ/cm³ (1.2484578347e+00 relative)
+  ✗ WARNING: Significant energy conservation error!
+
+Group analysis:
+  Emission fractions χ: [0.08709016 0.91290984]
+  Group 0: E_r = 3.458859e-03 GJ/cm³ (12.44% of total)
+  Group 1: E_r = 2.435514e-02 GJ/cm³ (87.56% of total)
+
+Plot saved as 'test_multigroup_0d.png'

@@ -1,0 +1,257 @@
+OMP: Info #273: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.
+
+Running 2-group Marshak wave simulation...
+================================================================================
+Marshak Wave Problem - Multigroup (2 Groups)
+================================================================================
+Material properties:
+  Opacity: σ_R = σ_a = 300 * T^-3 (cm^-1) for both groups
+  Heat capacity: c_v = 0.3 GJ/(cm^3·keV)
+  Left BC: Blackbody at T = 1 keV
+  Right BC: Zero flux
+================================================================================
+
+Energy group edges: [ 0.01  2.   10.  ] keV
+Emission fractions at T = 1.0 keV: [0.08709016 0.91290984]
+Left boundary φ_bc,total = 4.113153e-01 GJ/cm³
+Left boundary φ_bc per group: [np.float64(0.035821511731478115), np.float64(0.3754937406445219)]
+
+Initializing multigroup solver with 50 cells...
+Initialized multigroup solver:
+  Groups: 2
+  Cells: 50
+  Geometry: planar
+  Energy edges (keV): [ 0.01  2.   10.  ]
+  Fleck factor: computed locally for each cell
+  Emission fractions χ: [0.08709016 0.91290984]
+Initial conditions: T = 0.01 keV, E_r = 1.372000e-10 GJ/cm³
+
+Time evolution:
+Step   Time       T_max        T_min        E_r_max         Newton   Conv
+--------------------------------------------------------------------------------
+
+Newton iteration 1/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  Warning: GMRES did not fully converge (200 iterations)
+  Temperature change: 1.174e-01
+  T max: 0.010000, T min: 0.001776
+  E_r max: 1.372000e-02, min: 1.324503e-10
+  κ max: 1.191228e+00, min: -3.065076e+00
+
+Newton iteration 2/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  Warning: GMRES did not fully converge (200 iterations)
+  Temperature change: 8.035e-01
+  T max: 0.010000, T min: -0.089545
+  E_r max: 1.372000e-02, min: 1.324503e-10
+  κ max: 1.191228e+00, min: -3.065076e+00
+
+Newton iteration 3/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  Warning: GMRES did not fully converge (200 iterations)
+  Temperature change: 2.267e-02
+  T max: 0.010000, T min: -0.092169
+  E_r max: 1.372000e-02, min: 1.324504e-10
+  κ max: 1.191228e+00, min: -3.065075e+00
+
+Newton iteration 4/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  Warning: GMRES did not fully converge (200 iterations)
+  Temperature change: 3.767e-07
+  T max: 0.010000, T min: -0.092169
+  E_r max: 1.372000e-02, min: 1.324504e-10
+  κ max: 1.191229e+00, min: -3.065074e+00
+
+Newton iteration 5/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  Warning: GMRES did not fully converge (200 iterations)
+  Temperature change: 1.065e-06
+  T max: 0.010000, T min: -0.092169
+  E_r max: 1.372000e-02, min: 1.324504e-10
+  κ max: 1.191229e+00, min: -3.065070e+00
+
+Newton iteration 6/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  Warning: GMRES did not fully converge (200 iterations)
+  Temperature change: 3.009e-06
+  T max: 0.010000, T min: -0.092169
+  E_r max: 1.372000e-02, min: 1.324506e-10
+  κ max: 1.191230e+00, min: -3.065060e+00
+
+Newton iteration 7/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  Warning: GMRES did not fully converge (200 iterations)
+  Temperature change: 8.502e-06
+  T max: 0.010000, T min: -0.092168
+  E_r max: 1.372000e-02, min: 1.324511e-10
+  κ max: 1.191233e+00, min: -3.065030e+00
+
+Newton iteration 8/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  Warning: GMRES did not fully converge (200 iterations)
+  Temperature change: 2.403e-05
+  T max: 0.010000, T min: -0.092165
+  E_r max: 1.372000e-02, min: 1.324524e-10
+  κ max: 1.191242e+00, min: -3.064947e+00
+
+Newton iteration 9/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  Warning: GMRES did not fully converge (200 iterations)
+  Temperature change: 6.791e-05
+  T max: 0.010000, T min: -0.092157
+  E_r max: 1.372000e-02, min: 1.324561e-10
+  κ max: 1.191267e+00, min: -3.064712e+00
+
+Newton iteration 10/10
+  Solving for κ with GMRES (tol=1e-06, maxiter=200)...
+  Warning: GMRES did not fully converge (200 iterations)
+  Temperature change: 1.920e-04
+  T max: 0.010000, T min: -0.092135
+  E_r max: 1.372000e-02, min: 1.324666e-10
+  κ max: 1.191339e+00, min: -3.064046e+00
+Warning: Newton did not converge after 10 iterations
+1      0.0100     0.010000     -0.092135    1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+5      0.0500     6448687.567382 -118701.109778 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+10     0.1000     6448687.567382 -118701.109733 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+  t = 0.1 ns:
+    Material: max T = 6448687.5674 keV, min T = -118701.1097 keV
+    Radiation: max T_rad = 1.0000 keV, min T_rad = 0.0010 keV
+    Max E_r = 1.3720e-02 GJ/cm³
+    Group 0: max E_r = 1.1949e-03 GJ/cm³
+    Group 1: max E_r = 1.2525e-02 GJ/cm³
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+15     0.1500     6448687.567382 -118701.109687 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+20     0.2000     6448687.567382 -118701.109641 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+25     0.2500     6448687.567382 -118701.109596 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+30     0.3000     6448687.567382 -118701.109550 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+35     0.3500     6448687.567382 -118701.109504 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+40     0.4000     6448687.567382 -118701.109459 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+45     0.4500     6448687.567382 -118701.109413 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+50     0.5000     6448687.567382 -118701.109367 1.372000e-02    10       ✗
+  t = 0.5 ns:
+    Material: max T = 6448687.5674 keV, min T = -118701.1094 keV
+    Radiation: max T_rad = 1.0000 keV, min T_rad = 0.0010 keV
+    Max E_r = 1.3720e-02 GJ/cm³
+    Group 0: max E_r = 1.1949e-03 GJ/cm³
+    Group 1: max E_r = 1.2525e-02 GJ/cm³
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+55     0.5500     6448687.567382 -118701.109322 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+60     0.6000     6448687.567382 -118701.109276 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+65     0.6500     6448687.567382 -118701.109230 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+70     0.7000     6448687.567382 -118701.109185 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+75     0.7500     6448687.567382 -118701.109139 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+80     0.8000     6448687.567382 -118701.109093 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+85     0.8500     6448687.567382 -118701.109048 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+90     0.9000     6448687.567382 -118701.109002 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+95     0.9500     6448687.567382 -118701.108956 1.372000e-02    10       ✗
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+Warning: Newton did not converge after 10 iterations
+100    1.0000     6448687.567382 -118701.108910 1.372000e-02    10       ✗
+  t = 1.0 ns:
+    Material: max T = 6448687.5674 keV, min T = -118701.1089 keV
+    Radiation: max T_rad = 1.0000 keV, min T_rad = 0.0010 keV
+    Max E_r = 1.3720e-02 GJ/cm³
+    Group 0: max E_r = 1.1949e-03 GJ/cm³
+    Group 1: max E_r = 1.2525e-02 GJ/cm³
+
+Plotting multigroup Marshak wave results...
+
+Plot saved as 'marshak_wave_multigroup.png'
+
+================================================================================
+Multigroup Marshak wave simulation completed successfully!
+================================================================================
