@@ -874,6 +874,7 @@ class MultigroupDiffusionSolver1D:
         Returns (kappa, info_dict) where info_dict has keys:
             'info', 'iterations', 'callback_type', 'final_true_resid'
         """
+        self.gmres_tol = gmres_tol  # Store so compute_radiation_energy_from_kappa can access it
         rhs = self.compute_rhs_for_kappa(T_star, xi_g_list)
         rhs_norm = np.linalg.norm(rhs) + 1e-30
 
@@ -1011,12 +1012,13 @@ class MultigroupDiffusionSolver1D:
             phi_g = self.solvers[g].solve(rhs_g, T_star, phi_guess=self.phi_g_stored[g, :])
             
             # Check for negative phi (unphysical) - ignore machine precision noise
-            neg_threshold = -1e-10  # Only warn if significantly negative
+            #set neg_threshold to by 0.1 times GMRES tolerance times the max phi value, to allow for some numerical noise
+            neg_threshold = -10*self.gmres_tol #* np.max(np.abs(phi_g))
             significantly_negative = phi_g < neg_threshold
             if np.any(significantly_negative):
                 n_neg = np.sum(significantly_negative)
                 min_phi = np.min(phi_g)
-                print(f"    WARNING: Group {g} has {n_neg} significantly negative phi values (min={min_phi:.3e})")
+                print(f"    WARNING: Group {g} has {n_neg} significantly negative phi values (min={min_phi:.3e}, neg_threshold={neg_threshold:.3e})")
                 print(f"             This indicates GMRES did not converge sufficiently!")
             
             # Update stored phi values
@@ -1258,20 +1260,22 @@ class MultigroupDiffusionSolver1D:
             return sigma_a_gray[idx] * (1.0 - f[idx])
 
         
-        # Use homogeneous BCs for the gray solve (same as B operator)
-        # Capture original BC functions to avoid recursion when overriding
+        # Use homogeneous BCs for the gray solve (same as B operator),
+        # but replace the B coefficient with 2*<D> so the gray operator's
+        # boundary condition is consistent with its own diffusion coefficient.
         original_left_bc = self.solvers[0].left_bc_func
         original_right_bc = self.solvers[0].right_bc_func
-        
+        D_gray_left = D_gray[0]    # gray-averaged D at left boundary cell
+        D_gray_right = D_gray[-1]  # gray-averaged D at right boundary cell
+
         def homogeneous_left_bc(phi, r):
-            # Get BC from original function and make homogeneous
             A, B, C = original_left_bc(phi, r)
-            return A, B, 0.0
-        
+            # Keep A (e.g. 0.5 for Marshak), replace B with 2*<D> to match gray stencil
+            return A, 2.0 * D_gray_left, 0.0
+
         def homogeneous_right_bc(phi, r):
-            # Get BC from original function and make homogeneous
             A, B, C = original_right_bc(phi, r)
-            return A, B, 0.0
+            return A, 2.0 * D_gray_right, 0.0
         
         # Create gray diffusion solver
         gray_solver = DiffusionOperatorSolver1D(

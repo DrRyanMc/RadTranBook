@@ -18,10 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import matplotlib.pyplot as plt
-from multigroup_diffusion_solver_patched_lmfgk import MultigroupDiffusionSolver1D, C_LIGHT, A_RAD, SIGMA_SB, Bg_multigroup
+from multigroup_diffusion_solver_patched_lmfgk import MultigroupDiffusionSolver1D, C_LIGHT, A_RAD, SIGMA_SB, Bg_multigroup, flux_limiter_larsen
 
 # Physical constants
-RHO = 1.0  # g/cm³
+RHO = 0.01  # g/cm³
 
 # =============================================================================
 # POWER-LAW OPACITY FUNCTIONS
@@ -48,7 +48,7 @@ def powerlaw_opacity_at_energy(T, E, rho=1.0):
     """
     T_safe = 1e-2  # Minimum temperature to avoid singularity
     T_use = np.maximum(T, T_safe)
-    return np.minimum(1000.0* rho * ((T_use)**(-1/2)) * (E)**(-3.0),1e6)
+    return np.minimum(10.0* rho * ((T_use)**(-0.5)) * (E)**(-3.0),1e14)
     #return 300*T_use**(-3.0)
     #return 1e4*np.exp(-E/T_use)*(T_use)**(-3)
 
@@ -78,7 +78,6 @@ def make_powerlaw_opacity_func(E_low, E_high, rho=1.0):
         sigma_low = powerlaw_opacity_at_energy(T, E_low, rho)
         sigma_high = powerlaw_opacity_at_energy(T, E_high, rho)
         return np.sqrt(sigma_low * sigma_high)
-    
     return opacity_func
 
 
@@ -147,20 +146,20 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     
     # Problem setup
     r_min = 0.0      # cm
-    r_max = 10.0      # cm
-    n_cells = 50     # Reasonable resolution
+    r_max = 4.0      # cm
+    n_cells = 100     # Reasonable resolution
     
     # Energy group structure (keV) - logarithmically spaced
     # Range from 1e-4 keV to 25.0 keV
-    energy_edges = np.logspace(np.log10(1e-4), np.log10(25.0), n_groups + 1)
-    
+    energy_edges = np.logspace(np.log10(1e-4), np.log10(10.0), n_groups + 1)
+    print("Group energy edges (keV):", energy_edges)
     # Time stepping parameters
     dt = 0.01        # ns - timestep
-    target_times = [1.0]#, 5.0,20.]#, 10.0, 20.0]  # ns
+    target_times = [1.0,2.0,5.0]#[1.0,2.0]#,5.0,10.0]#, 5.0,20.]#, 10.0, 20.0]  # ns
     
     # Material properties
     rho = RHO  # g/cm³
-    cv = 0.05 / rho  # GJ/(g·keV) - realistic value
+    cv = 0.05   # GJ/(g·keV) - realistic value
     
     # Boundary conditions
     T_bc = 0.5  # keV (blackbody temperature at left boundary)
@@ -184,27 +183,68 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         sigma_g = sigma_funcs[g](T_bc, 0.0)
         print(f"  Group {g:2d} [{energy_edges[g]:6.3f}, {energy_edges[g+1]:6.3f}] keV: "
               f"χ = {chi[g]:.6f}, σ_a = {sigma_g:.3e} cm^-1")
-    
+
+    # ---- Plot opacity vs energy at T_bc ----
+    E_fine = np.logspace(np.log10(energy_edges[0]), np.log10(energy_edges[-1]), 500)
+    sigma_fine = powerlaw_opacity_at_energy(T_bc, E_fine, rho)
+
+    fig_op, ax_op = plt.subplots(figsize=(7, 5))
+    ax_op.loglog(E_fine, sigma_fine, 'k-', linewidth=1.5, label=f'$\\sigma_a$ (continuous)')
+
+    # Overlay group-averaged opacities as horizontal bars
+    group_emission = Bg_multigroup(energy_edges, T_bc)
+    group_emission /= group_emission.sum()  # Normalize to get fractions
+    #scale to get comparable y-values for visualization
+    group_emission *= sigma_fine.max() * 0.5 / group_emission.max()
+    for g in range(n_groups):
+        sigma_g = sigma_funcs[g](T_bc, 0.0)
+        ax_op.hlines(sigma_g, energy_edges[g], energy_edges[g + 1],
+                     colors='tab:blue', linewidths=2.5)
+        ax_op.hlines(group_emission[g], energy_edges[g], energy_edges[g + 1],
+                     colors='tab:orange', linewidths=2.5)
+    # Invisible line for legend entry
+    ax_op.hlines([], [], [], colors='tab:blue', linewidths=2.5, label='Group-averaged $\\sigma_{a,g}$')
+    ax_op.hlines([], [], [], colors='tab:orange', linewidths=2.5, label='Group-averaged $B_g$')
+
+    ax_op.set_xlabel('Photon energy (keV)', fontsize=12)
+    ax_op.set_ylabel('Opacity $\\sigma_a$ (cm$^{-1}$)', fontsize=12)
+    ax_op.set_title(f'Opacity vs. Energy at $T_b = {T_bc}$ keV', fontsize=13, fontweight='bold')
+    ax_op.legend(fontsize=11)
+    ax_op.grid(True, which='both', ls='--', alpha=0.4)
+    fig_op.tight_layout()
+    plt.savefig('opacity_vs_energy_Tb.png', dpi=150)
+    plt.close(fig_op)
+    print("Opacity vs. energy plot saved to opacity_vs_energy_Tb.png")
+    # ----------------------------------------
+
     # Compute incoming flux for boundary condition
     # For blackbody: F = (a*c*T^4)/2
     F_total = (A_RAD * C_LIGHT * T_bc**4) / 2.0
     F_g_values = [chi[g] * F_total for g in range(n_groups)]
-    
+    F_g_right = [0.0] * n_groups  # No incoming flux on right boundary
     # Robin BC parameters: A*phi + B*dphi/dr = C
     # For Marshak BC in this solver: phi_g/2 + (2D_g)*dphi_g/dr = F_in,g
     # Compute group-dependent diffusion coefficient for BC (at left boundary, T ≈ T_bc)
     BC_A = 0.5
     BC_B_values = []
+    BC_B_right_values = []
     for g in range(n_groups):
         D_g_bc = diff_funcs[g](T_bc, 0.0)
+        BC_right_values = diff_funcs[g](0.0, r_max)
         BC_B_values.append(2.0 * D_g_bc)
+        BC_B_right_values.append(2.0 * BC_right_values)
     BC_C_values = F_g_values.copy()
+    BC_C_right_values = F_g_right.copy()
     
     # Create mutable container for time-dependent BCs
     # The BC functions will reference this, and we can update it during time stepping
     bc_params = {
         'B_values': BC_B_values.copy(),
         'C_values': BC_C_values.copy()
+    }
+    bc_right_params = {
+        'B_values': BC_B_right_values.copy(),
+        'C_values': BC_C_right_values.copy()  # No incoming flux on right boundary
     }
     
     print(f"\nBoundary condition (Marshak):")
@@ -224,12 +264,14 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
             return BC_A, bc_params['B_values'][group_idx], bc_params['C_values'][group_idx]
         return left_bc
     
-    def right_bc_func(phi, r):
-        """Neumann BC at right: ∇φ = 0"""
-        return 0.0, 1.0, 0.0
+    def make_right_bc_func(group_idx):
+        """Create Neumann BC function for right boundary that references mutable bc_right_params"""
+        def right_bc(phi, r):
+            return BC_A, bc_right_params['B_values'][group_idx], bc_right_params['C_values'][group_idx]
+        return right_bc
     
     left_bc_funcs = [make_left_bc_func(g) for g in range(n_groups)]
-    right_bc_funcs = [right_bc_func] * n_groups
+    right_bc_funcs = [make_right_bc_func(g) for g in range(n_groups)]
     
     # Create solver
     print(f"\nInitializing multigroup solver with {n_cells} cells...")
@@ -242,6 +284,7 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         geometry='planar',
         dt=dt,
         diffusion_coeff_funcs=diff_funcs,
+        flux_limiter_funcs=flux_limiter_larsen,
         absorption_coeff_funcs=sigma_funcs,
         left_bc_funcs=left_bc_funcs,
         right_bc_funcs=right_bc_funcs,
@@ -251,7 +294,7 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     
     # Initial condition: cold everywhere
     r_centers = solver.r_centers
-    T_init = 0.05 * np.ones(n_cells)  # Cold initial state
+    T_init = 0.001 * np.ones(n_cells)  # Cold initial state
     #T_init[(r_centers > .25*r_max) & (r_centers < .75*r_max)] = 0.5  # Hot region in the middle
     solver.T = T_init.copy()
     solver.T_old = solver.T.copy()
@@ -285,10 +328,10 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         
         # Update boundary conditions if time-dependent
         if time_dependent_bc:
-            # Ramp T_bc from 0.05 keV to 1.0 keV over 1 ns
-            T_bc_start = 1.0  # keV
-            T_bc_end = 1.0     # keV
-            t_ramp = 1.0      # ns
+            # Ramp T_bc from 0.05 keV to 0.25 keV over 1 ns
+            T_bc_start = 0.05  # keV
+            T_bc_end = 0.25     # keV
+            t_ramp = 5.0      # ns
             if bc_time < t_ramp:
                 T_bc_current = T_bc_start + (T_bc_end - T_bc_start) * (bc_time / t_ramp)
             else:
@@ -326,9 +369,9 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         
         # Newton iteration
         info = solver.step(
-            max_newton_iter=5,
+            max_newton_iter=10,
             newton_tol=1e-6,
-            gmres_tol=1e-6,
+            gmres_tol=1e-8,
             gmres_maxiter=200,
             use_preconditioner=use_preconditioner,
             max_relative_change=1.0,
@@ -388,6 +431,10 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     print("\nSimulation complete!")
     print(f"Total steps: {step_count}")
     print(f"Final time: {current_time:.3f} ns")
+
+    #save solutions to an NPZ file for later analysis
+    np.savez(f"marshak_wave_multigroup_powerlaw_{n_groups}g_{'precond' if use_preconditioner else 'no_precond'}{'_timeBC' if time_dependent_bc else ''}.npz", solutions=solutions)
+    print(f"Saved solutions to NPZ file: marshak_wave_multigroup_powerlaw_{n_groups}g_{'precond' if use_preconditioner else 'no_precond'}{'_timeBC' if time_dependent_bc else ''}.npz")
     
     # =============================================================================
     # PLOTTING
@@ -398,7 +445,7 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     # Create figure with 3 subplots
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     
-    colors = ['blue', 'red', 'green']
+    colors = ['blue', 'red', 'green', 'orange', 'purple', 'cyan', 'magenta', 'brown', 'olive', 'teal']
     
     for idx, sol in enumerate(solutions):
         color = colors[idx]

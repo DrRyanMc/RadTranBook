@@ -324,13 +324,9 @@ class DiffusionOperatorSolver1D:
             
         else:
             # Robin/Neumann BC: A·φ + B·(∂φ/∂n) = C
-            # For Marshak BC: A=1/2, B=c/(3σ_BC), C=0.5*B_g(T_b)
-            # 
-            # For the φ diffusion equation, the natural diffusion coefficient is D = c/(3σ).
-            # The user's diffusion_coeff_func typically returns 1/(3σ), so B should include c.
-            # However, B might already include c if the user set it up that way,
-            # so use B directly as D_boundary.
-            D_boundary = B_bc  # Use B as the diffusion coefficient directly
+            # Use actual diffusion coefficient from matrix assembly
+            # For Marshak BC: B = 2D, A = 1/2, C = F_in
+            D_boundary = D_faces[0]
             
             flux_coeff = (self.A_faces[0] * D_boundary * A_bc) / (B_bc * self.V_cells[0])
             rhs_contribution = (self.A_faces[0] * D_boundary * C_bc) / (B_bc * self.V_cells[0])
@@ -362,8 +358,8 @@ class DiffusionOperatorSolver1D:
             
         else:
             # Robin/Neumann BC: A·φ + B·(∂φ/∂n) = C
-            # B is already the diffusion coefficient D = 1/(3σ) (without c factor)
-            D_boundary = B_bc
+            # Use actual diffusion coefficient from matrix assembly
+            D_boundary = D_faces[-1]
             flux_coeff = (self.A_faces[-1] * D_boundary * A_bc) / (B_bc * self.V_cells[-1])
             rhs_contribution = (self.A_faces[-1] * D_boundary * C_bc) / (B_bc * self.V_cells[-1])
             
@@ -657,6 +653,10 @@ class DiffusionOperatorSolver2D:
                  diffusion_coeff_func: Optional[Callable] = None,
                  absorption_coeff_func: Optional[Callable] = None,
                  dt: float = 1.0,
+                 left_bc_func: Optional[Callable] = None,
+                 right_bc_func: Optional[Callable] = None,
+                 bottom_bc_func: Optional[Callable] = None,
+                 top_bc_func: Optional[Callable] = None,
                  left_bc: str = 'dirichlet',
                  right_bc: str = 'dirichlet',
                  bottom_bc: str = 'dirichlet',
@@ -688,10 +688,13 @@ class DiffusionOperatorSolver2D:
             If None, uses σ_a = 0.0
         dt : float
             Time step for 1/(c·Δt) term
+        left_bc_func, right_bc_func, bottom_bc_func, top_bc_func : callable or None
+            Boundary condition functions returning (A, B, C) for Robin BC: A·φ + B·∇φ = C
+            If None, uses string-based BCs
         left_bc, right_bc, bottom_bc, top_bc : str
-            Boundary condition types: 'dirichlet' or 'neumann'
+            Boundary condition types: 'dirichlet' or 'neumann' (used if BC funcs are None)
         left_bc_value, right_bc_value, bottom_bc_value, top_bc_value : float
-            Boundary condition values
+            Boundary condition values (used if BC funcs are None)
         """
         self.x_min = x_min
         self.x_max = x_max
@@ -702,6 +705,12 @@ class DiffusionOperatorSolver2D:
         self.n_total = nx_cells * ny_cells
         self.geometry = geometry.lower()
         self.dt = dt
+        
+        # Matrix cache for fixed-temperature solves (reduces floating point error accumulation)
+        self._cached_T = None
+        self._cached_A = None
+        self._cached_D_x_faces = None
+        self._cached_D_y_faces = None
         
         # Mesh generation
         self.x_faces = np.linspace(x_min, x_max, nx_cells + 1)
@@ -728,7 +737,13 @@ class DiffusionOperatorSolver2D:
         else:
             self.absorption_coeff_func = absorption_coeff_func
         
-        # Boundary conditions
+        # Boundary condition functions (for Robin BCs)
+        self.left_bc_func = left_bc_func
+        self.right_bc_func = right_bc_func
+        self.bottom_bc_func = bottom_bc_func
+        self.top_bc_func = top_bc_func
+        
+        # Boundary conditions (string-based, for backward compatibility)
         self.left_bc = left_bc
         self.right_bc = right_bc
         self.bottom_bc = bottom_bc
@@ -737,51 +752,112 @@ class DiffusionOperatorSolver2D:
         self.right_bc_value = right_bc_value
         self.bottom_bc_value = bottom_bc_value
         self.top_bc_value = top_bc_value
-    
+
+        # Precompute fixed COO stencil structure and geometric ratios.
+        self._precompute_stencil()
+
+    def _precompute_stencil(self):
+        """Precompute fixed row/col arrays and geometric ratio arrays for the
+        5-point finite-volume stencil.  Called once at construction; only the
+        *coefficients* (which depend on D and σ_a) need recomputing each solve.
+        """
+        nx = self.nx_cells
+        ny = self.ny_cells
+
+        # ---- center-to-center distances for interior x-faces ----
+        # _dx_int[k]   = x_centers[k+1] - x_centers[k],  k in [0, nx-2]
+        # shape (nx-1, 1) for broadcasting against (nx-1, ny) arrays
+        dx_int = (self.x_centers[1:] - self.x_centers[:-1])[:, np.newaxis]
+
+        # ---- center-to-center distances for interior y-faces ----
+        # _dy_int[k]   = y_centers[k+1] - y_centers[k],  k in [0, ny-2]
+        # shape (1, ny-1) for broadcasting against (nx, ny-1) arrays
+        dy_int = (self.y_centers[1:] - self.y_centers[:-1])[np.newaxis, :]
+
+        # Geometric ratios (constant for a fixed mesh):
+        #   geom_xl[k,j] = Ax[k+1,j] / (dx_int[k] * V[k+1,j])  → left  contribution to cell k+1
+        #   geom_xr[k,j] = Ax[k+1,j] / (dx_int[k] * V[k  ,j])  → right contribution to cell k
+        #   geom_yb[i,k] = Ay[i,k+1] / (dy_int[k] * V[i,k+1])  → bottom contribution to cell (i,k+1)
+        #   geom_yt[i,k] = Ay[i,k+1] / (dy_int[k] * V[i,k  ])  → top   contribution to cell (i,k)
+        self._geom_xl = self.Ax_faces[1:nx, :] / (dx_int * self.V_cells[1:,    :])  # (nx-1, ny)
+        self._geom_xr = self.Ax_faces[1:nx, :] / (dx_int * self.V_cells[:nx-1, :])  # (nx-1, ny)
+        self._geom_yb = self.Ay_faces[:, 1:ny] / (dy_int * self.V_cells[:,  1:   ])  # (nx, ny-1)
+        self._geom_yt = self.Ay_faces[:, 1:ny] / (dy_int * self.V_cells[:, :ny-1 ])  # (nx, ny-1)
+
+        # ---- Fixed COO row/col index arrays (int32) ----
+        # x-left  off-diagonal: row=(k+1,j), col=(k,j),   k in [0,nx-2]
+        ii_xl, jj_xl = np.meshgrid(np.arange(1,  nx,  dtype=np.int32),
+                                    np.arange(ny,       dtype=np.int32), indexing='ij')
+        self._rows_xl = (ii_xl      * ny + jj_xl).ravel()
+        self._cols_xl = ((ii_xl-1)  * ny + jj_xl).ravel()
+
+        # x-right off-diagonal: row=(k,j),   col=(k+1,j), k in [0,nx-2]
+        ii_xr, jj_xr = np.meshgrid(np.arange(nx-1, dtype=np.int32),
+                                    np.arange(ny,   dtype=np.int32), indexing='ij')
+        self._rows_xr = (ii_xr      * ny + jj_xr).ravel()
+        self._cols_xr = ((ii_xr+1)  * ny + jj_xr).ravel()
+
+        # y-bottom off-diagonal: row=(i,k+1), col=(i,k),   k in [0,ny-2]
+        ii_yb, jj_yb = np.meshgrid(np.arange(nx,    dtype=np.int32),
+                                    np.arange(1, ny, dtype=np.int32), indexing='ij')
+        self._rows_yb = (ii_yb * ny + jj_yb    ).ravel()
+        self._cols_yb = (ii_yb * ny + jj_yb - 1).ravel()
+
+        # y-top   off-diagonal: row=(i,k),   col=(i,k+1), k in [0,ny-2]
+        ii_yt, jj_yt = np.meshgrid(np.arange(nx,    dtype=np.int32),
+                                    np.arange(ny-1,  dtype=np.int32), indexing='ij')
+        self._rows_yt = (ii_yt * ny + jj_yt    ).ravel()
+        self._cols_yt = (ii_yt * ny + jj_yt + 1).ravel()
+
+        # diagonal: all cells
+        all_idx = np.arange(self.n_total, dtype=np.int32)
+        self._rows_diag = all_idx
+        self._cols_diag = all_idx
+
+        # Precomputed 2-D meshes for face positions used when evaluating D(T,x,y)
+        # X-face mesh: (nx+1, ny) — Xf_2d[i,j]=x_faces[i], Yc_xf[i,j]=y_centers[j]
+        self._Xf_2d  = np.broadcast_to(self.x_faces[:, np.newaxis],
+                                        (nx + 1, ny)).copy()
+        self._Yc_xf  = np.broadcast_to(self.y_centers[np.newaxis, :],
+                                        (nx + 1, ny)).copy()
+        # Y-face mesh: (nx, ny+1) — Xc_yf[i,j]=x_centers[i], Yf_2d[i,j]=y_faces[j]
+        self._Xc_yf  = np.broadcast_to(self.x_centers[:, np.newaxis],
+                                        (nx, ny + 1)).copy()
+        self._Yf_2d  = np.broadcast_to(self.y_faces[np.newaxis, :],
+                                        (nx, ny + 1)).copy()
+        # Cell-center flat arrays for σ_a evaluation
+        self._Xc_flat = self.X_centers.ravel()
+        self._Yc_flat = self.Y_centers.ravel()
+
     def _compute_geometry(self):
         """Compute geometric factors (areas, volumes) for the mesh."""
         nx = self.nx_cells
         ny = self.ny_cells
-        
+
         # Face areas for x-direction faces (nx+1, ny)
         self.Ax_faces = np.zeros((nx + 1, ny))
         # Face areas for y-direction faces (nx, ny+1)
         self.Ay_faces = np.zeros((nx, ny + 1))
         # Cell volumes (nx, ny)
         self.V_cells = np.zeros((nx, ny))
-        
+
         if self.geometry == 'cartesian':
             # Cartesian: A_x = Δy, A_y = Δx, V = Δx·Δy
-            for i in range(nx + 1):
-                for j in range(ny):
-                    self.Ax_faces[i, j] = self.dy_cells[j]
-            
-            for i in range(nx):
-                for j in range(ny + 1):
-                    self.Ay_faces[i, j] = self.dx_cells[i]
-            
-            for i in range(nx):
-                for j in range(ny):
-                    self.V_cells[i, j] = self.dx_cells[i] * self.dy_cells[j]
-        
+            # Vectorized with broadcasting (no loops needed)
+            self.Ax_faces[:] = self.dy_cells[np.newaxis, :]          # (nx+1, ny)
+            self.Ay_faces[:] = self.dx_cells[:, np.newaxis]           # (nx, ny+1)
+            self.V_cells[:]  = self.dx_cells[:, np.newaxis] * self.dy_cells[np.newaxis, :]
+
         elif self.geometry == 'cylindrical':
-            # Cylindrical (r-z): A_r = 2πr·Δz, A_z = π(r_R² - r_L²), V = π(r_R² - r_L²)·Δz
-            for i in range(nx + 1):
-                r = self.x_faces[i]
-                for j in range(ny):
-                    self.Ax_faces[i, j] = 2.0 * np.pi * r * self.dy_cells[j]
-            
-            for i in range(nx):
-                r_left = self.x_faces[i]
-                r_right = self.x_faces[i + 1]
-                for j in range(ny + 1):
-                    self.Ay_faces[i, j] = np.pi * (r_right**2 - r_left**2)
-            
-            for i in range(nx):
-                r_left = self.x_faces[i]
-                r_right = self.x_faces[i + 1]
-                for j in range(ny):
-                    self.V_cells[i, j] = np.pi * (r_right**2 - r_left**2) * self.dy_cells[j]
+            # Cylindrical (r-z): A_r = 2πr·Δz, A_z = π(r_R²-r_L²), V = π(r_R²-r_L²)·Δz
+            # Ax_faces[i, j] = 2π * x_faces[i] * dy_cells[j]
+            self.Ax_faces[:] = (2.0 * np.pi * self.x_faces[:, np.newaxis]
+                                * self.dy_cells[np.newaxis, :])
+            # Ay_faces[i, j] = π * (x_faces[i+1]² - x_faces[i]²)
+            r_sq_diff = self.x_faces[1:]**2 - self.x_faces[:-1]**2   # (nx,)
+            self.Ay_faces[:] = np.pi * r_sq_diff[:, np.newaxis]       # broadcast over j
+            # V_cells[i, j] = π * (r_R² - r_L²) * dy_cells[j]
+            self.V_cells[:]  = np.pi * r_sq_diff[:, np.newaxis] * self.dy_cells[np.newaxis, :]
         
         else:
             raise ValueError(f"Unknown geometry: {self.geometry}")
@@ -823,160 +899,101 @@ class DiffusionOperatorSolver2D:
         nx = self.nx_cells
         ny = self.ny_cells
         n_total = self.n_total
-        
+
         # Reshape inputs to 2D if needed
         if temperature.shape == (n_total,):
             T_2d = temperature.reshape((nx, ny), order='C')
         else:
             T_2d = temperature
-        
+
         if phi_guess is None:
             phi_2d = np.zeros((nx, ny))
         elif phi_guess.shape == (n_total,):
             phi_2d = phi_guess.reshape((nx, ny), order='C')
         else:
             phi_2d = phi_guess
-        
-        # Evaluate diffusion coefficients at faces
-        D_x_faces = np.zeros((nx + 1, ny))
-        D_y_faces = np.zeros((nx, ny + 1))
-        
-        # X-direction faces
+
+        # ---- Vectorised face temperatures (no conditionals inside the loop) ----
+        # X-faces: shape (nx+1, ny)
+        T_x = np.empty((nx + 1, ny))
+        T_x[0]    = T_2d[0]           # left  boundary: use first cell
+        T_x[nx]   = T_2d[nx - 1]      # right boundary: use last  cell
+        T_x[1:nx] = 0.5 * (T_2d[:-1] + T_2d[1:])   # interior: arithmetic mean
+
+        # Y-faces: shape (nx, ny+1)
+        T_y = np.empty((nx, ny + 1))
+        T_y[:, 0]    = T_2d[:, 0]          # bottom boundary
+        T_y[:, ny]   = T_2d[:, ny - 1]     # top    boundary
+        T_y[:, 1:ny] = 0.5 * (T_2d[:, :-1] + T_2d[:, 1:])
+
+        # ---- Diffusion coefficients at faces (user-function loop, unavoidable) ----
+        D_x_faces = np.empty((nx + 1, ny))
+        _D   = self.diffusion_coeff_func
+        _Xf  = self._Xf_2d
+        _Yc  = self._Yc_xf
         for i in range(nx + 1):
+            xi = _Xf[i, 0]           # x_faces[i], same for all j
             for j in range(ny):
-                if i == 0:
-                    # Left boundary - use left cell
-                    T_face = T_2d[0, j]
-                    x_face = self.x_faces[0]
-                    y_face = self.y_centers[j]
-                elif i == nx:
-                    # Right boundary - use right cell
-                    T_face = T_2d[nx-1, j]
-                    x_face = self.x_faces[-1]
-                    y_face = self.y_centers[j]
-                else:
-                    # Interior face - average
-                    T_face = 0.5 * (T_2d[i-1, j] + T_2d[i, j])
-                    x_face = self.x_faces[i]
-                    y_face = self.y_centers[j]
-                
-                D_x_faces[i, j] = self.diffusion_coeff_func(T_face, x_face, y_face)
-        
-        # Y-direction faces
+                D_x_faces[i, j] = _D(T_x[i, j], xi, _Yc[i, j])
+
+        D_y_faces = np.empty((nx, ny + 1))
+        _Xc = self._Xc_yf
+        _Yf = self._Yf_2d
         for i in range(nx):
             for j in range(ny + 1):
-                if j == 0:
-                    # Bottom boundary - use bottom cell
-                    T_face = T_2d[i, 0]
-                    x_face = self.x_centers[i]
-                    y_face = self.y_faces[0]
-                elif j == ny:
-                    # Top boundary - use top cell
-                    T_face = T_2d[i, ny-1]
-                    x_face = self.x_centers[i]
-                    y_face = self.y_faces[-1]
-                else:
-                    # Interior face - average
-                    T_face = 0.5 * (T_2d[i, j-1] + T_2d[i, j])
-                    x_face = self.x_centers[i]
-                    y_face = self.y_faces[j]
-                
-                D_y_faces[i, j] = self.diffusion_coeff_func(T_face, x_face, y_face)
-        
-        # Evaluate absorption coefficients
-        sigma_a = np.zeros((nx, ny))
-        for i in range(nx):
-            for j in range(ny):
-                sigma_a[i, j] = self.absorption_coeff_func(T_2d[i, j], 
-                                                           self.x_centers[i], 
-                                                           self.y_centers[j])
-        
-        # Total absorption: σ_total = σ_a + 1/(c·Δt)
-        sigma_total = sigma_a + 1.0 / (C_LIGHT * self.dt)
-        
-        # Assemble matrix in COO format
-        rows = []
-        cols = []
-        data = []
-        
-        for i in range(nx):
-            for j in range(ny):
-                idx = self._index_2d_to_1d(i, j)
-                V = self.V_cells[i, j]
-                diag_val = 0.0
-                
-                # Left face (i-1/2, j)
-                if i > 0:
-                    A_left = self.Ax_faces[i, j]
-                    dx = self.x_centers[i] - self.x_centers[i-1]
-                    D_left = D_x_faces[i, j]
-                    coeff = A_left * D_left / (dx * V)
-                    
-                    diag_val += coeff
-                    idx_left = self._index_2d_to_1d(i-1, j)
-                    rows.append(idx)
-                    cols.append(idx_left)
-                    data.append(-coeff)
-                
-                # Right face (i+1/2, j)
-                if i < nx - 1:
-                    A_right = self.Ax_faces[i+1, j]
-                    dx = self.x_centers[i+1] - self.x_centers[i]
-                    D_right = D_x_faces[i+1, j]
-                    coeff = A_right * D_right / (dx * V)
-                    
-                    diag_val += coeff
-                    idx_right = self._index_2d_to_1d(i+1, j)
-                    rows.append(idx)
-                    cols.append(idx_right)
-                    data.append(-coeff)
-                
-                # Bottom face (i, j-1/2)
-                if j > 0:
-                    A_bottom = self.Ay_faces[i, j]
-                    dy = self.y_centers[j] - self.y_centers[j-1]
-                    D_bottom = D_y_faces[i, j]
-                    coeff = A_bottom * D_bottom / (dy * V)
-                    
-                    diag_val += coeff
-                    idx_bottom = self._index_2d_to_1d(i, j-1)
-                    rows.append(idx)
-                    cols.append(idx_bottom)
-                    data.append(-coeff)
-                
-                # Top face (i, j+1/2)
-                if j < ny - 1:
-                    A_top = self.Ay_faces[i, j+1]
-                    dy = self.y_centers[j+1] - self.y_centers[j]
-                    D_top = D_y_faces[i, j+1]
-                    coeff = A_top * D_top / (dy * V)
-                    
-                    diag_val += coeff
-                    idx_top = self._index_2d_to_1d(i, j+1)
-                    rows.append(idx)
-                    cols.append(idx_top)
-                    data.append(-coeff)
-                
-                # Absorption term on diagonal
-                diag_val += sigma_total[i, j]
-                
-                # Add diagonal entry
-                rows.append(idx)
-                cols.append(idx)
-                data.append(diag_val)
-        
-        # Create sparse matrix
+                D_y_faces[i, j] = _D(T_y[i, j], _Xc[i, j], _Yf[i, j])
+
+        # ---- Absorption coefficients at cell centres (user-function loop) ----
+        sigma_a = np.empty(n_total)
+        _sa  = self.absorption_coeff_func
+        _Xcf = self._Xc_flat
+        _Ycf = self._Yc_flat
+        T_1d = T_2d.ravel()
+        for k in range(n_total):
+            sigma_a[k] = _sa(T_1d[k], _Xcf[k], _Ycf[k])
+        sigma_a_2d = sigma_a.reshape((nx, ny))
+
+        # σ_total = σ_a + 1/(c·Δt)
+        sigma_total = sigma_a_2d + 1.0 / (C_LIGHT * self.dt)
+
+        # ---- Vectorised COO assembly (no Python inner loop) ----
+        # Off-diagonal coefficients: coeff = (precomputed geom ratio) × D_face
+        coeff_xl = self._geom_xl * D_x_faces[1:nx,  :]   # (nx-1, ny)
+        coeff_xr = self._geom_xr * D_x_faces[1:nx,  :]   # (nx-1, ny)
+        coeff_yb = self._geom_yb * D_y_faces[:,  1:ny]    # (nx, ny-1)
+        coeff_yt = self._geom_yt * D_y_faces[:,  1:ny]    # (nx, ny-1)
+
+        # Diagonal = σ_total + sum of all neighbour coupling coefficients
+        diag = sigma_total.copy()
+        diag[1:,    :] += coeff_xl      # left-face contribution  to cell i (i≥1)
+        diag[:nx-1, :] += coeff_xr      # right-face contribution to cell i (i≤nx-2)
+        diag[:,  1:]   += coeff_yb      # bottom-face contribution to cell j (j≥1)
+        diag[:, :ny-1] += coeff_yt      # top-face   contribution to cell j (j≤ny-2)
+
+        # Build COO using pre-allocated index arrays (constructed once at init)
+        rows = np.concatenate([self._rows_xl, self._rows_xr,
+                                self._rows_yb, self._rows_yt, self._rows_diag])
+        cols = np.concatenate([self._cols_xl, self._cols_xr,
+                                self._cols_yb, self._cols_yt, self._cols_diag])
+        data = np.concatenate([-coeff_xl.ravel(), -coeff_xr.ravel(),
+                                -coeff_yb.ravel(), -coeff_yt.ravel(),
+                                 diag.ravel()])
+
         A_coo = sparse.coo_matrix((data, (rows, cols)), shape=(n_total, n_total))
         A_csr = A_coo.tocsr()
-        
-        # Store diagonal for reference
-        diag_contribution = A_csr.diagonal()
-        
-        return A_csr, diag_contribution
+
+        # Store diagonal before BC modification (for reference / diagnostics)
+        diag_contribution = diag.ravel()
+
+        return A_csr, D_x_faces, D_y_faces, diag_contribution
     
-    def apply_boundary_conditions(self, A: sparse.csr_matrix, rhs: np.ndarray):
+    def apply_boundary_conditions(self, A: sparse.csr_matrix, rhs: np.ndarray,
+                                 phi: np.ndarray, temperature: np.ndarray,
+                                 D_x_faces: np.ndarray, D_y_faces: np.ndarray,
+                                 bc_time: float = 0.0):
         """
         Apply boundary conditions to the matrix and RHS.
+        Supports Robin BCs: A·φ + B·∇φ = C
         
         Modifies A and rhs in place.
         
@@ -986,62 +1003,154 @@ class DiffusionOperatorSolver2D:
             Operator matrix
         rhs : ndarray
             Right-hand side vector (n_total,)
+        phi : ndarray
+            Current φ values (for evaluating BC functions)
+        temperature : ndarray
+            Temperature field (for evaluating diffusion coefficient at boundary)
+        D_x_faces : ndarray
+            Diffusion coefficients at x-faces (from assemble_matrix)
+        D_y_faces : ndarray
+            Diffusion coefficients at y-faces (from assemble_matrix)
+        bc_time : float
+            Physical time used to evaluate potentially time-dependent BC functions.
         """
         nx = self.nx_cells
         ny = self.ny_cells
         
         A = A.tolil()  # Convert to lil format for efficient modification
         
-        # Left boundary (i=0)
+        # Convert phi and temperature to 2D for easier indexing
+        phi_2d = phi.reshape(nx, ny)
+        T_2d = temperature.reshape(nx, ny)
+        
+        # Left boundary (i=0, x=x_min)
         for j in range(ny):
             idx = self._index_2d_to_1d(0, j)
+            y_pos = self.y_centers[j]
             
-            if self.left_bc == 'dirichlet':
-                # φ_0,j = left_bc_value
-                A[idx, :] = 0.0
-                A[idx, idx] = 1.0
-                rhs[idx] = self.left_bc_value
-            
-            elif self.left_bc == 'neumann':
-                # ∂φ/∂x|_0,j = left_bc_value
-                # Already handled by natural BC, but can add flux contribution to RHS
-                pass
+            if self.left_bc_func is not None:
+                # Robin BC: A·φ + B·∇φ = C
+                A_bc, B_bc, C_bc = self.left_bc_func(phi_2d[0, j], (self.x_faces[0], y_pos), bc_time)
+                
+                if abs(B_bc) < 1e-14:
+                    # Dirichlet-type: φ_boundary = C/A
+                    phi_boundary = C_bc / A_bc
+                    T_avg = T_2d[0, j]
+                    D_boundary = self.diffusion_coeff_func(T_avg, self.x_faces[0], y_pos)
+                    dx_half = self.x_centers[0] - self.x_faces[0]
+                    flux_coeff = (self.Ax_faces[0, j] * D_boundary) / (self.V_cells[0, j] * dx_half)
+                    A[idx, idx] += flux_coeff
+                    rhs[idx] += flux_coeff * phi_boundary
+                else:
+                    # Robin/Neumann: A·φ + B·∇φ = C
+                    # Use actual diffusion coefficient from matrix assembly
+                    # For Marshak BC: B_bc = 2D, so D/B = 1/2 appears in the coupling
+                    D_boundary = D_x_faces[0, j]
+                    flux_coeff = (self.Ax_faces[0, j] * D_boundary * A_bc) / (B_bc * self.V_cells[0, j])
+                    rhs_contribution = (self.Ax_faces[0, j] * D_boundary * C_bc) / (B_bc * self.V_cells[0, j])
+                    A[idx, idx] += flux_coeff
+                    rhs[idx] += rhs_contribution
+            else:
+                # String-based BC
+                if self.left_bc == 'dirichlet':
+                    A[idx, :] = 0.0
+                    A[idx, idx] = 1.0
+                    rhs[idx] = self.left_bc_value
+                elif self.left_bc == 'neumann':
+                    pass
         
-        # Right boundary (i=nx-1)
+        # Right boundary (i=nx-1, x=x_max)
         for j in range(ny):
             idx = self._index_2d_to_1d(nx-1, j)
+            y_pos = self.y_centers[j]
             
-            if self.right_bc == 'dirichlet':
-                A[idx, :] = 0.0
-                A[idx, idx] = 1.0
-                rhs[idx] = self.right_bc_value
-            
-            elif self.right_bc == 'neumann':
-                pass
+            if self.right_bc_func is not None:
+                A_bc, B_bc, C_bc = self.right_bc_func(phi_2d[nx-1, j], (self.x_faces[-1], y_pos), bc_time)
+                
+                if abs(B_bc) < 1e-14:
+                    phi_boundary = C_bc / A_bc
+                    T_avg = T_2d[nx-1, j]
+                    D_boundary = self.diffusion_coeff_func(T_avg, self.x_faces[-1], y_pos)
+                    dx_half = self.x_faces[-1] - self.x_centers[nx-1]
+                    flux_coeff = (self.Ax_faces[nx, j] * D_boundary) / (self.V_cells[nx-1, j] * dx_half)
+                    A[idx, idx] += flux_coeff
+                    rhs[idx] += flux_coeff * phi_boundary
+                else:
+                    # Robin/Neumann: Use actual diffusion coefficient
+                    D_boundary = D_x_faces[nx, j]
+                    flux_coeff = (self.Ax_faces[nx, j] * D_boundary * A_bc) / (B_bc * self.V_cells[nx-1, j])
+                    rhs_contribution = (self.Ax_faces[nx, j] * D_boundary * C_bc) / (B_bc * self.V_cells[nx-1, j])
+                    A[idx, idx] += flux_coeff
+                    rhs[idx] += rhs_contribution
+            else:
+                if self.right_bc == 'dirichlet':
+                    A[idx, :] = 0.0
+                    A[idx, idx] = 1.0
+                    rhs[idx] = self.right_bc_value
+                elif self.right_bc == 'neumann':
+                    pass
         
-        # Bottom boundary (j=0)
+        # Bottom boundary (j=0, y=y_min)
         for i in range(nx):
             idx = self._index_2d_to_1d(i, 0)
+            x_pos = self.x_centers[i]
             
-            if self.bottom_bc == 'dirichlet':
-                A[idx, :] = 0.0
-                A[idx, idx] = 1.0
-                rhs[idx] = self.bottom_bc_value
-            
-            elif self.bottom_bc == 'neumann':
-                pass
+            if self.bottom_bc_func is not None:
+                A_bc, B_bc, C_bc = self.bottom_bc_func(phi_2d[i, 0], (x_pos, self.y_faces[0]), bc_time)
+                
+                if abs(B_bc) < 1e-14:
+                    phi_boundary = C_bc / A_bc
+                    T_avg = T_2d[i, 0]
+                    D_boundary = self.diffusion_coeff_func(T_avg, x_pos, self.y_faces[0])
+                    dy_half = self.y_centers[0] - self.y_faces[0]
+                    flux_coeff = (self.Ay_faces[i, 0] * D_boundary) / (self.V_cells[i, 0] * dy_half)
+                    A[idx, idx] += flux_coeff
+                    rhs[idx] += flux_coeff * phi_boundary
+                else:
+                    # Robin/Neumann: Use actual diffusion coefficient
+                    D_boundary = D_y_faces[i, 0]
+                    flux_coeff = (self.Ay_faces[i, 0] * D_boundary * A_bc) / (B_bc * self.V_cells[i, 0])
+                    rhs_contribution = (self.Ay_faces[i, 0] * D_boundary * C_bc) / (B_bc * self.V_cells[i, 0])
+                    A[idx, idx] += flux_coeff
+                    rhs[idx] += rhs_contribution
+            else:
+                if self.bottom_bc == 'dirichlet':
+                    A[idx, :] = 0.0
+                    A[idx, idx] = 1.0
+                    rhs[idx] = self.bottom_bc_value
+                elif self.bottom_bc == 'neumann':
+                    pass
         
-        # Top boundary (j=ny-1)
+        # Top boundary (j=ny-1, y=y_max)
         for i in range(nx):
             idx = self._index_2d_to_1d(i, ny-1)
+            x_pos = self.x_centers[i]
             
-            if self.top_bc == 'dirichlet':
-                A[idx, :] = 0.0
-                A[idx, idx] = 1.0
-                rhs[idx] = self.top_bc_value
-            
-            elif self.top_bc == 'neumann':
-                pass
+            if self.top_bc_func is not None:
+                A_bc, B_bc, C_bc = self.top_bc_func(phi_2d[i, ny-1], (x_pos, self.y_faces[-1]), bc_time)
+                
+                if abs(B_bc) < 1e-14:
+                    phi_boundary = C_bc / A_bc
+                    T_avg = T_2d[i, ny-1]
+                    D_boundary = self.diffusion_coeff_func(T_avg, x_pos, self.y_faces[-1])
+                    dy_half = self.y_faces[-1] - self.y_centers[ny-1]
+                    flux_coeff = (self.Ay_faces[i, ny] * D_boundary) / (self.V_cells[i, ny-1] * dy_half)
+                    A[idx, idx] += flux_coeff
+                    rhs[idx] += flux_coeff * phi_boundary
+                else:
+                    # Robin/Neumann: Use actual diffusion coefficient
+                    D_boundary = D_y_faces[i, ny]
+                    flux_coeff = (self.Ay_faces[i, ny] * D_boundary * A_bc) / (B_bc * self.V_cells[i, ny-1])
+                    rhs_contribution = (self.Ay_faces[i, ny] * D_boundary * C_bc) / (B_bc * self.V_cells[i, ny-1])
+                    A[idx, idx] += flux_coeff
+                    rhs[idx] += rhs_contribution
+            else:
+                if self.top_bc == 'dirichlet':
+                    A[idx, :] = 0.0
+                    A[idx, idx] = 1.0
+                    rhs[idx] = self.top_bc_value
+                elif self.top_bc == 'neumann':
+                    pass
         
         return A.tocsr()
     
@@ -1051,7 +1160,12 @@ class DiffusionOperatorSolver2D:
              phi_guess: Optional[np.ndarray] = None,
              use_iterative: bool = False,
              max_iter: int = 10,
-             tol: float = 1e-6) -> np.ndarray:
+             tol: float = 1e-6,
+             bc_time: float = 0.0,
+             override_left_bc: Optional[Callable] = None,
+             override_right_bc: Optional[Callable] = None,
+             override_bottom_bc: Optional[Callable] = None,
+             override_top_bc: Optional[Callable] = None) -> np.ndarray:
         """
         Solve A φ = b for φ.
         
@@ -1070,6 +1184,16 @@ class DiffusionOperatorSolver2D:
             Maximum iterations for flux limiting
         tol : float
             Tolerance for flux limiting iteration
+        bc_time : float
+            Physical time used to evaluate potentially time-dependent BC functions.
+        override_left_bc : callable or None
+            Temporarily override left boundary condition for this solve
+        override_right_bc : callable or None
+            Temporarily override right boundary condition for this solve
+        override_bottom_bc : callable or None
+            Temporarily override bottom boundary condition for this solve
+        override_top_bc : callable or None
+            Temporarily override top boundary condition for this solve
             
         Returns:
         --------
@@ -1080,11 +1204,30 @@ class DiffusionOperatorSolver2D:
         ny = self.ny_cells
         n_total = self.n_total
         
+        # Temporarily override boundary conditions if requested
+        saved_left_bc = self.left_bc_func
+        saved_right_bc = self.right_bc_func
+        saved_bottom_bc = self.bottom_bc_func
+        saved_top_bc = self.top_bc_func
+        if override_left_bc is not None:
+            self.left_bc_func = override_left_bc
+        if override_right_bc is not None:
+            self.right_bc_func = override_right_bc
+        if override_bottom_bc is not None:
+            self.bottom_bc_func = override_bottom_bc
+        if override_top_bc is not None:
+            self.top_bc_func = override_top_bc
+        
         # Flatten inputs if needed
         if rhs.shape == (nx, ny):
             rhs_1d = rhs.flatten(order='C')
         else:
             rhs_1d = rhs
+        
+        if temperature.shape == (nx, ny):
+            T_1d = temperature.flatten(order='C')
+        else:
+            T_1d = temperature
         
         if phi_guess is None:
             phi_1d = np.zeros(n_total)
@@ -1095,12 +1238,32 @@ class DiffusionOperatorSolver2D:
         
         # Iterative solution for flux-limited diffusion
         for iteration in range(max_iter):
-            # Assemble matrix
-            A, _ = self.assemble_matrix(temperature, phi_1d)
+            # Check if we can use cached matrix (for fixed temperature solves)
+            use_cache = (self._cached_T is not None and 
+                        self._cached_A is not None and
+                        np.array_equal(T_1d, self._cached_T))
+            
+            if use_cache:
+                # Reuse cached matrix
+                A = self._cached_A.copy()
+                D_x_faces = self._cached_D_x_faces
+                D_y_faces = self._cached_D_y_faces
+            else:
+                # Assemble matrix
+                A, D_x_faces, D_y_faces, _ = self.assemble_matrix(T_1d, phi_1d)
+                
+                # Cache for potential reuse (only if not using flux limiting iteration)
+                if not use_iterative:
+                    self._cached_T = T_1d.copy()
+                    self._cached_A = A.copy()
+                    self._cached_D_x_faces = D_x_faces
+                    self._cached_D_y_faces = D_y_faces
             
             # Apply boundary conditions
             rhs_bc = rhs_1d.copy()
-            A = self.apply_boundary_conditions(A, rhs_bc)
+            A = self.apply_boundary_conditions(
+                A, rhs_bc, phi_1d, T_1d, D_x_faces, D_y_faces, bc_time=bc_time
+            )
             
             # Solve linear system
             phi_new = spsolve(A, rhs_bc)
@@ -1109,10 +1272,26 @@ class DiffusionOperatorSolver2D:
             if use_iterative:
                 rel_change = np.linalg.norm(phi_new - phi_1d) / (np.linalg.norm(phi_new) + 1e-14)
                 if rel_change < tol:
+                    # Restore original BCs
+                    self.left_bc_func = saved_left_bc
+                    self.right_bc_func = saved_right_bc
+                    self.bottom_bc_func = saved_bottom_bc
+                    self.top_bc_func = saved_top_bc
                     return phi_new.reshape((nx, ny), order='C')
                 phi_1d = phi_new
             else:
+                # Restore original BCs
+                self.left_bc_func = saved_left_bc
+                self.right_bc_func = saved_right_bc
+                self.bottom_bc_func = saved_bottom_bc
+                self.top_bc_func = saved_top_bc
                 return phi_new.reshape((nx, ny), order='C')
+        
+        # Restore original BCs (if max iterations reached)
+        self.left_bc_func = saved_left_bc
+        self.right_bc_func = saved_right_bc
+        self.bottom_bc_func = saved_bottom_bc
+        self.top_bc_func = saved_top_bc
         
         if use_iterative:
             print(f"Warning: Flux limiting iteration did not converge after {max_iter} iterations")
@@ -1148,7 +1327,7 @@ class DiffusionOperatorSolver2D:
         else:
             phi_1d = phi
         
-        A, _ = self.assemble_matrix(temperature, phi_1d)
+        A, _, _, _ = self.assemble_matrix(temperature, phi_1d)
         result_1d = A.dot(phi_1d)
         
         return result_1d.reshape((nx, ny), order='C')
