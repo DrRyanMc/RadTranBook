@@ -77,8 +77,14 @@ def marshak_diffusion_coeff(T, r):
 # MARSHAK WAVE SIMULATION
 # =============================================================================
 
-def run_marshak_wave_multigroup():
-    """Run 2-group Marshak wave simulation"""
+def run_marshak_wave_multigroup(use_preconditioner=False):
+    """Run 2-group Marshak wave simulation
+    
+    Parameters:
+    -----------
+    use_preconditioner : bool
+        Use LMFG (Linear Multifrequency Gray) preconditioning for GMRES
+    """
     
     print("="*80)
     print("Marshak Wave Problem - Multigroup (2 Groups)")
@@ -88,6 +94,10 @@ def run_marshak_wave_multigroup():
     print("  Heat capacity: c_v = 0.3 GJ/(cm^3·keV)")
     print("  Left BC: Blackbody at T = 1 keV")
     print("  Right BC: Zero flux")
+    if use_preconditioner:
+        print("  GMRES: Using LMFG preconditioning")
+    else:
+        print("  GMRES: No preconditioning")
     print("="*80)
     
     # Problem setup
@@ -259,6 +269,7 @@ def run_marshak_wave_multigroup():
             verbose_this_step = (step_count < 3)  # Verbose on first 3 steps
             info = solver.step(max_newton_iter=10, newton_tol=1e-6,
                               gmres_tol=1e-8, gmres_maxiter=1000,
+                              use_preconditioner=use_preconditioner,
                               verbose=verbose_this_step)
             
             solver.advance_time()
@@ -464,10 +475,18 @@ def plot_marshak_wave_multigroup(solutions, energy_edges):
 
 def main():
     """Main execution function"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Marshak Wave Multigroup Simulation')
+    parser.add_argument('--preconditioner', action='store_true',
+                       help='Use LMFG (Linear Multifrequency Gray) preconditioning')
+    args = parser.parse_args()
     
     # Run multigroup Marshak wave simulation
     print("\nRunning 2-group Marshak wave simulation...")
-    solutions, solver, energy_edges = run_marshak_wave_multigroup()
+    solutions, solver, energy_edges = run_marshak_wave_multigroup(
+        use_preconditioner=args.preconditioner
+    )
     
     # Plot results
     print("\nPlotting multigroup Marshak wave results...")

@@ -123,6 +123,14 @@ class DiffusionOperatorSolver1D:
         else:
             self.right_bc_func = right_bc_func
     
+    def apply_operator(self, phi, T):
+        """
+        Applies A·phi without solving.
+        """
+        A = self.assemble_matrix(T)
+        return A @ phi
+
+
     def _compute_geometry(self):
         """Compute geometric factors (areas, volumes) for the mesh."""
         if self.geometry == 'planar':
@@ -316,14 +324,13 @@ class DiffusionOperatorSolver1D:
             
         else:
             # Robin/Neumann BC: A·φ + B·(∂φ/∂n) = C
-            # For Marshak BC: A=1/2, B=1/(3σ_BC), C=0.5*B_g(T_b)
+            # For Marshak BC: A=1/2, B=c/(3σ_BC), C=0.5*B_g(T_b)
             # 
-            # CRITICAL: For Robin BC, the diffusion coefficient should come from the BC parameter B,
-            # not from the interior material! B = 1/(3σ_BC) already encodes D_BC = c/(3σ_BC) = c*B
-            # 
-            # Using D_faces[0] (from cold interior) would make D tiny and prevent radiation entry!
-            # Instead, extract D from the BC: D = c·B (since B = 1/(3σ) and D = c/(3σ))
-            D_boundary = C_LIGHT * B_bc  # Extract D from BC parameter
+            # For the φ diffusion equation, the natural diffusion coefficient is D = c/(3σ).
+            # The user's diffusion_coeff_func typically returns 1/(3σ), so B should include c.
+            # However, B might already include c if the user set it up that way,
+            # so use B directly as D_boundary.
+            D_boundary = B_bc  # Use B as the diffusion coefficient directly
             
             flux_coeff = (self.A_faces[0] * D_boundary * A_bc) / (B_bc * self.V_cells[0])
             rhs_contribution = (self.A_faces[0] * D_boundary * C_bc) / (B_bc * self.V_cells[0])
@@ -355,8 +362,8 @@ class DiffusionOperatorSolver1D:
             
         else:
             # Robin/Neumann BC: A·φ + B·(∂φ/∂n) = C
-            # Extract D from BC parameter to avoid using interior material properties
-            D_boundary = C_LIGHT * B_bc
+            # B is already the diffusion coefficient D = 1/(3σ) (without c factor)
+            D_boundary = B_bc
             flux_coeff = (self.A_faces[-1] * D_boundary * A_bc) / (B_bc * self.V_cells[-1])
             rhs_contribution = (self.A_faces[-1] * D_boundary * C_bc) / (B_bc * self.V_cells[-1])
             

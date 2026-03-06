@@ -834,6 +834,9 @@ class MultigroupDiffusionSolver1D:
         # Coupling term: [Σ_{g'} 4π·σ*_{a,g'}·B_{g'}(T_★) + Δe/Δt]
         coupling_term = sum_emission + Delta_e / self.dt
 
+        # Use cell-local emission fractions for consistent group partitioning
+        chi_local = self.compute_local_emission_fractions(T_star)
+
         # Debug: Check for huge values
         if np.any(np.abs(coupling_term) > 1e10) and not self.quiet:
             print(f"    WARNING in compute_source_xi for group {g}:")
@@ -849,11 +852,30 @@ class MultigroupDiffusionSolver1D:
 
         xi_g = (1.0 / (C_LIGHT * self.dt)) * phi_g_old + \
                4.0 * np.pi * self.sigma_a[g, :] * B_g_star - \
-               self.chi[g] * (1.0 - f) * coupling_term
+               chi_local[g, :] * (1.0 - f) * coupling_term
 
         # Add external source Q_g(r, t)
         Q_g = np.array([self.source_funcs[g](self.r_centers[i], t) for i in range(self.n_cells)])
         xi_g += Q_g
+
+        # Add boundary source contribution (CRITICAL FIX!)
+        bc_source = self.compute_boundary_source_contribution(g, T_star)
+        xi_g += bc_source
+
+        # Debug: Show all components of xi_g for first group
+        if g == 0 and self.debug_io and not self.quiet:
+            print(f"    [DEBUG XI] Group {g} source components:")
+            print(f"      phi_g_old/dt term: {(1.0 / (C_LIGHT * self.dt)) * phi_g_old[0]:.3e}")
+            print(f"      Planck emission term: {(4.0 * np.pi * self.sigma_a[g, 0] * B_g_star[0]):.3e}")
+            print(f"      Coupling term: {(-chi_local[g, 0] * (1.0 - f[0]) * coupling_term[0]):.3e}")
+            print(f"      External source Q_g: {Q_g[0]:.3e}")
+            print(f"      Boundary source: {bc_source[0]:.3e}")
+            print(f"      Total xi_g: {xi_g[0]:.3e}")
+            print(f"    [DEBUG XI] For comparison:")
+            print(f"      T_star[0] = {T_star[0]:.6e} keV")
+            print(f"      B_g(T_star[0]) = {B_g_star[0]:.6e}")
+            print(f"      σ_a,g[0] = {self.sigma_a[g, 0]:.6e}")
+            print(f"      Fleck factor f[0] = {f[0]:.6e}")
 
         # Debug: Check final xi_g
         if np.any(np.abs(xi_g) > 1e10) and not self.quiet:
@@ -883,6 +905,7 @@ class MultigroupDiffusionSolver1D:
         """
         # Get local Fleck factor for each cell
         f = self.fleck_factor
+        chi_local = self.compute_local_emission_fractions(T_star)
         result = kappa.copy().astype(np.float64)
         
         # Debug: Check input
@@ -902,8 +925,7 @@ class MultigroupDiffusionSolver1D:
         # Subtract Σ_g σ*_{a,g}·A_g^{-1}[χ_g(1-f)κ]
         for g in range(self.n_groups):
             # RHS for group g: χ_g(1-f)κ
-            # Use global chi (scalar per group) for consistent operator definition
-            rhs_g = self.chi[g] * (1.0 - f) * kappa
+            rhs_g = chi_local[g, :] * (1.0 - f) * kappa
             
             # Solve A_g φ_g = rhs_g with HOMOGENEOUS BCs
             # NOTE: This is critical! The B operator must use homogeneous BCs.
@@ -1140,11 +1162,18 @@ class MultigroupDiffusionSolver1D:
             return homogeneous_bc
         
         for g in range(self.n_groups):
-            # RHS = χ_g(1-f)κ + ξ_g (use spatially varying chi_local)
+            # RHS = χ_g(1-f)κ + ξ_g
             rhs_g = chi_local[g, :] * (1.0 - f) * kappa + xi_g_list[g]
             
-            # Solve A_g φ_g = rhs_g (use previous timestep's phi as guess for flux limiter)
-            phi_g = self.solvers[g].solve(rhs_g, T_star, phi_guess=self.phi_g_stored[g, :])
+            # Solve A_g φ_g = rhs_g with HOMOGENEOUS BCs
+            # The boundary flux is already in ξ_g as a source term
+            homogeneous_left_bc = make_homogeneous_bc(self.solvers[g].left_bc_func)
+            homogeneous_right_bc = make_homogeneous_bc(self.solvers[g].right_bc_func)
+            
+            phi_g = self.solvers[g].solve(rhs_g, T_star, 
+                                         phi_guess=self.phi_g_stored[g, :],
+                                         override_left_bc=homogeneous_left_bc,
+                                         override_right_bc=homogeneous_right_bc)
             
             # Check for negative phi (unphysical) - ignore machine precision noise
             neg_threshold = -1e-10  # Only warn if significantly negative
@@ -1174,30 +1203,40 @@ class MultigroupDiffusionSolver1D:
             phi_g_fraction[g, ~mask] = 1.0 / self.n_groups
         
         return E_r, phi_g_fraction
-    
     def compute_gray_weights(self, T_star, verbose=False):
+        """Compute LMFGK gray weights \lambda~_g(i).
+
+        We use the sigma_a-weighted normalization (matching the patched LMFGK):
+
+            lam_g = chi_g / (sigma_a,g + 1/(c dt))
+            lambda_tilde_g = lam_g / sum_k (sigma_a,k * lam_k)
+
+        so that, cellwise, \sum_g sigma_a,g * lambda_tilde_g = 1.
+
+        Notes
+        -----
+        * These weights are used only for the gray *preconditioner* construction.
+          The physical source assembly can still use temperature-dependent, cell-local
+          emission partitioning.
+        """
         inv_c_dt = 1.0 / (C_LIGHT * self.dt)
         reaction_term = self.sigma_a + inv_c_dt  # (G, N)
 
-        # lam_g = chi_g / (sigma_a,g + 1/(cΔt))
         lam = np.zeros_like(self.sigma_a)
         for g in range(self.n_groups):
             lam[g, :] = self.chi[g] / reaction_term[g, :]
 
-        # Normalize weights: zeta_g = lam_g / (Σ_k σ_a,k·lam_k)
-        # This ensures Σ σ_a·λ̃ = 1 (conservation of absorption)
         S = np.sum(self.sigma_a * lam, axis=0)
         lambda_tilde = lam / (S[None, :] + 1e-300)
 
-        if verbose:
-            # Verify: sum(lam_tilde) should be 1 for each cell
-            sum_check = np.sum(lambda_tilde, axis=0)
-            check = np.max(np.abs(sum_check - 1.0))
-            print(f"    DEBUG: max |Σ λ̃ - 1| = {check:.3e}")
+        if verbose and (not getattr(self, 'quiet', False)):
+            sigma_weighted_sum = np.sum(self.sigma_a * lambda_tilde, axis=0)
+            check = np.max(np.abs(sigma_weighted_sum - 1.0))
+            print(f"    DEBUG: max |Σ σ_a λ̃ - 1| = {check:.3e}")
 
         return lambda_tilde
 
-    
+
     def compute_gray_operator_coefficients(self, T_star: np.ndarray, 
                                           lambda_tilde: np.ndarray,
                                           verbose: bool = False) -> Tuple[np.ndarray, np.ndarray]:
@@ -1459,23 +1498,13 @@ class MultigroupDiffusionSolver1D:
                 rhs_gray = (1.0 - f) * y
                 U = gray_solver.solve(rhs_gray, T_star)
                 result = y + sigma_a_gray * U
-                # DEBUG: Track preconditioner applications
-                if np.max(np.abs(y)) > 1e-6:
+                if verbose and (not getattr(self, 'quiet', False)):
                     correction_norm = np.linalg.norm(sigma_a_gray * U)
                     y_norm = np.linalg.norm(y)
-                    U_norm = np.linalg.norm(U)
-                    rhs_norm = np.linalg.norm(rhs_gray)
-                    sig_a_mean = np.mean(sigma_a_gray)
-                    print(f"  PRECOND: ||y||={y_norm:.3e}, ||rhs_gray||={rhs_norm:.3e}, ||U||={U_norm:.3e}, ⟨σ_a⟩={sig_a_mean:.3e}, ||correction||={correction_norm:.3e}, ratio={correction_norm/max(y_norm, 1e-100):.3e}")
+                    print(f"    DEBUG PRECOND: ||y||={y_norm:.3e}, ||correction||={correction_norm:.3e}, ratio={correction_norm/max(y_norm, 1e-100):.3e}")
                 return result
             else:
                 raise NotImplementedError("There is no other option")
-
-            # Solve the gray correction: H·U = m(y)
-            U = gray_solver.solve(rhs_gray, T_star)
-
-            # Apply left-multiplier: C·y = y + ⟨σ_a⟩·U
-            return y + sigma_a_gray * U
         
         # Create LinearOperator for preconditioner
         precond_operator = LinearOperator(

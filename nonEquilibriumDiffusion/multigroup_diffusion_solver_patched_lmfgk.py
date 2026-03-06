@@ -297,9 +297,7 @@ class MultigroupDiffusionSolver1D:
                  material_energy_func: Optional[Callable] = None,
                  inverse_material_energy_func: Optional[Callable] = None,
                  rho: float = 1.0,
-                 cv: float = 1.0,
-                 quiet: bool = False,
-                 debug_io: bool = False):
+                 cv: float = 1.0):
         """
         Initialize multigroup solver.
         
@@ -372,10 +370,6 @@ class MultigroupDiffusionSolver1D:
             Specific heat (GJ/(g·keV))
             Can be a constant or a function c_v(T) for temperature-dependent specific heat
             For radiation-dominated materials with e=a·T^4, use c_v(T) = 4a·T^3/ρ
-        quiet : bool
-            If True, suppress solver informational/warning prints
-        debug_io : bool
-            If True, enable detailed boundary/source debug prints
         """
         self.n_groups = n_groups
         self.r_min = r_min
@@ -384,8 +378,6 @@ class MultigroupDiffusionSolver1D:
         self.geometry = geometry
         self.dt = dt
         self.rho = rho
-        self.quiet = quiet
-        self.debug_io = debug_io
         
         # Store cv as either scalar or function
         if callable(cv):
@@ -474,7 +466,7 @@ class MultigroupDiffusionSolver1D:
                         # Track R values (only store a few for diagnostics)
                         if len(R_values_seen) < 5 and R > 0.5:
                             R_values_seen.append(R)
-                            if len(R_values_seen) == 1 and self.debug_io and not self.quiet:
+                            if len(R_values_seen) == 1:
                                 print(f"    [Group {group_idx}] First significant R = {R:.4f} at r={r:.4f}")
                         
                         # Apply flux limiter
@@ -515,8 +507,7 @@ class MultigroupDiffusionSolver1D:
                     raise ValueError(f"planck_funcs must have length n_groups = {n_groups}")
                 self.planck_funcs = planck_funcs
                 self.user_planck = True
-            if not self.quiet:
-                print(f"  Using user-defined Planck functions")
+            print(f"  Using user-defined Planck functions")
         else:
             # Use library functions
             self.planck_funcs = [
@@ -537,8 +528,7 @@ class MultigroupDiffusionSolver1D:
                     raise ValueError(f"dplanck_dT_funcs must have length n_groups = {n_groups}")
                 self.dplanck_dT_funcs = dplanck_dT_funcs
                 self.user_dplanck = True
-            if not self.quiet:
-                print(f"  Using user-defined dB/dT functions")
+            print(f"  Using user-defined dB/dT functions")
         else:
             # Use library functions
             self.dplanck_dT_funcs = [
@@ -554,13 +544,11 @@ class MultigroupDiffusionSolver1D:
                 raise ValueError(f"emission_fractions must have length n_groups = {n_groups}")
             if abs(np.sum(self.chi) - 1.0) > 1e-10:
                 raise ValueError(f"emission_fractions must sum to 1.0, got {np.sum(self.chi)}")
-            if not self.quiet:
-                print(f"  Using manual emission fractions: {self.chi}")
+            print(f"  Using manual emission fractions: {self.chi}")
         else:
             # Compute from dB/dT using either user functions or library functions
             self.chi = self._compute_emission_fractions(T_ref=1.0)
-            if not self.quiet:
-                print(f"  Computed emission fractions: {self.chi}")
+            print(f"  Computed emission fractions: {self.chi}")
         
         # Material energy functions
         if material_energy_func is None:
@@ -585,9 +573,6 @@ class MultigroupDiffusionSolver1D:
         # Store fractional distribution of phi_g for accurate source term computation
         # phi_g_fraction[g,:] = phi_g / phi_total (stored from previous timestep)
         self.phi_g_fraction = np.ones((n_groups, n_cells)) / n_groups  # Initialize uniform
-
-        # Cell-local emission fractions χ_g(i) (temperature-dependent; initialized from global χ)
-        self.chi_local = np.tile(self.chi[:, np.newaxis], (1, n_cells))
         
         # Store phi_g values for each group (for flux limiter phi_guess)
         # Initialize with small non-zero values
@@ -596,15 +581,14 @@ class MultigroupDiffusionSolver1D:
         # Store absorption coefficients (evaluated at cell centers)
         self.sigma_a = np.zeros((n_groups, n_cells))
         
-        if not self.quiet:
-            print(f"Initialized multigroup solver:")
-            print(f"  Groups: {n_groups}")
-            print(f"  Cells: {n_cells}")
-            print(f"  Geometry: {geometry}")
-            print(f"  Energy edges (keV): {self.energy_edges}")
-            print(f"  Fleck factor: computed locally for each cell")
-            print(f"  Emission fractions χ: {self.chi}")
-            print(f"  Using flux limiters: {self.use_flux_limiters}")
+        print(f"Initialized multigroup solver:")
+        print(f"  Groups: {n_groups}")
+        print(f"  Cells: {n_cells}")
+        print(f"  Geometry: {geometry}")
+        print(f"  Energy edges (keV): {self.energy_edges}")
+        print(f"  Fleck factor: computed locally for each cell")
+        print(f"  Emission fractions χ: {self.chi}")
+        print(f"  Using flux limiters: {self.use_flux_limiters}")
     
     def _compute_emission_fractions(self, T_ref: float = 1.0) -> np.ndarray:
         """
@@ -698,107 +682,12 @@ class MultigroupDiffusionSolver1D:
             f[i] = 1.0 / denominator
         
         return f
-
-    def compute_local_emission_fractions(self, T: np.ndarray) -> np.ndarray:
-        """
-        Compute cell-local emission fractions χ_g(T) using current absorption coefficients.
-
-        χ_g(i) = [σ_{a,g}(i) 4π B_g(T_i)] / [Σ_{g'} σ_{a,g'}(i) 4π B_{g'}(T_i)]
-
-        Parameters:
-        -----------
-        T : ndarray
-            Temperature at cell centers
-
-        Returns:
-        --------
-        chi_local : ndarray, shape (n_groups, n_cells)
-            Cell-local group emission fractions that sum to 1 over groups at each cell.
-        """
-        weighted = np.zeros((self.n_groups, self.n_cells), dtype=np.float64)
-
-        for g in range(self.n_groups):
-            B_g = np.array([self.planck_funcs[g](T[i]) for i in range(self.n_cells)])
-            weighted[g, :] = self.sigma_a[g, :] * 4.0 * np.pi * B_g
-
-        denom = np.sum(weighted, axis=0)
-        chi_local = np.zeros_like(weighted)
-
-        nonzero = denom > 0.0
-        if np.any(nonzero):
-            chi_local[:, nonzero] = weighted[:, nonzero] / denom[nonzero]
-
-        if np.any(~nonzero):
-            chi_local[:, ~nonzero] = 1.0 / self.n_groups
-
-        return chi_local
-    
-    def compute_boundary_source_contribution(self, g: int, T_star: np.ndarray) -> np.ndarray:
-        """
-        Compute boundary source contribution for group g from Robin BC: A·φ + B·∇φ = C
-        
-        The boundary term C should be added to the source ξ_g, not to the operator.
-        This allows the operator A_g to be homogeneous (C=0), which is required for
-        the κ formulation.
-        
-        Parameters:
-        -----------
-        g : int
-            Group index
-        T_star : ndarray
-            Temperature for evaluating boundary conditions
-            
-        Returns:
-        --------
-        bc_source : ndarray
-            Boundary contribution to source (non-zero only at boundary cells)
-        """
-        bc_source = np.zeros(self.n_cells)
-        
-        # Get geometry info from solver
-        A_faces = self.solvers[g].A_faces
-        V_cells = self.solvers[g].V_cells
-        
-        # LEFT BOUNDARY (i=0)
-        phi_left = self.phi_g_stored[g, 0]  # Current guess
-        A_bc, B_bc, C_bc = self.solvers[g].left_bc_func(phi_left, self.solvers[g].r_faces[0])
-        
-        if g == 0 and self.debug_io and not self.quiet:  # Debug first group only
-            print(f"    [DEBUG BC] Group {g}, Left BC: A={A_bc:.3e}, B={B_bc:.3e}, C={C_bc:.3e}")
-        
-        if abs(B_bc) > 1e-14:  # Robin/Neumann BC
-            # B_bc should be the full diffusion coefficient D = c/(3σ) for φ equation
-            # Formula from apply_boundary_conditions: rhs += (A_faces * D * C) / (B * V_cells)
-            # Since D = B in our BC convention, this simplifies to: rhs += (A_faces * C) / V_cells
-            rhs_contribution = (A_faces[0] * C_bc) / V_cells[0]
-            bc_source[0] += rhs_contribution
-            if g == 0 and self.debug_io and not self.quiet:
-                print(f"    [DEBUG BC] Left BC source contribution: {rhs_contribution:.3e}")
-        
-        # RIGHT BOUNDARY (i=n-1)
-        phi_right = self.phi_g_stored[g, -1]  # Current guess
-        A_bc, B_bc, C_bc = self.solvers[g].right_bc_func(phi_right, self.solvers[g].r_faces[-1])
-        
-        if g == 0 and self.debug_io and not self.quiet:  # Debug first group only
-            print(f"    [DEBUG BC] Group {g}, Right BC: A={A_bc:.3e}, B={B_bc:.3e}, C={C_bc:.3e}")
-        
-        if abs(B_bc) > 1e-14:  # Robin/Neumann BC
-            # B_bc should be the full diffusion coefficient D = c/(3σ) for φ equation
-            rhs_contribution = (A_faces[-1] * C_bc) / V_cells[-1]
-            bc_source[-1] += rhs_contribution
-            if g == 0 and self.debug_io and not self.quiet:
-                print(f"    [DEBUG BC] Right BC source contribution: {rhs_contribution:.3e}")
-        
-        return bc_source
     
     def compute_source_xi(self, g: int, T_star: np.ndarray, t: float) -> np.ndarray:
         """
-        Compute source term ξ_g for group g (equation 8.84 plus external source and boundary terms).
+        Compute source term ξ_g for group g (equation 8.84 plus external source).
         
-        ξ_g = (1/cΔt)φ_g^n + 4π·σ*_{a,g}·B_g(T_★) - χ_g(1-f)·[Σ_{g'} 4π·σ*_{a,g'}·B_{g'}(T_★) + Δe/Δt] 
-              + Q_g(r,t) + BC_source_g
-        
-        where BC_source_g contains the boundary flux term C from Robin BC: A·φ + B·∇φ = C
+        ξ_g = (1/cΔt)φ_g^n + 4π·σ*_{a,g}·B_g(T_★) - χ_g(1-f)·[Σ_{g'} 4π·σ*_{a,g'}·B_{g'}(T_★) + Δe/Δt] + Q_g(r,t)
         
         Parameters:
         -----------
@@ -816,49 +705,49 @@ class MultigroupDiffusionSolver1D:
         """
         # Get local Fleck factor for each cell
         f = self.fleck_factor
-
+        
         # Material energy change
         e_star = self.material_energy_func(T_star)
         e_n = self.material_energy_func(self.T_old)
         Delta_e = e_star - e_n
-
+        
         # Planck functions
         B_g_star = np.array([self.planck_funcs[g](T_star[i]) for i in range(self.n_cells)])
-
+        
         # Sum over all groups for emission term only
         sum_emission = np.zeros(self.n_cells)
         for gp in range(self.n_groups):
             B_gp_star = np.array([self.planck_funcs[gp](T_star[i]) for i in range(self.n_cells)])
             sum_emission += self.sigma_a[gp, :] * 4.0 * np.pi * B_gp_star
-
+        
         # Coupling term: [Σ_{g'} 4π·σ*_{a,g'}·B_{g'}(T_★) + Δe/Δt]
         coupling_term = sum_emission + Delta_e / self.dt
-
+        
         # Debug: Check for huge values
-        if np.any(np.abs(coupling_term) > 1e10) and not self.quiet:
+        if np.any(np.abs(coupling_term) > 1e10):
             print(f"    WARNING in compute_source_xi for group {g}:")
             print(f"      sum_emission max: {np.max(np.abs(sum_emission)):.3e}")
             print(f"      Delta_e/dt max: {np.max(np.abs(Delta_e / self.dt)):.3e}")
             print(f"      coupling_term max: {np.max(np.abs(coupling_term)):.3e}")
             print(f"      This will cause huge source terms and GMRES failure!")
-
+        
         # Assemble ξ_g
         # Use phi_g^n from stored fractional distribution
         phi_total_old = self.E_r_old * C_LIGHT
         phi_g_old = phi_total_old * self.phi_g_fraction[g, :]
-
+        
         xi_g = (1.0 / (C_LIGHT * self.dt)) * phi_g_old + \
                4.0 * np.pi * self.sigma_a[g, :] * B_g_star - \
                self.chi[g] * (1.0 - f) * coupling_term
-
+        
         # Add external source Q_g(r, t)
         Q_g = np.array([self.source_funcs[g](self.r_centers[i], t) for i in range(self.n_cells)])
         xi_g += Q_g
-
+        
         # Debug: Check final xi_g
-        if np.any(np.abs(xi_g) > 1e10) and not self.quiet:
+        if np.any(np.abs(xi_g) > 1e10):
             print(f"    WARNING: xi_{g} has huge values! max: {np.max(np.abs(xi_g)):.3e}")
-
+        
         return xi_g
     
     def apply_operator_B(self, kappa: np.ndarray, T_star: np.ndarray, xi_g_list: List[np.ndarray]) -> np.ndarray:
@@ -886,7 +775,7 @@ class MultigroupDiffusionSolver1D:
         result = kappa.copy().astype(np.float64)
         
         # Debug: Check input
-        if (np.any(np.abs(kappa) > 1e10) or np.any(~np.isfinite(kappa))) and not self.quiet:
+        if np.any(np.abs(kappa) > 1e10) or np.any(~np.isfinite(kappa)):
             print(f"    WARNING in B operator: bad input kappa! max: {np.max(np.abs(kappa)):.3e}")
         
         # Define homogeneous boundary conditions for B operator
@@ -902,7 +791,6 @@ class MultigroupDiffusionSolver1D:
         # Subtract Σ_g σ*_{a,g}·A_g^{-1}[χ_g(1-f)κ]
         for g in range(self.n_groups):
             # RHS for group g: χ_g(1-f)κ
-            # Use global chi (scalar per group) for consistent operator definition
             rhs_g = self.chi[g] * (1.0 - f) * kappa
             
             # Solve A_g φ_g = rhs_g with HOMOGENEOUS BCs
@@ -916,7 +804,7 @@ class MultigroupDiffusionSolver1D:
                                           override_right_bc=homogeneous_right_bc)
             
             # Debug: Check if A_g solve produced bad values
-            if (np.any(~np.isfinite(phi_g)) or np.any(np.abs(phi_g) > 1e10)) and not self.quiet:
+            if np.any(~np.isfinite(phi_g)) or np.any(np.abs(phi_g) > 1e10):
                 print(f"    WARNING: Group {g} A_g solve produced bad phi! max: {np.max(np.abs(phi_g)):.3e}")
                 print(f"             rhs_g max: {np.max(np.abs(rhs_g)):.3e}")
             
@@ -924,7 +812,7 @@ class MultigroupDiffusionSolver1D:
             result -= self.sigma_a[g, :] * phi_g
         
         # Debug: Check result
-        if (np.any(np.abs(result) > 1e10) or np.any(~np.isfinite(result))) and not self.quiet:
+        if np.any(np.abs(result) > 1e10) or np.any(~np.isfinite(result)):
             print(f"    WARNING: B operator result has bad values! max: {np.max(np.abs(result)):.3e}")
         
         return result
@@ -935,15 +823,12 @@ class MultigroupDiffusionSolver1D:
         
         RHS = Σ_g σ*_{a,g}·A_g^{-1}·ξ_g
         
-        CRITICAL: A_g must use HOMOGENEOUS boundary conditions (C=0 in Robin BC).
-        The boundary flux term C is instead incorporated into ξ_g as a source term.
-        
         Parameters:
         -----------
         T_star : ndarray
             Temperature for evaluating operators
         xi_g_list : list of ndarray
-            Source terms ξ_g for each group (includes boundary source contribution)
+            Source terms ξ_g for each group
         
         Returns:
         --------
@@ -952,29 +837,16 @@ class MultigroupDiffusionSolver1D:
         """
         rhs = np.zeros(self.n_cells)
         
-        # Helper to create homogeneous BC (set C=0)
-        def make_homogeneous_bc(bc_func):
-            def homogeneous_bc(phi, r):
-                A_bc, B_bc, _ = bc_func(phi, r)  # Ignore original C
-                return A_bc, B_bc, 0.0  # Return C=0
-            return homogeneous_bc
-        
         for g in range(self.n_groups):
-            # Solve A_g φ_g = ξ_g with HOMOGENEOUS BCs
-            # The boundary flux is already in ξ_g as a source term
-            homogeneous_left_bc = make_homogeneous_bc(self.solvers[g].left_bc_func)
-            homogeneous_right_bc = make_homogeneous_bc(self.solvers[g].right_bc_func)
-            
-            phi_g = self.solvers[g].solve(xi_g_list[g], T_star, 
-                                         phi_guess=self.phi_g_stored[g, :],
-                                         override_left_bc=homogeneous_left_bc,
-                                         override_right_bc=homogeneous_right_bc)
+            # Solve A_g φ_g = ξ_g (use previous timestep's phi as guess for flux limiter)
+            # DO NOT update phi_g_stored here - would make B operator non-linear!
+            phi_g = self.solvers[g].solve(xi_g_list[g], T_star, phi_guess=self.phi_g_stored[g, :])
             
             # Add σ*_{a,g} φ_g
             rhs += self.sigma_a[g, :] * phi_g
         
         # Debug: Check RHS magnitude
-        if np.any(np.abs(rhs) > 1e10) and not self.quiet:
+        if np.any(np.abs(rhs) > 1e10):
             print(f"    WARNING: RHS for kappa has huge values! max: {np.max(np.abs(rhs)):.3e}")
         
         return rhs
@@ -1128,20 +1000,12 @@ class MultigroupDiffusionSolver1D:
         """
         # Get local Fleck factor for each cell
         f = self.fleck_factor
-        chi_local = self.compute_local_emission_fractions(T_star)
         E_r = np.zeros(self.n_cells)
         phi_g_all = np.zeros((self.n_groups, self.n_cells))
         
-        # Helper to create homogeneous BC (set C=0)
-        def make_homogeneous_bc(bc_func):
-            def homogeneous_bc(phi, r):
-                A_bc, B_bc, _ = bc_func(phi, r)  # Ignore original C
-                return A_bc, B_bc, 0.0  # Return C=0
-            return homogeneous_bc
-        
         for g in range(self.n_groups):
-            # RHS = χ_g(1-f)κ + ξ_g (use spatially varying chi_local)
-            rhs_g = chi_local[g, :] * (1.0 - f) * kappa + xi_g_list[g]
+            # RHS = χ_g(1-f)κ + ξ_g
+            rhs_g = self.chi[g] * (1.0 - f) * kappa + xi_g_list[g]
             
             # Solve A_g φ_g = rhs_g (use previous timestep's phi as guess for flux limiter)
             phi_g = self.solvers[g].solve(rhs_g, T_star, phi_guess=self.phi_g_stored[g, :])
@@ -1184,16 +1048,14 @@ class MultigroupDiffusionSolver1D:
         for g in range(self.n_groups):
             lam[g, :] = self.chi[g] / reaction_term[g, :]
 
-        # Normalize weights: zeta_g = lam_g / (Σ_k σ_a,k·lam_k)
-        # This ensures Σ σ_a·λ̃ = 1 (conservation of absorption)
-        S = np.sum(self.sigma_a * lam, axis=0)
+        # IMPORTANT: normalize with sigma_a weighting so Σ σ_a λ̃ = 1
+        S = np.sum(self.sigma_a * lam, axis=0)              # <-- CHANGE THIS LINE
         lambda_tilde = lam / (S[None, :] + 1e-300)
 
         if verbose:
-            # Verify: sum(lam_tilde) should be 1 for each cell
-            sum_check = np.sum(lambda_tilde, axis=0)
-            check = np.max(np.abs(sum_check - 1.0))
-            print(f"    DEBUG: max |Σ λ̃ - 1| = {check:.3e}")
+            sigma_weighted_sum = np.sum(self.sigma_a * lambda_tilde, axis=0)
+            check = np.max(np.abs(sigma_weighted_sum - 1.0))
+            print(f"    DEBUG: max |Σ σ_a λ̃ - 1| = {check:.3e}")
 
         return lambda_tilde
 
@@ -1458,16 +1320,7 @@ class MultigroupDiffusionSolver1D:
             if m_mode == "identity":
                 rhs_gray = (1.0 - f) * y
                 U = gray_solver.solve(rhs_gray, T_star)
-                result = y + sigma_a_gray * U
-                # DEBUG: Track preconditioner applications
-                if np.max(np.abs(y)) > 1e-6:
-                    correction_norm = np.linalg.norm(sigma_a_gray * U)
-                    y_norm = np.linalg.norm(y)
-                    U_norm = np.linalg.norm(U)
-                    rhs_norm = np.linalg.norm(rhs_gray)
-                    sig_a_mean = np.mean(sigma_a_gray)
-                    print(f"  PRECOND: ||y||={y_norm:.3e}, ||rhs_gray||={rhs_norm:.3e}, ||U||={U_norm:.3e}, ⟨σ_a⟩={sig_a_mean:.3e}, ||correction||={correction_norm:.3e}, ratio={correction_norm/max(y_norm, 1e-100):.3e}")
-                return result
+                return y + sigma_a_gray * U
             else:
                 raise NotImplementedError("There is no other option")
 
@@ -1532,29 +1385,6 @@ class MultigroupDiffusionSolver1D:
         # Convert to temperature
         T_new = np.array([self.inverse_material_energy_func(e_new[i]) for i in range(self.n_cells)])
         
-        # DEBUG: Print on first cell if verbose flag exists somewhere
-        if hasattr(self, '_debug_update_T') and self._debug_update_T:
-            print(f"\n    [DEBUG UPDATE_TEMPERATURE]")
-            print(f"      κ[0] = {kappa[0]:.6e} GJ/(cm³·ns)")
-            print(f"      σ_B_sum[0] = {sigma_B_sum[0]:.6e} GJ/(cm³·ns)")
-            print(f"      energy_change[0] = {energy_change[0]:.6e} GJ/(cm³·ns)")
-            print(f"      e_n[0] = {e_n[0]:.6e} GJ/cm³")
-            print(f"      e_star[0] = {e_star[0]:.6e} GJ/cm³")
-            print(f"      Delta_e[0] = {Delta_e[0]:.6e} GJ/cm³")
-            print(f"      f[0] = {f[0]:.6e}")
-            print(f"      dt * f * energy_change[0] = {self.dt * f[0] * energy_change[0]:.6e} GJ/cm³")
-            print(f"      (1-f) * Delta_e[0] = {(1.0 - f[0]) * Delta_e[0]:.6e} GJ/cm³")
-            print(f"      e_new[0] = {e_new[0]:.6e} GJ/cm³")
-            print(f"      T_new[0] = {T_new[0]:.6e} keV")
-            print(f"      Expected energy_change from pure absorption-emission:")
-            # Compute what energy_change SHOULD be
-            E_r_cell0 = kappa[0] / C_LIGHT  # If κ = Σ_g σ_g·c·E_r,g
-            abs_rate = kappa[0]
-            em_rate = sigma_B_sum[0]
-            print(f"        Absorption = κ = {abs_rate:.6e} GJ/(cm³·ns)")
-            print(f"        Emission = Σσ·4π·B = {em_rate:.6e} GJ/(cm³·ns)")
-            print(f"        Net = {abs_rate - em_rate:.6e} GJ/(cm³·ns)")
-        
         return T_new
     
     def step(self, max_newton_iter: int = 10, newton_tol: float = 1e-6,
@@ -1590,27 +1420,12 @@ class MultigroupDiffusionSolver1D:
         # Initial guess: T_★ = T_old
         T_star = self.T_old.copy()
         
-        if hasattr(self, '_debug_update_T') and self._debug_update_T:
-            print(f"\n[DEBUG NEWTON] Before Newton loop:")
-            print(f"  T_old[0] = {self.T_old[0]:.6e} keV")
-            print(f"  T_star[0] (initial) = {T_star[0]:.6e} keV")
-            print(f"  self.T[0] = {self.T[0]:.6e} keV")
-        
         for newton_iter in range(max_newton_iter):
             if verbose:
                 print(f"\nNewton iteration {newton_iter + 1}/{max_newton_iter}")
             
-            if hasattr(self, '_debug_update_T') and self._debug_update_T:
-                print(f"\n[DEBUG NEWTON] Iteration {newton_iter}:")
-                print(f"  T_star[0] at start of iteration = {T_star[0]:.6e} keV")
-            
             # Update absorption coefficients at T_★
             self.update_absorption_coefficients(T_star)
-
-            # Update local emission fractions at T_★ and keep global χ synchronized
-            self.chi_local = self.compute_local_emission_fractions(T_star)
-            self.chi = np.mean(self.chi_local, axis=1)
-            self.chi /= (np.sum(self.chi) + 1e-300)
             
             # Compute local Fleck factor at T_★
             self.fleck_factor = self.compute_fleck_factor(T_star)
@@ -1673,8 +1488,7 @@ class MultigroupDiffusionSolver1D:
             T_star = T_new
         
         # Did not converge - store last iteration values anyway
-        if not self.quiet:
-            print(f"Warning: Newton did not converge after {max_newton_iter} iterations")
+        print(f"Warning: Newton did not converge after {max_newton_iter} iterations")
         self.T = T_new
         self.kappa = kappa
         self.E_r = E_r_new
@@ -1726,8 +1540,7 @@ class MultigroupDiffusionSolver1D:
             xi_g_list = [self.compute_source_xi(gp, T_star, self.t) for gp in range(self.n_groups)]
         
         f = self.fleck_factor
-        chi_local = self.compute_local_emission_fractions(T_star)
-        rhs_g = chi_local[g, :] * (1.0 - f) * kappa + xi_g_list[g]
+        rhs_g = self.chi[g] * (1.0 - f) * kappa + xi_g_list[g]
         phi_g = self.solvers[g].solve(rhs_g, T_star)
         
         return phi_g
