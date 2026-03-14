@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import matplotlib.pyplot as plt
 from oneDFV import NonEquilibriumRadiationDiffusionSolver
+from numba import njit
 
 # Physical constants
 C_LIGHT = 2.998e1  # cm/ns
@@ -90,7 +91,7 @@ def marshak_material_energy(T):
     cv_specific = marshak_specific_heat(T)
     return RHO * cv_specific * T
 
-
+@njit
 def marshak_inverse_material_energy(e):
     """Inverse: T from e = ρ·c_v·T => T = e/(ρ·c_v)
     
@@ -170,7 +171,7 @@ def run_marshak_wave():
         n_cells=n_cells, 
         d=0,  # Planar geometry
         dt=dt,
-        max_newton_iter=10,
+        max_newton_iter=20,
         newton_tol=1e-8,
         rosseland_opacity_func=marshak_rosseland_opacity,
         planck_opacity_func=marshak_planck_opacity,

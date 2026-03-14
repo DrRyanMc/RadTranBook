@@ -15,6 +15,7 @@ Time discretization: θ-method or TR-BDF2
 Newton method for nonlinear coupling
 """
 
+import inspect
 import numpy as np
 import matplotlib.pyplot as plt
 from numba import njit
@@ -76,6 +77,25 @@ def material_energy_density(T):
 def inverse_material_energy_density(e):
     """Inverse: T from e. Default assumes e = ρ·c_v·T => T = e/(ρ·c_v)"""
     return e / (RHO * CV_CONST)
+
+
+def _wrap_spatial_func(func):
+    """Wrap a single-argument material property function to also accept an
+    optional second positional-or-keyword argument *r* (spatial coordinate).
+
+    Functions that already accept two or more parameters are returned unchanged.
+    This lets new problem files define  f(T, r)  while all existing T-only
+    functions continue to work without modification.
+    """
+    try:
+        sig = inspect.signature(func)
+        if len(sig.parameters) >= 2:
+            return func          # already accepts r
+    except (ValueError, TypeError):
+        pass
+    def _wrapped(T, r=None):
+        return func(T)
+    return _wrapped
 
 
 @njit
@@ -633,12 +653,14 @@ class NonEquilibriumRadiationDiffusionSolver:
         self.phi_old = np.ones(n_cells)  # Previous time step
         self.T_old = np.ones(n_cells)    # Previous time step
         
-        # Material property functions (use defaults if not provided)
-        self.rosseland_opacity_func = rosseland_opacity_func or rosseland_opacity
-        self.planck_opacity_func = planck_opacity_func or planck_opacity
-        self.specific_heat_func = specific_heat_func or specific_heat_cv
-        self.material_energy_func = material_energy_func or material_energy_density
-        self.inverse_material_energy_func = inverse_material_energy_func or inverse_material_energy_density
+        # Material property functions (use defaults if not provided).
+        # Each is wrapped so it can be called as  f(T, r)  regardless of whether
+        # the user-supplied function accepts a spatial argument or not.
+        self.rosseland_opacity_func = _wrap_spatial_func(rosseland_opacity_func or rosseland_opacity)
+        self.planck_opacity_func = _wrap_spatial_func(planck_opacity_func or planck_opacity)
+        self.specific_heat_func = _wrap_spatial_func(specific_heat_func or specific_heat_cv)
+        self.material_energy_func = _wrap_spatial_func(material_energy_func or material_energy_density)
+        self.inverse_material_energy_func = _wrap_spatial_func(inverse_material_energy_func or inverse_material_energy_density)
         
         # Flux limiter function (use standard λ=1/3 if not provided)
         self.flux_limiter_func = flux_limiter_func or flux_limiter_standard
@@ -650,7 +672,7 @@ class NonEquilibriumRadiationDiffusionSolver:
         print(f"Initialized non-equilibrium solver: {n_cells} cells, r ∈ [{r_min:.3f}, {r_max:.3f}]")
         print(f"Coordinate system d={d}, Δt={dt:.2e}")
     
-    def get_diffusion_coefficient(self, T, phi_left=None, phi_right=None, dx=None):
+    def get_diffusion_coefficient(self, T, phi_left=None, phi_right=None, dx=None, r=None):
         """Get flux-limited diffusion coefficient D = λ(R)/σ_R
         
         Parameters:
@@ -676,7 +698,7 @@ class NonEquilibriumRadiationDiffusionSolver:
         - λ(R) is determined by self.flux_limiter_func
         - Standard diffusion: D = 1/(3σ_R), flux-limited: D = λ(R)/σ_R
         """
-        sigma_R = self.rosseland_opacity_func(T)
+        sigma_R = self.rosseland_opacity_func(T, r)
         
         # If no phi information provided, use standard diffusion
         if phi_left is None or phi_right is None or dx is None:
@@ -702,32 +724,32 @@ class NonEquilibriumRadiationDiffusionSolver:
         # Return flux-limited diffusion coefficient D = λ(R)/σ_R
         return lambda_R / sigma_R
     
-    def get_beta(self, T_star):
+    def get_beta(self, T_star, r=None):
         """Compute coupling parameter β = 4aT_★³/C_v_★
         
         From definition: β = (∂aT⁴/∂T) / (∂e(T)/∂T)|_{T=T_★}
         """
-        cv_star = self.specific_heat_func(T_star)
+        cv_star = self.specific_heat_func(T_star, r)
         return (4.0 * A_RAD * T_star**3) / (RHO * cv_star)
     
-    def get_f_factor(self, T_star, dt, theta):
+    def get_f_factor(self, T_star, dt, theta, r=None):
         """Compute linearization factor f from equation (8.60)
         
         f = 1 / (1 + β·σ_P·c·θ·Δt)
         where β = 4aT_★³/C_v_★
         """
-        beta = self.get_beta(T_star)
-        sigma_P = self.planck_opacity_func(T_star)
+        beta = self.get_beta(T_star, r)
+        sigma_P = self.planck_opacity_func(T_star, r)
         return 1.0 / (1.0 + beta * sigma_P * C_LIGHT * theta * dt)
     
-    def get_f_factor_trbdf2(self, T_star, dt, Lambda):
+    def get_f_factor_trbdf2(self, T_star, dt, Lambda, r=None):
         """Compute linearization factor f_TB for TR-BDF2 from equation (8.62)
         
         f_TB = 1 / (1 + [(1-Λ)/(2-Λ)] · β·σ_P·c·Δt)
         where β = 4aT_★³/C_v_★
         """
-        beta = self.get_beta(T_star)
-        sigma_P = self.planck_opacity_func(T_star)
+        beta = self.get_beta(T_star, r)
+        sigma_P = self.planck_opacity_func(T_star, r)
         coeff = (1.0 - Lambda) / (2.0 - Lambda)
         return 1.0 / (1.0 + coeff * beta * sigma_P * C_LIGHT * dt)
     
@@ -906,13 +928,13 @@ class NonEquilibriumRadiationDiffusionSolver:
         rhs = np.zeros(n_cells)
         
         # Evaluate material energy at previous and current (linearization) timesteps
-        e_n = np.array([self.material_energy_func(T_prev[i]) for i in range(n_cells)])
-        e_star = np.array([self.material_energy_func(T_star[i]) for i in range(n_cells)])
+        e_n = np.array([self.material_energy_func(T_prev[i], self.r_centers[i]) for i in range(n_cells)])
+        e_star = np.array([self.material_energy_func(T_star[i], self.r_centers[i]) for i in range(n_cells)])
         Delta_e = e_star - e_n
         
         # Evaluate coupling parameters at linearization point T★
-        sigma_P = np.array([self.planck_opacity_func(T_star[i]) for i in range(n_cells)])
-        f = np.array([self.get_f_factor(T_star[i], dt, theta) for i in range(n_cells)])
+        sigma_P = np.array([self.planck_opacity_func(T_star[i], self.r_centers[i]) for i in range(n_cells)])
+        f = np.array([self.get_f_factor(T_star[i], dt, theta, self.r_centers[i]) for i in range(n_cells)])
         acT4_star = A_RAD * C_LIGHT * T_star**4
         
         # Diffusion coefficients at linearization point (flux-limited)
@@ -927,11 +949,11 @@ class NonEquilibriumRadiationDiffusionSolver:
             dx = self.r_centers[i] - self.r_centers[i-1]
             
             # Compute flux-limited diffusion coefficient
-            D_faces[i] = self.get_diffusion_coefficient(T_face, phi_left, phi_right, dx)
+            D_faces[i] = self.get_diffusion_coefficient(T_face, phi_left, phi_right, dx, self.r_faces[i])
         
         # Boundary faces (use cell-centered values, no flux limiting at boundaries)
-        D_faces[0] = self.get_diffusion_coefficient(T_star[0])
-        D_faces[-1] = self.get_diffusion_coefficient(T_star[-1])
+        D_faces[0] = self.get_diffusion_coefficient(T_star[0], r=self.r_faces[0])
+        D_faces[-1] = self.get_diffusion_coefficient(T_star[-1], r=self.r_faces[-1])
         
         # Assemble equation for each cell
         for i in range(n_cells):
@@ -1030,13 +1052,13 @@ class NonEquilibriumRadiationDiffusionSolver:
         phi_tilde = theta * phi_np1 + (1.0 - theta) * phi_prev
         
         # Evaluate material energy at previous timestep
-        e_n = np.array([self.material_energy_func(T_prev[i]) for i in range(n_cells)])
-        e_star = np.array([self.material_energy_func(T_star[i]) for i in range(n_cells)])
+        e_n = np.array([self.material_energy_func(T_prev[i], self.r_centers[i]) for i in range(n_cells)])
+        e_star = np.array([self.material_energy_func(T_star[i], self.r_centers[i]) for i in range(n_cells)])
         Delta_e = e_star - e_n
         
         # Evaluate coupling parameters at linearization point T★
-        sigma_P = np.array([self.planck_opacity_func(T_star[i]) for i in range(n_cells)])
-        f = np.array([self.get_f_factor(T_star[i], dt, theta) for i in range(n_cells)])
+        sigma_P = np.array([self.planck_opacity_func(T_star[i], self.r_centers[i]) for i in range(n_cells)])
+        f = np.array([self.get_f_factor(T_star[i], dt, theta, self.r_centers[i]) for i in range(n_cells)])
         acT4_star = A_RAD * C_LIGHT * T_star**4
         
         # Solve for T_{n+1} at each cell
@@ -1045,7 +1067,7 @@ class NonEquilibriumRadiationDiffusionSolver:
             e_np1 = e_n[i] + dt * f[i] * sigma_P[i] * (phi_tilde[i] - acT4_star[i]) + (1.0 - f[i]) * Delta_e[i]
             
             # Use user-supplied inverse function to get T from e
-            T_np1[i] = self.inverse_material_energy_func(e_np1)
+            T_np1[i] = self.inverse_material_energy_func(e_np1, self.r_centers[i])
         
         return T_np1
     
@@ -1075,7 +1097,7 @@ class NonEquilibriumRadiationDiffusionSolver:
             # This prevents using the cold interior T, which gives tiny D
             phi_avg = 0.5 * (phi[0] + phi_boundary)
             T_avg = (phi_avg / (A_RAD * C_LIGHT))**0.25  # T = (φ/(ac))^0.25
-            D_boundary = self.get_diffusion_coefficient(T_avg)
+            D_boundary = self.get_diffusion_coefficient(T_avg, r=self.r_faces[0])
             
             dx_half = self.r_centers[0] - self.r_faces[0]
             flux_coeff = (self.A_faces[0] * D_boundary) / (self.V_cells[0] * dx_half)
@@ -1085,7 +1107,7 @@ class NonEquilibriumRadiationDiffusionSolver:
         else:
             # Robin BC: A·φ + B·(∂φ/∂n) = C
             T_avg = self.T[0] if hasattr(self, 'T') else 1.0
-            D_boundary = self.get_diffusion_coefficient(T_avg)
+            D_boundary = self.get_diffusion_coefficient(T_avg, r=self.r_faces[0])
             flux_coeff = (self.A_faces[0] * D_boundary * A_bc_left) / (B_bc_left * self.V_cells[0])
             A_tri['diag'][0] += flux_coeff
             rhs[0] += self.A_faces[0] * D_boundary * C_bc_left / (B_bc_left * self.V_cells[0])
@@ -1099,7 +1121,7 @@ class NonEquilibriumRadiationDiffusionSolver:
             # Average phi to get temperature for diffusion coefficient
             phi_avg = 0.5 * (phi[-1] + phi_boundary)
             T_avg = (phi_avg / (A_RAD * C_LIGHT))**0.25
-            D_boundary = self.get_diffusion_coefficient(T_avg)
+            D_boundary = self.get_diffusion_coefficient(T_avg, r=self.r_faces[-1])
             
             dx_half = self.r_faces[-1] - self.r_centers[-1]
             flux_coeff = (self.A_faces[-1] * D_boundary) / (self.V_cells[-1] * dx_half)
@@ -1109,7 +1131,7 @@ class NonEquilibriumRadiationDiffusionSolver:
         else:
             # Robin BC
             T_avg = self.T[-1] if hasattr(self, 'T') else 1.0
-            D_boundary = self.get_diffusion_coefficient(T_avg)
+            D_boundary = self.get_diffusion_coefficient(T_avg, r=self.r_faces[-1])
             flux_coeff = (self.A_faces[-1] * D_boundary * A_bc_right) / (B_bc_right * self.V_cells[-1])
             A_tri['diag'][-1] += flux_coeff
             rhs[-1] += self.A_faces[-1] * D_boundary * C_bc_right / (B_bc_right * self.V_cells[-1])
@@ -1367,16 +1389,16 @@ class NonEquilibriumRadiationDiffusionSolver:
         c_n = (1.0 - Lambda) / Lambda             # Coefficient of solution at n
         
         # Evaluate material energies
-        e_star = np.array([self.material_energy_func(T_star[i]) for i in range(n_cells)])
-        e_nL = np.array([self.material_energy_func(T_Lambda[i]) for i in range(n_cells)])
-        e_n = np.array([self.material_energy_func(T_n[i]) for i in range(n_cells)])
+        e_star = np.array([self.material_energy_func(T_star[i], self.r_centers[i]) for i in range(n_cells)])
+        e_nL = np.array([self.material_energy_func(T_Lambda[i], self.r_centers[i]) for i in range(n_cells)])
+        e_n = np.array([self.material_energy_func(T_n[i], self.r_centers[i]) for i in range(n_cells)])
         
         # Compute Δe from equation (8.62)
         Delta_e = c_np1 * e_star + c_nL * e_nL + c_n * e_n
         
         # Evaluate coupling parameters at linearization point T_★
-        sigma_P = np.array([self.planck_opacity_func(T_star[i]) for i in range(n_cells)])
-        f_TB = np.array([self.get_f_factor_trbdf2(T_star[i], dt, Lambda) for i in range(n_cells)])
+        sigma_P = np.array([self.planck_opacity_func(T_star[i], self.r_centers[i]) for i in range(n_cells)])
+        f_TB = np.array([self.get_f_factor_trbdf2(T_star[i], dt, Lambda, self.r_centers[i]) for i in range(n_cells)])
         acT4_star = A_RAD * C_LIGHT * T_star**4
         
         # Diffusion coefficients at linearization point (flux-limited)
@@ -1391,11 +1413,11 @@ class NonEquilibriumRadiationDiffusionSolver:
             dx = self.r_centers[i] - self.r_centers[i-1]
             
             # Compute flux-limited diffusion coefficient
-            D_faces[i] = self.get_diffusion_coefficient(T_face, phi_left, phi_right, dx)
+            D_faces[i] = self.get_diffusion_coefficient(T_face, phi_left, phi_right, dx, self.r_faces[i])
         
         # Boundary faces (use cell-centered values, no flux limiting at boundaries)
-        D_faces[0] = self.get_diffusion_coefficient(T_star[0])
-        D_faces[-1] = self.get_diffusion_coefficient(T_star[-1])
+        D_faces[0] = self.get_diffusion_coefficient(T_star[0], r=self.r_faces[0])
+        D_faces[-1] = self.get_diffusion_coefficient(T_star[-1], r=self.r_faces[-1])
         
         # Assemble equation for each cell
         for i in range(n_cells):
@@ -1475,14 +1497,14 @@ class NonEquilibriumRadiationDiffusionSolver:
         c_n = (1.0 - Lambda) / Lambda
         
         # Evaluate material energies at previous time levels
-        e_nL = np.array([self.material_energy_func(T_Lambda[i]) for i in range(n_cells)])
-        e_n = np.array([self.material_energy_func(T_n[i]) for i in range(n_cells)])
-        e_star = np.array([self.material_energy_func(T_star[i]) for i in range(n_cells)])
+        e_nL = np.array([self.material_energy_func(T_Lambda[i], self.r_centers[i]) for i in range(n_cells)])
+        e_n = np.array([self.material_energy_func(T_n[i], self.r_centers[i]) for i in range(n_cells)])
+        e_star = np.array([self.material_energy_func(T_star[i], self.r_centers[i]) for i in range(n_cells)])
         Delta_e = c_np1 * e_star + c_nL * e_nL + c_n * e_n
         
         # Evaluate coupling parameters at linearization point
-        sigma_P = np.array([self.planck_opacity_func(T_star[i]) for i in range(n_cells)])
-        f_TB = np.array([self.get_f_factor_trbdf2(T_star[i], dt, Lambda) for i in range(n_cells)])
+        sigma_P = np.array([self.planck_opacity_func(T_star[i], self.r_centers[i]) for i in range(n_cells)])
+        f_TB = np.array([self.get_f_factor_trbdf2(T_star[i], dt, Lambda, self.r_centers[i]) for i in range(n_cells)])
         acT4_star = A_RAD * C_LIGHT * T_star**4
         
         # Solve for T_{n+1} at each cell
@@ -1495,19 +1517,8 @@ class NonEquilibriumRadiationDiffusionSolver:
             # e_{n+1} = (Δt/c_np1) * rhs_T
             e_np1 = (dt / c_np1) * rhs_T
             
-            # Invert material energy to get T
-            # For radiation-dominated: e = a·T^4 => T = (e/a)^(1/4)
-            # For other materials, use direct inversion
-            test_T = T_star[i]
-            test_e = self.material_energy_func(test_T)
-            if abs(test_e - A_RAD * test_T**4) < 1e-10 * test_e:
-                # Radiation-dominated material: e = a·T^4
-                e_np1_safe = max(e_np1, 1e-30)  # Prevent negative/zero
-                T_np1[i] = (e_np1_safe / A_RAD)**0.25
-            else:
-                # General case: assume e = ρ·c_v·T (linear)
-                cv = self.specific_heat_func(T_star[i])
-                T_np1[i] = e_np1 / (RHO * cv)
+            # Invert material energy to get T using user-supplied inverse function
+            T_np1[i] = self.inverse_material_energy_func(e_np1, self.r_centers[i])
         
         return T_np1
 

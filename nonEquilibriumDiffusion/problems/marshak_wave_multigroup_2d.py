@@ -1,16 +1,26 @@
 #!/usr/bin/env python3
 """
 Marshak Wave Problem - 2D Multigroup Version
-Tests 2D solver against self-similar 1D solution with small y-domain
+Tests 2D solver against self-similar 1D solution with small transverse domain
+
+Supports both Cartesian (x-y) and cylindrical (r-z) geometries.
 
 Problem setup:
 - Two energy groups with same absorption coefficient
-- Left boundary: Robin BC with A=0.5, B=D, C=F_g (Marshak BC)
-- Right/bottom/top boundaries: Neumann BC (zero flux)
+- Wave propagation boundary: Robin BC with A=0.5, B=D, C=F_g (Marshak BC)
+- Other boundaries: Neumann BC (zero flux)
 - Material opacity: σ = 300·T^-3 cm⁻¹ (constant per group, same for both)
 - Heat capacity: c_v = 0.3 GJ/(cm³·keV)
-- Domain: x ∈ [0, 0.1] cm, y ∈ [0, 0.005] cm (small to test 1D agreement)
-- Plot solutions at specified times and compare with self-similar profile
+
+Cartesian mode:
+- Domain: x ∈ [0, 0.5] cm, y ∈ [0, 0.1] cm (thin in y)
+- Wave propagates in x-direction
+
+Cylindrical mode:
+- Domain: r ∈ [0, 0.1] cm, z ∈ [0, 0.5] cm (thin in r)
+- Wave propagates in z-direction (axial)
+
+Both modes compare against self-similar 1D profile.
 """
 
 import sys
@@ -122,7 +132,7 @@ def compute_self_similar_temp(r, t, xi_max=1.11305, omega=0.05989):
 # 2D MARSHAK WAVE SIMULATION
 # =============================================================================
 
-def run_marshak_wave_2d(use_preconditioner=False, n_cells_x=200, n_cells_y=20):
+def run_marshak_wave_2d(use_preconditioner=False, n_cells_x=200, n_cells_y=20, geometry='cartesian'):
     """Run 2D multigroup Marshak wave simulation
     
     Parameters:
@@ -130,15 +140,24 @@ def run_marshak_wave_2d(use_preconditioner=False, n_cells_x=200, n_cells_y=20):
     use_preconditioner : bool
         Use preconditioning in GMRES
     n_cells_x : int
-        Number of cells in x-direction (radial)
+        Number of cells in primary direction (x for cartesian, r for cylindrical)
     n_cells_y : int
-        Number of cells in y-direction (transverse, small)
+        Number of cells in secondary direction (y for cartesian, z for cylindrical)
+    geometry : str
+        'cartesian' for x-y or 'cylindrical' for r-z geometry
     """
     
     print("="*80)
     print("Marshak Wave Problem - 2D Multigroup Version")
     print("="*80)
-    print("Test: 2D solver on quasi-1D domain (small y-extent)")
+    if geometry == 'cylindrical':
+        print("Geometry: Cylindrical (r-z)")
+        print("Test: 2D solver on quasi-1D domain (small r-extent)")
+        print("Wave propagation: Axial (z-direction)")
+    else:
+        print("Geometry: Cartesian (x-y)")
+        print("Test: 2D solver on quasi-1D domain (small y-extent)")
+        print("Wave propagation: x-direction")
     print("Expected: Agreement with self-similar 1D solution")
     print("="*80)
     print(f"Mesh: {n_cells_x} × {n_cells_y} = {n_cells_x * n_cells_y} cells")
@@ -146,8 +165,12 @@ def run_marshak_wave_2d(use_preconditioner=False, n_cells_x=200, n_cells_y=20):
     print("  Opacity: σ = 300·T^-3 cm⁻¹ (both groups)")
     print("  Heat capacity: c_v = 0.3 GJ/(cm³·keV)")
     print("  Density: ρ = 1.0 g/cm³")
-    print("  Left BC: Marshak (Robin) at T = 1 keV")
-    print("  Right/top/bottom BC: Neumann (zero flux)")
+    if geometry == 'cylindrical':
+        print("  Bottom BC (z=0): Marshak (Robin) at T = 1 keV")
+        print("  Top/inner/outer BC: Neumann (zero flux)")
+    else:
+        print("  Left BC (x=0): Marshak (Robin) at T = 1 keV")
+        print("  Right/top/bottom BC: Neumann (zero flux)")
     if use_preconditioner:
         print("  GMRES: Using preconditioning")
     else:
@@ -157,9 +180,15 @@ def run_marshak_wave_2d(use_preconditioner=False, n_cells_x=200, n_cells_y=20):
     # Problem setup
     n_groups = 2
     
-    # Domain: quasi-1D (thin in y)
-    x_min, x_max = 0.0, 0.5  # cm (large domain like 1D test)
-    y_min, y_max = 0.0, 0.1  # cm (thin strip)
+    # Domain setup depends on geometry
+    if geometry == 'cylindrical':
+        # Cylindrical (r-z): thin in r, wave propagates in z
+        x_min, x_max = 0.0, 0.1   # cm (r-direction, thin)
+        y_min, y_max = 0.0, 0.5   # cm (z-direction, long for wave propagation)
+    else:
+        # Cartesian (x-y): thin in y, wave propagates in x
+        x_min, x_max = 0.0, 0.5  # cm (large domain like 1D test)
+        y_min, y_max = 0.0, 0.1  # cm (thin strip)
     
     # Energy group structure (keV)
     energy_edges = np.array([0.1, 2.0, 50.0])
@@ -190,32 +219,51 @@ def run_marshak_wave_2d(use_preconditioner=False, n_cells_x=200, n_cells_y=20):
     F_g_values = [chi[g] * F_total for g in range(n_groups)]
     
     # Robin BC parameters
+    # Keep A and C fixed by the Marshak condition. Use a dynamic B in the
+    # boundary callback so it stays consistent with the local diffusion scale.
     sigma_bc = marshak_opacity(T_bc, 0.0, 0.0)
     BC_A = 0.5
-    BC_B = 1.0 / (3.0 * sigma_bc)
+    BC_B_ref = 1.0 / (3.0 * sigma_bc)
     
     print(f"\nBoundary condition (Robin type - Marshak):")
-    print(f"  A = {BC_A}, B = {BC_B:.6e} cm")
+    print(f"  A = {BC_A}, B_ref(T_b) = {BC_B_ref:.6e} cm")
     print(f"  F_total(T_b) = {F_total:.6e} GJ/(cm²·ns)")
     for g in range(n_groups):
         print(f"  Group {g}: C = F_g = {F_g_values[g]:.6e} GJ/(cm²·ns)")
     
     # Boundary condition functions (for 2D solver)
-    def make_left_bc_func(C_val):
-        """Robin BC at x=0 (incoming radiation)"""
-        def left_bc(phi, pos, t):
-            return BC_A, BC_B, C_val
-        return left_bc
+    def make_marshak_bc_func(C_val):
+        """Robin BC for incoming radiation (Marshak)"""
+        def marshak_bc(phi, pos, t):
+            # Match B to the current local radiation state so D/B remains
+            # well-scaled in the operator BC treatment.
+            if phi > 0.0:
+                T_local = max((phi / (A_RAD * C_LIGHT))**0.25, 0.01)
+            else:
+                T_local = 0.01
+            sigma_local = marshak_opacity(T_local, pos[0], pos[1])
+            B_local = 1.0 / (3.0 * sigma_local)
+            return BC_A, B_local, C_val
+        return marshak_bc
     
     def zero_flux_bc(phi, pos, t):
         """Neumann BC: ∇φ = 0 (zero flux)"""
         return 0.0, 1.0, 0.0
     
     # Create BC function lists for each group
-    left_bc_funcs = [make_left_bc_func(F_g_values[g]) for g in range(n_groups)]
-    right_bc_funcs = [zero_flux_bc] * n_groups
-    bottom_bc_funcs = [zero_flux_bc] * n_groups
-    top_bc_funcs = [zero_flux_bc] * n_groups
+    # Boundary setup depends on geometry
+    if geometry == 'cylindrical':
+        # Cylindrical: wave enters from bottom (z=0)
+        left_bc_funcs = [zero_flux_bc] * n_groups    # r=0 (axis, reflecting)
+        right_bc_funcs = [zero_flux_bc] * n_groups   # r=r_max (outer)
+        bottom_bc_funcs = [make_marshak_bc_func(F_g_values[g]) for g in range(n_groups)]  # z=0 (source)
+        top_bc_funcs = [zero_flux_bc] * n_groups     # z=z_max
+    else:
+        # Cartesian: wave enters from left (x=0)
+        left_bc_funcs = [make_marshak_bc_func(F_g_values[g]) for g in range(n_groups)]  # x=0 (source)
+        right_bc_funcs = [zero_flux_bc] * n_groups   # x=x_max
+        bottom_bc_funcs = [zero_flux_bc] * n_groups  # y=0
+        top_bc_funcs = [zero_flux_bc] * n_groups     # y=y_max
     
     boundary_funcs = {
         'left': left_bc_funcs,
@@ -231,7 +279,7 @@ def run_marshak_wave_2d(use_preconditioner=False, n_cells_x=200, n_cells_y=20):
         x_min=x_min, x_max=x_max, nx_cells=n_cells_x,
         y_min=y_min, y_max=y_max, ny_cells=n_cells_y,
         energy_edges=energy_edges,
-        geometry='cartesian',
+        geometry=geometry,
         dt=dt,
         diffusion_coeff_funcs=[marshak_diffusion_coeff] * n_groups,
         absorption_coeff_funcs=[marshak_opacity] * n_groups,
@@ -249,11 +297,20 @@ def run_marshak_wave_2d(use_preconditioner=False, n_cells_x=200, n_cells_y=20):
     # This matches the 1D test approach
     t_init = 0.1  # ns
     
-    x_centers = solver.x_centers
-    T_init_1d = compute_self_similar_temp(x_centers, t_init)
-    
-    # Expand to 2D (same profile in all y)
-    T_init = np.tile(T_init_1d, (solver.ny_cells, 1)).T
+    # For cylindrical, wave propagates in z (y-direction in solver)
+    # For cartesian, wave propagates in x (x-direction in solver)
+    if geometry == 'cylindrical':
+        # Wave in z-direction, uniform in r
+        z_centers = solver.y_centers
+        T_init_1d = compute_self_similar_temp(z_centers, t_init)
+        # Expand to 2D (same profile in all r)
+        T_init = np.tile(T_init_1d, (solver.nx_cells, 1))
+    else:
+        # Wave in x-direction, uniform in y
+        x_centers = solver.x_centers
+        T_init_1d = compute_self_similar_temp(x_centers, t_init)
+        # Expand to 2D (same profile in all y)
+        T_init = np.tile(T_init_1d, (solver.ny_cells, 1)).T
     
     solver.T = T_init.flatten()
     solver.T_old = solver.T.copy()
@@ -309,12 +366,12 @@ def run_marshak_wave_2d(use_preconditioner=False, n_cells_x=200, n_cells_y=20):
     print("2D Marshak wave simulation completed!")
     
     # Generate plots comparing with 1D self-similar solution
-    plot_results_2d(solver, energy_edges, RHO, cv)
+    plot_results_2d(solver, energy_edges, RHO, cv, geometry)
     
     return solver
 
 
-def plot_results_2d(solver, energy_edges, rho, cv):
+def plot_results_2d(solver, energy_edges, rho, cv, geometry='cartesian'):
     """Generate plots comparing 2D solution with self-similar profile
     
     Parameters:
@@ -327,50 +384,72 @@ def plot_results_2d(solver, energy_edges, rho, cv):
         Material density
     cv : float
         Heat capacity
+    geometry : str
+        'cartesian' or 'cylindrical'
     """
     
     print("\nGenerating plots...")
     
     # Extract transverse average (should be constant for 1D problem)
     T_2d = solver.T.reshape(solver.nx_cells, solver.ny_cells)
-    T_1d = T_2d.mean(axis=1)  # Average over y
-    
     E_r_2d = solver.E_r.reshape(solver.nx_cells, solver.ny_cells)
-    E_r_1d = E_r_2d.mean(axis=1)
+    
+    if geometry == 'cylindrical':
+        # Wave propagates in z (y-direction), average over r (x-direction)
+        T_1d = T_2d.mean(axis=0)  # Average over r
+        E_r_1d = E_r_2d.mean(axis=0)
+        position_centers = solver.y_centers  # z-direction
+        pos_label = 'Position z (cm)'
+        pos_max = solver.y_max
+    else:
+        # Wave propagates in x, average over y
+        T_1d = T_2d.mean(axis=1)  # Average over y
+        E_r_1d = E_r_2d.mean(axis=1)
+        position_centers = solver.x_centers  # x-direction
+        pos_label = 'Position x (cm)'
+        pos_max = solver.x_max
     
     # Compute self-similar profile at current time
     K_const = 8.0 * A_RAD * C_LIGHT / ((4.0 + 3.0) * 3.0 * 300.0 * rho * cv)
-    T_selfsim = compute_self_similar_temp(solver.x_centers, solver.t)
+    T_selfsim = compute_self_similar_temp(position_centers, solver.t)
     
     # Create comparison plot
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     
+    # Labels depend on geometry
+    if geometry == 'cylindrical':
+        avg_label = '2D solver (r-average)'
+        title_suffix = f'({geometry})'
+    else:
+        avg_label = '2D solver (y-average)'
+        title_suffix = f'({geometry})'
+    
     # Plot temperature
-    ax1.plot(solver.x_centers, T_1d, 'b.-', label='2D solver (y-average)', linewidth=2, markersize=6)
-    ax1.plot(solver.x_centers, T_selfsim, 'r--', label='Self-similar profile', linewidth=2)
-    ax1.set_xlabel('Position x (cm)', fontsize=12)
+    ax1.plot(position_centers, T_1d, 'b.-', label=avg_label, linewidth=2, markersize=6)
+    ax1.plot(position_centers, T_selfsim, 'r--', label='Self-similar profile', linewidth=2)
+    ax1.set_xlabel(pos_label, fontsize=12)
     ax1.set_ylabel('Temperature T (keV)', fontsize=12)
-    ax1.set_title(f'Temperature Profile at t = {solver.t:.4f} ns', fontsize=13, fontweight='bold')
+    ax1.set_title(f'Temperature Profile at t = {solver.t:.4f} ns {title_suffix}', fontsize=13, fontweight='bold')
     ax1.legend(fontsize=11)
     ax1.grid(True, alpha=0.3)
-    ax1.set_xlim([0, solver.x_max])
+    ax1.set_xlim([0, pos_max])
     ax1.set_ylim([0, 1.2])
     
     # Plot radiation energy
     E_r_selfsim = A_RAD * T_selfsim**4
-    ax2.semilogy(solver.x_centers, E_r_1d, 'b.-', label='2D solver (y-average)', linewidth=2, markersize=6)
-    ax2.semilogy(solver.x_centers, E_r_selfsim, 'r--', label='Self-similar profile', linewidth=2)
-    ax2.set_xlabel('Position x (cm)', fontsize=12)
+    ax2.semilogy(position_centers, E_r_1d, 'b.-', label=avg_label, linewidth=2, markersize=6)
+    ax2.semilogy(position_centers, E_r_selfsim, 'r--', label='Self-similar profile', linewidth=2)
+    ax2.set_xlabel(pos_label, fontsize=12)
     ax2.set_ylabel('Radiation Energy $E_r$ (GJ/cm³)', fontsize=12)
-    ax2.set_title(f'Radiation Energy at t = {solver.t:.4f} ns', fontsize=13, fontweight='bold')
+    ax2.set_title(f'Radiation Energy at t = {solver.t:.4f} ns {title_suffix}', fontsize=13, fontweight='bold')
     ax2.legend(fontsize=11)
     ax2.grid(True, alpha=0.3)
-    ax2.set_xlim([0, solver.x_max])
+    ax2.set_xlim([0, pos_max])
     
     plt.tight_layout()
     
     # Save plot
-    output_file = 'marshak_wave_2d_comparison.png'
+    output_file = f'marshak_wave_2d_comparison_{geometry}.png'
     plt.savefig(output_file, dpi=150, bbox_inches='tight')
     print(f"Saved plot to {output_file}")
     
@@ -383,12 +462,20 @@ def plot_results_2d(solver, energy_edges, rho, cv):
     print(f"  Relative error in E_r: {error_E_r:.3e}")
     
     # Check transverse uniformity (verify it's quasi-1D)
-    T_variation = np.std(T_2d, axis=1)
-    T_max = np.max(T_2d, axis=1)
+    if geometry == 'cylindrical':
+        # Variation in r-direction (axis 0)
+        T_variation = np.std(T_2d, axis=0)
+        T_max = np.max(T_2d, axis=0)
+        transverse_dir = 'r'
+    else:
+        # Variation in y-direction (axis 1)
+        T_variation = np.std(T_2d, axis=1)
+        T_max = np.max(T_2d, axis=1)
+        transverse_dir = 'y'
     transverse_variation = np.max(T_variation / (T_max + 1e-10))
     
     print(f"\nTransverse uniformity check (2D effect on quasi-1D problem):")
-    print(f"  Max relative variation in y-direction: {transverse_variation:.3e}")
+    print(f"  Max relative variation in {transverse_dir}-direction: {transverse_variation:.3e}")
     if transverse_variation < 1e-3:
         print("  ✓ Excellent transverse uniformity (confirms quasi-1D behavior)")
     elif transverse_variation < 1e-2:
@@ -406,10 +493,30 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="2D Marshak Wave Multigroup Solver")
     parser.add_argument('--precond', action='store_true', help='Use GMRES preconditioning')
-    parser.add_argument('--nx', type=int, default=40, help='Number of cells in x')
-    parser.add_argument('--ny', type=int, default=4, help='Number of cells in y')
+    parser.add_argument('--nx', type=int, default=None, 
+                       help='Number of cells in primary direction (default: 40 for cartesian, 4 for cylindrical)')
+    parser.add_argument('--ny', type=int, default=None, 
+                       help='Number of cells in secondary direction (default: 4 for cartesian, 40 for cylindrical)')
+    parser.add_argument('--geometry', type=str, default='cartesian', 
+                       choices=['cartesian', 'cylindrical'],
+                       help='Geometry: cartesian (x-y) or cylindrical (r-z)')
     
     args = parser.parse_args()
     
+    # Set geometry-appropriate defaults if not specified
+    if args.nx is None:
+        args.nx = 4 if args.geometry == 'cylindrical' else 40
+    if args.ny is None:
+        args.ny = 40 if args.geometry == 'cylindrical' else 4
+    
+    print(f"Using mesh: {args.nx} × {args.ny} cells")
+    if args.geometry == 'cylindrical':
+        print(f"  r-direction (thin): {args.nx} cells")
+        print(f"  z-direction (wave): {args.ny} cells")
+    else:
+        print(f"  x-direction (wave): {args.nx} cells")
+        print(f"  y-direction (thin): {args.ny} cells")
+    
     solver = run_marshak_wave_2d(use_preconditioner=args.precond, 
-                                  n_cells_x=args.nx, n_cells_y=args.ny)
+                                  n_cells_x=args.nx, n_cells_y=args.ny,
+                                  geometry=args.geometry)

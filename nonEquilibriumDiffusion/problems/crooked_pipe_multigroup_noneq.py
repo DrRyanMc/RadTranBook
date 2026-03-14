@@ -27,14 +27,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
 import numpy as np
+from numba import njit
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from multigroup_diffusion_solver_2d_parallel import (
+    MultigroupDiffusionSolver2DParallel as MultigroupDiffusionSolver2D,
+)
 from multigroup_diffusion_solver_2d import (
-    MultigroupDiffusionSolver2D,
     C_LIGHT,
     A_RAD,
     Bg_multigroup,
+    flux_limiter_larsen,
 )
 
 # Add utils to path for plotting
@@ -42,7 +46,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 from plotfuncs import show
 
 T_init = 0.01  # keV
-RHO_THICK = 10.0  # g/cm^3
+RHO_THICK = 2.0  # g/cm^3
 RHO_THIN = 0.01   # g/cm^3
 CV_MASS = 0.05    # GJ/(g*keV)
 
@@ -385,7 +389,7 @@ def bc_top_open(phi, pos, t, boundary='top', geometry='cylindrical'):
 # VISUALIZATION FUNCTIONS
 # =============================================================================
 
-def plot_material_properties(r_centers, z_centers, r_faces=None, z_faces=None):
+def plot_material_properties(r_centers, z_centers, r_faces=None, z_faces=None, n_groups=10):
     """Plot the material property distribution with optional mesh overlay"""
     
     # Create material property arrays
@@ -441,12 +445,12 @@ def plot_material_properties(r_centers, z_centers, r_faces=None, z_faces=None):
     
     plt.suptitle('Crooked Pipe Material Properties (Non-Equilibrium)', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.savefig('crooked_pipe_multigroup_noneq_materials.png', dpi=150, bbox_inches='tight')
-    print("Saved: crooked_pipe_multigroup_noneq_materials.png")
+    plt.savefig(f'crooked_pipe_{n_groups}g_noneq_materials.png', dpi=150, bbox_inches='tight')
+    print(f"Saved: crooked_pipe_{n_groups}g_noneq_materials.png")
     plt.close()
 
 
-def plot_mesh(solver):
+def plot_mesh(solver, n_groups=10):
     """Plot the computational mesh"""
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
     
@@ -465,12 +469,12 @@ def plot_mesh(solver):
     ax.set_aspect('equal')
     
     plt.tight_layout()
-    plt.savefig('crooked_pipe_multigroup_noneq_mesh.png', dpi=150, bbox_inches='tight')
-    print("Saved: crooked_pipe_multigroup_noneq_mesh.png")
+    plt.savefig(f'crooked_pipe_{n_groups}g_noneq_mesh.png', dpi=150, bbox_inches='tight')
+    print(f"Saved: crooked_pipe_{n_groups}g_noneq_mesh.png")
     plt.close()
 
 
-def plot_solution(solver, time_value, save_prefix='crooked_pipe_multigroup_noneq', show_mesh=False, first_one=False):
+def plot_solution(solver, time_value, save_prefix='crooked_pipe_noneq', show_mesh=False, first_one=False):
     """Plot material temperature and radiation temperature as separate figures"""
     T_2d = solver.T.reshape(solver.nx_cells, solver.ny_cells)
     phi_2d = np.sum(solver.phi_g_stored, axis=0).reshape(solver.nx_cells, solver.ny_cells)
@@ -481,13 +485,16 @@ def plot_solution(solver, time_value, save_prefix='crooked_pipe_multigroup_noneq
     z_centers = solver.y_centers
     
     R, Z = np.meshgrid(r_centers, z_centers, indexing='ij')
-    
+    first_one = True  # need colorbar every time because scale changes across time steps, so can't reuse previous one
     # PLOT 1: Material temperature
     fig1, ax1 = plt.subplots(1, 1, figsize=(8, 3))
     if first_one:
         fig1, ax1 = plt.subplots(1, 1, figsize=(8, 3*1.275))
     
-    im1 = ax1.pcolormesh(Z, R, T_2d, shading='auto', cmap='plasma', vmin=0.0, vmax=0.5)
+    #make max color equal to current max rounded to nearest 0.01 keV for better comparison across time steps
+    max_T = np.max(T_2d)
+    vmax_T = np.ceil(max_T * 100) / 100.0
+    im1 = ax1.pcolormesh(Z, R, T_2d, shading='auto', cmap='plasma', vmin=T_init, vmax=vmax_T)
     ax1.set_xlabel('z (cm)', fontsize=12)
     ax1.set_ylabel('r (cm)', fontsize=12)
     #ax1.set_title(f'Material Temperature T at t = {time_value:.3f} ns', fontsize=13, fontweight='bold')
@@ -511,7 +518,7 @@ def plot_solution(solver, time_value, save_prefix='crooked_pipe_multigroup_noneq
             ax1.axvline(z, color='white', alpha=0.2, linewidth=0.3)
     
     plt.tight_layout()
-    filename1 = f'{save_prefix}_material_t_{time_value:.3f}ns.png'
+    filename1 = f'{save_prefix}_material_t_{time_value:.5f}ns.png'
     if first_one:
         show(filename1, close_after=True, cbar_ax=cbar1.ax)
     else:
@@ -523,7 +530,10 @@ def plot_solution(solver, time_value, save_prefix='crooked_pipe_multigroup_noneq
     if first_one:
         fig2, ax2 = plt.subplots(1, 1, figsize=(8, 3*1.275))
     
-    im2 = ax2.pcolormesh(Z, R, T_rad_2d, shading='auto', cmap='plasma', vmin=0.0, vmax=0.5)
+    #make max color equal to current max rounded to nearest 0.01 keV for better comparison across time steps
+    max_T_rad = np.max(T_rad_2d)
+    vmax_T_rad = np.ceil(max_T_rad * 100) / 100.0
+    im2 = ax2.pcolormesh(Z, R, T_rad_2d, shading='auto', cmap='plasma', vmin=T_init, vmax=vmax_T_rad)
     ax2.set_xlabel('z (cm)', fontsize=12)
     ax2.set_ylabel('r (cm)', fontsize=12)
     #ax2.set_title(f'Radiation Temperature T_rad at t = {time_value:.3f} ns', fontsize=13, fontweight='bold')
@@ -541,7 +551,7 @@ def plot_solution(solver, time_value, save_prefix='crooked_pipe_multigroup_noneq
             ax2.axvline(z, color='white', alpha=0.2, linewidth=0.3)
     
     plt.tight_layout()
-    filename2 = f'{save_prefix}_radiation_t_{time_value:.3f}ns.png'
+    filename2 = f'{save_prefix}_radiation_t_{time_value:.5f}ns.png'
     if first_one:
         show(filename2, close_after=True, cbar_ax=cbar2.ax)
     else:
@@ -549,7 +559,7 @@ def plot_solution(solver, time_value, save_prefix='crooked_pipe_multigroup_noneq
     print(f"Saved: {filename2}")
 
 
-def plot_fiducial_history(times, fiducial_data):
+def plot_fiducial_history(times, fiducial_data, n_groups=10):
     """
     Plot temperature history at fiducial points
     Shows both material temperature T and radiation temperature T_rad
@@ -579,7 +589,7 @@ def plot_fiducial_history(times, fiducial_data):
     ax1.grid(True, which='minor', alpha=0.15, linestyle=':')
     
     plt.tight_layout()
-    filename1 = 'crooked_pipe_multigroup_noneq_fiducial_history_material.pdf'
+    filename1 = f'crooked_pipe_{n_groups}g_noneq_fiducial_history_material.pdf'
     show(filename1, close_after=True)
     print(f"Saved: {filename1}")
     
@@ -604,7 +614,7 @@ def plot_fiducial_history(times, fiducial_data):
     ax2.grid(True, which='minor', alpha=0.15, linestyle=':')
     
     plt.tight_layout()
-    filename2 = 'crooked_pipe_multigroup_noneq_fiducial_history_radiation.pdf'
+    filename2 = f'crooked_pipe_{n_groups}g_noneq_fiducial_history_radiation.pdf'
     show(filename2, close_after=True)
     print(f"Saved: {filename2}")
 
@@ -612,6 +622,83 @@ def plot_fiducial_history(times, fiducial_data):
 # =============================================================================
 # MAIN EXECUTION
 # =============================================================================
+
+def _default_n_threads(n_groups):
+    """Half of available CPUs, capped at n_groups."""
+    cpu_count = os.cpu_count() or 1
+    return min(n_groups, max(1, cpu_count // 2))
+
+
+# =============================================================================
+# CHECKPOINT HELPERS
+# =============================================================================
+
+def save_checkpoint(solver, step, t, times, fiducial_labels, fiducial_data,
+                    output_times_saved, filename):
+    """
+    Save full solver state + run history to an NPZ checkpoint file.
+
+    All data is stored as plain NumPy arrays (no pickle) so the file can be
+    reloaded independently of the class definitions.
+    """
+    fiducial_T_mat = np.array([fiducial_data[lbl]['T_mat'] for lbl in fiducial_labels])
+    fiducial_T_rad = np.array([fiducial_data[lbl]['T_rad'] for lbl in fiducial_labels])
+
+    np.savez(
+        filename,
+        # Solver fields
+        chkpt_T               = solver.T,
+        chkpt_E_r             = solver.E_r,
+        chkpt_T_old           = solver.T_old,
+        chkpt_E_r_old         = solver.E_r_old,
+        chkpt_phi_g_stored    = solver.phi_g_stored,
+        chkpt_phi_g_fraction  = solver.phi_g_fraction,
+        # Scalar run state (stored as 0-d arrays)
+        chkpt_t               = np.float64(t),
+        chkpt_dt              = np.float64(solver.dt),
+        chkpt_step            = np.int64(step),
+        # Time history & output bookkeeping
+        chkpt_times           = np.array(times, dtype=np.float64),
+        chkpt_output_saved    = np.array(sorted(output_times_saved), dtype=np.float64),
+        # Fiducial history (shape: n_points × n_times_so_far)
+        chkpt_fiduc_T_mat     = fiducial_T_mat,
+        chkpt_fiduc_T_rad     = fiducial_T_rad,
+    )
+
+
+def load_checkpoint(filename, solver, fiducial_labels, fiducial_data):
+    """
+    Restore solver state and run history from an NPZ checkpoint.
+
+    Modifies *solver* in-place and returns (step, t, times, fiducial_data,
+    output_times_saved) ready to be dropped back into the time loop.
+    """
+    ckpt = np.load(filename)
+
+    # Restore solver fields
+    solver.T[:]                = ckpt['chkpt_T']
+    solver.E_r[:]              = ckpt['chkpt_E_r']
+    solver.T_old[:]            = ckpt['chkpt_T_old']
+    solver.E_r_old[:]          = ckpt['chkpt_E_r_old']
+    solver.phi_g_stored[:]     = ckpt['chkpt_phi_g_stored']
+    solver.phi_g_fraction[:]   = ckpt['chkpt_phi_g_fraction']
+    solver.t                   = float(ckpt['chkpt_t'])
+    solver.dt                  = float(ckpt['chkpt_dt'])
+
+    step              = int(ckpt['chkpt_step'])
+    t                 = float(ckpt['chkpt_t'])
+    times             = list(ckpt['chkpt_times'])
+    output_times_saved = set(float(v) for v in ckpt['chkpt_output_saved'])
+
+    # Restore fiducial histories
+    fiduc_T_mat = ckpt['chkpt_fiduc_T_mat']   # (n_points, n_times)
+    fiduc_T_rad = ckpt['chkpt_fiduc_T_rad']
+    for idx, lbl in enumerate(fiducial_labels):
+        fiducial_data[lbl]['T_mat'] = list(fiduc_T_mat[idx])
+        fiducial_data[lbl]['T_rad'] = list(fiduc_T_rad[idx])
+
+    return step, t, times, fiducial_data, output_times_saved
+
 
 def main(
     output_times=None,
@@ -623,11 +710,33 @@ def main(
     bc_t_start=0.05,
     bc_t_end=0.5,
     bc_ramp_time=20.0,
+    use_refined_mesh=False,
+    n_refine=10,
+    n_coarse_r=60,
+    n_coarse_z=210,
+    refine_width=0.01,
+    n_threads=None,
+    restart_file=None,
+    checkpoint_file=None,
+    checkpoint_every=0,
 ):
     """Run the multigroup non-equilibrium Crooked Pipe test problem.
 
     Multigroup setup: each group uses a distinct power-law opacity over its
     own energy interval.
+    
+    Parameters:
+    -----------
+    use_refined_mesh : bool
+        If True, use mesh with refinement at material interfaces
+    n_refine : int
+        Number of refined cells per coarse cell in refinement zones
+    n_coarse_r : int
+        Number of coarse cells in r-direction
+    n_coarse_z : int
+        Number of coarse cells in z-direction
+    refine_width : float
+        Width (in cm) around each interface to apply refinement
     """
     if output_times is None:
         output_times = [1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
@@ -655,11 +764,16 @@ def main(
     print(f"Final simulation time: {t_final} ns")
     print(f"Output times for colormaps: {output_times_in_window} ns")
     print(f"Time stepping: dt_initial={dt_initial} ns, dt_max={dt_max} ns, growth={dt_increase_factor}")
+    if use_refined_mesh:
+        print(f"Mesh refinement: ENABLED at interfaces (n_refine={n_refine}, width={refine_width} cm)")
+    else:
+        print("Mesh refinement: DISABLED (uniform mesh)")
     print("=" * 80)
 
-    x_min, x_max, nx_cells = 0.0, 2.0, 60
-    y_min, y_max, ny_cells = 0.0, 7.0, 210
-    energy_edges = np.logspace(np.log10(0.05), np.log10(50.0), n_groups + 1)
+    x_min, x_max = 0.0, 2.0
+    y_min, y_max = 0.0, 7.0
+    nx_cells, ny_cells = n_coarse_r, n_coarse_z
+    energy_edges = np.logspace(1e-4, np.log10(10.0), n_groups + 1)
 
     def boundary_temperature(time_ns):
         """Linear ramp in boundary temperature from bc_t_start to bc_t_end."""
@@ -710,44 +824,87 @@ def main(
         'top': top_bcs,
     }
 
+    if n_threads is None:
+        n_threads = _default_n_threads(n_groups)
+    print(f"  Parallel solver: {n_threads} threads ({os.cpu_count() or 1} CPUs available)")
+
     print("\nSetting up multigroup solver...")
-    solver = MultigroupDiffusionSolver2D(
-        n_groups=n_groups,
-        x_min=x_min, x_max=x_max, nx_cells=nx_cells,
-        y_min=y_min, y_max=y_max, ny_cells=ny_cells,
-        energy_edges=energy_edges,
-        geometry='cylindrical',
-        dt=dt_initial,
-        diffusion_coeff_funcs=group_diffusion_funcs,
-        absorption_coeff_funcs=group_absorption_funcs,
-        boundary_funcs=boundary_funcs,
-        specific_heat_func=specific_heat,
-        material_energy_func=material_energy,
-        inverse_material_energy_func=inverse_material_energy,
-        max_newton_iter=30,
-        newton_tol=1e-6,
-        theta=1.0,
-    )
 
-    print("\nSetting initial condition...")
-    T_cold = 0.01
-    E_r_cold = A_RAD * T_cold**4
-    B_groups_cold = Bg_multigroup(energy_edges, T_cold)
-    chi_cold = B_groups_cold / np.sum(B_groups_cold)
-    solver.T[:] = T_cold
-    solver.T_old[:] = T_cold
-    solver.E_r[:] = E_r_cold
-    solver.E_r_old[:] = E_r_cold
-    solver.phi_g_fraction[:, :] = chi_cold[:, np.newaxis]
-    for g in range(n_groups):
-        solver.phi_g_stored[g, :] = chi_cold[g] * E_r_cold * C_LIGHT
-    solver.t = 0.0
+    max_newton_iter = 5
+    newton_tol = 1e-6
+    if use_refined_mesh:
+        # Generate custom mesh with refinement at material interfaces
+        # Interface locations in r: 0.5, 1.0, 1.5 cm
+        # Interface locations in z: 2.5, 3.0, 4.0, 4.5 cm
+        print("  Generating refined mesh at material interfaces...")
+        r_faces = generate_refined_z_faces(
+            z_min=x_min,
+            z_max=x_max,
+            interface_locations=[0.5, 1.0, 1.5],
+            n_refine=n_refine,
+            n_coarse=n_coarse_r,
+            refine_width=refine_width
+        )
+        z_faces = generate_refined_z_faces(
+            z_min=y_min,
+            z_max=y_max,
+            interface_locations=[2.5, 3.0, 4.0, 4.5],
+            n_refine=n_refine,
+            n_coarse=n_coarse_z,
+            refine_width=refine_width
+        )
+        
+        # Print mesh info
+        dr_min = np.min(np.diff(r_faces))
+        dz_min = np.min(np.diff(z_faces))
+        print(f"  Refined mesh: {len(r_faces)-1} × {len(z_faces)-1} cells")
+        print(f"  Minimum dr = {dr_min:.5f} cm, Minimum dz = {dz_min:.5f} cm")
+        
+        solver = MultigroupDiffusionSolver2D(
+            n_groups=n_groups,
+            x_faces=r_faces,
+            y_faces=z_faces,
+            energy_edges=energy_edges,
+            geometry='cylindrical',
+            dt=dt_initial,
+            diffusion_coeff_funcs=group_diffusion_funcs,
+            absorption_coeff_funcs=group_absorption_funcs,
+            boundary_funcs=boundary_funcs,
+            flux_limiter_funcs=flux_limiter_larsen,
+            specific_heat_func=specific_heat,
+            material_energy_func=material_energy,
+            inverse_material_energy_func=inverse_material_energy,
+            max_newton_iter=max_newton_iter,
+            newton_tol=newton_tol,
+            theta=1.0,
+            n_threads=n_threads,
+        )
+    else:
+        # Use uniform mesh
+        print(f"  Using uniform mesh: {nx_cells} × {ny_cells} cells")
+        solver = MultigroupDiffusionSolver2D(
+            n_groups=n_groups,
+            x_min=x_min, x_max=x_max, nx_cells=nx_cells,
+            y_min=y_min, y_max=y_max, ny_cells=ny_cells,
+            energy_edges=energy_edges,
+            geometry='cylindrical',
+            dt=dt_initial,
+            diffusion_coeff_funcs=group_diffusion_funcs,
+            absorption_coeff_funcs=group_absorption_funcs,
+            boundary_funcs=boundary_funcs,
+            flux_limiter_funcs=flux_limiter_larsen,
+            specific_heat_func=specific_heat,
+            material_energy_func=material_energy,
+            inverse_material_energy_func=inverse_material_energy,
+            max_newton_iter=max_newton_iter,
+            newton_tol=newton_tol,
+            theta=1.0,
+            n_threads=n_threads,
+        )
 
-    print("\nPlotting material properties...")
-    plot_material_properties(solver.x_centers, solver.y_centers, solver.x_faces, solver.y_faces)
-    print("\nPlotting computational mesh...")
-    plot_mesh(solver)
-
+    # ------------------------------------------------------------------ #
+    # Fiducial point index map  (built before restart so it's always set)
+    # ------------------------------------------------------------------ #
     fiducial_points = {
         'Point 1: r=0.0, z=0.25': (0.0, 0.25),
         'Point 2: r=0.0, z=2.75': (0.0, 2.75),
@@ -755,7 +912,7 @@ def main(
         'Point 4: r=0.0, z=4.25': (0.0, 4.25),
         'Point 5: r=0.0, z=6.75': (0.0, 6.75),
     }
-
+    fiducial_labels = list(fiducial_points.keys())
     r_centers = solver.x_centers
     z_centers = solver.y_centers
     fiducial_indices = {}
@@ -763,62 +920,182 @@ def main(
         i = np.argmin(np.abs(r_centers - r_val))
         j = np.argmin(np.abs(z_centers - z_val))
         fiducial_indices[label] = (i, j)
-        print(f"{label}: grid point (r={r_centers[i]:.3f}, z={z_centers[j]:.3f})")
 
-    times = [0.0]
-    fiducial_data = {label: {'T_mat': [T_cold], 'T_rad': [T_cold]} for label in fiducial_points}
-    output_times_saved = set()
+    # Default checkpoint filename
+    if checkpoint_file is None:
+        mesh_tag = "refined" if use_refined_mesh else "uniform"
+        checkpoint_file = (
+            f'crooked_pipe_checkpoint_{n_groups}g_{mesh_tag}'
+            f'_{solver.nx_cells}x{solver.ny_cells}.npz'
+        )
 
-    print("\nTime stepping...")
-    t = 0.0
-    step = 0
-    first_one = True
+    # ------------------------------------------------------------------ #
+    # Initial condition  OR  restart from checkpoint                      #
+    # ------------------------------------------------------------------ #
+    if restart_file is not None:
+        print(f"\nLoading restart from: {restart_file}")
+        fiducial_data = {lbl: {'T_mat': [], 'T_rad': []} for lbl in fiducial_labels}
+        times = []
+        step, t, times, fiducial_data, output_times_saved = load_checkpoint(
+            restart_file, solver, fiducial_labels, fiducial_data
+        )
+        print(f"  Resumed at t = {t:.6e} ns, step {step}")
+        for label, (ri, zi) in fiducial_indices.items():
+            print(f"  {label}: grid (r={r_centers[ri]:.3f}, z={z_centers[zi]:.3f})")
+    else:
+        print("\nSetting initial condition...")
+        T_cold = 0.01
+        E_r_cold = A_RAD * T_cold**4
+        B_groups_cold = Bg_multigroup(energy_edges, T_cold)
+        chi_cold = B_groups_cold / np.sum(B_groups_cold)
+        solver.T[:] = T_cold
+        solver.T_old[:] = T_cold
+        solver.E_r[:] = E_r_cold
+        solver.E_r_old[:] = E_r_cold
+        solver.phi_g_fraction[:, :] = chi_cold[:, np.newaxis]
+        for g in range(n_groups):
+            solver.phi_g_stored[g, :] = chi_cold[g] * E_r_cold * C_LIGHT
+        solver.t = 0.0
+
+        print("\nPlotting material properties...")
+        plot_material_properties(solver.x_centers, solver.y_centers,
+                                 solver.x_faces, solver.y_faces, n_groups=n_groups)
+        print("\nPlotting computational mesh...")
+        plot_mesh(solver, n_groups=n_groups)
+
+        for label, (ri, zi) in fiducial_indices.items():
+            print(f"{label}: grid point (r={r_centers[ri]:.3f}, z={z_centers[zi]:.3f})")
+
+        times = [0.0]
+        fiducial_data = {
+            lbl: {'T_mat': [T_cold], 'T_rad': [T_cold]}
+            for lbl in fiducial_labels
+        }
+        output_times_saved = set()
+        step = 0
+        t = 0.0
+
+    first_one = (len(output_times_saved) == 0)
+    last_save_t = max(output_times_saved, default=0.0)
+
+    # ------------------------------------------------------------------ #
+    # Time loop                                                           #
+    # ------------------------------------------------------------------ #
+    n_threads_display = getattr(solver, 'n_threads', 1)
+    print(f"\nTime stepping  [{n_groups} groups, {n_threads_display} thread(s)]")
+    print(f"  Checkpoint file: {checkpoint_file}")
+    if checkpoint_every > 0:
+        print(f"  Periodic checkpoints every {checkpoint_every} steps")
+    print()
 
     while t < t_final:
         step += 1
         dt_current = solver.dt
 
+        # Snap dt to next requested output time or t_final
         hit_output_time = False
         for output_t in output_times_in_window:
             if output_t > t and t + solver.dt > output_t:
                 solver.dt = output_t - t
                 hit_output_time = True
                 break
-
         if t + solver.dt > t_final:
             solver.dt = t_final - t
 
-        if step % 10 == 0 or step == 1:
-            print(f"  Step {step}, t = {t:.4e} ns, dt = {solver.dt:.4e} ns")
+        t_new = t + solver.dt
 
-        info = solver.step(verbose=False, gmres_tol=1e-6, gmres_maxiter=300, use_preconditioner=False)
+        # Progress fraction towards the next save point
+        remaining_saves = [
+            ot for ot in output_times_in_window
+            if ot not in output_times_saved and ot > t
+        ]
+        next_save_t = remaining_saves[0] if remaining_saves else t_final
+        span = next_save_t - last_save_t
+        pct = 100.0 * (t - last_save_t) / span if span > 1e-30 else 100.0
+
+        print(
+            f"Step {step:5d} | t = {t:.4e} → {t_new:.4e} ns"
+            f" | {pct:5.1f}% to save @ t = {next_save_t:.4e} ns",
+            flush=True,
+        )
+        thread_str = (
+            f"{n_threads_display} threads" if n_threads_display > 1 else "serial"
+        )
+        print(
+            f"  Solving {n_groups} groups ({thread_str}) ...",
+            flush=True,
+        )
+
+        info = solver.step(verbose=False, gmres_tol=1e-8, gmres_maxiter=300,
+                           use_preconditioner=False)
         t = solver.t
 
+        n_newt  = info['newton_iterations']
+        n_gmres = info.get('total_gmres_iterations', 0)
+        r_E     = info['final_residuals']['r_E']
+        r_T     = info['final_residuals']['r_T']
+        warn    = "  *** MAX NEWTON ***" if n_newt >= solver.max_newton_iter else ""
+        print(
+            f"  Done  | Newton: {n_newt} | GMRES: {n_gmres}"
+            f" | r_E = {r_E:.2e}, r_T = {r_T:.2e}{warn}",
+            flush=True,
+        )
+
+        # Update fiducial history first so checkpoint includes this step
+        times.append(t)
+        T_2d   = solver.T.reshape(solver.nx_cells, solver.ny_cells)
+        Er_2d  = solver.E_r.reshape(solver.nx_cells, solver.ny_cells)
+        T_rad_2d = np.maximum(Er_2d / A_RAD, 0.0)**0.25
+        for label, (ri, zi) in fiducial_indices.items():
+            fiducial_data[label]['T_mat'].append(T_2d[ri, zi])
+            fiducial_data[label]['T_rad'].append(T_rad_2d[ri, zi])
+
+        # Save colormap + checkpoint at output times
         for output_t in output_times_in_window:
             if output_t not in output_times_saved and abs(t - output_t) < 1e-6:
-                print(f"  Saving colormap at t = {t:.3f} ns (requested: {output_t} ns)")
-                plot_solution(solver, t, save_prefix='crooked_pipe_multigroup_noneq_uniform', show_mesh=False, first_one=first_one)
+                print(
+                    f"  >>> Saving colormap at t = {t:.6e} ns"
+                    f" (target: {output_t} ns)",
+                    flush=True,
+                )
+                plot_solution(
+                    solver, t,
+                    save_prefix=f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}',
+                    show_mesh=False,
+                    first_one=first_one,
+                )
                 output_times_saved.add(output_t)
+                last_save_t = t
                 first_one = False
+                print(
+                    f"  >>> Checkpoint → {checkpoint_file}",
+                    flush=True,
+                )
+                save_checkpoint(
+                    solver, step, t, times,
+                    fiducial_labels, fiducial_data,
+                    output_times_saved, checkpoint_file,
+                )
 
-        times.append(t)
-        T_2d = solver.T.reshape(solver.nx_cells, solver.ny_cells)
-        Er_2d = solver.E_r.reshape(solver.nx_cells, solver.ny_cells)
-        T_rad_2d = np.maximum(Er_2d / A_RAD, 0.0)**0.25
-        for label, (i, j) in fiducial_indices.items():
-            fiducial_data[label]['T_mat'].append(T_2d[i, j])
-            fiducial_data[label]['T_rad'].append(T_rad_2d[i, j])
+        # Periodic checkpoint (if requested and not already saved above)
+        if checkpoint_every > 0 and step % checkpoint_every == 0:
+            print(
+                f"  >>> Periodic checkpoint (step {step}) → {checkpoint_file}",
+                flush=True,
+            )
+            save_checkpoint(
+                solver, step, t, times,
+                fiducial_labels, fiducial_data,
+                output_times_saved, checkpoint_file,
+            )
 
         if hit_output_time:
             solver.dt = dt_current
         solver.dt = min(solver.dt * dt_increase_factor, dt_max)
 
-        if info['newton_iterations'] >= solver.max_newton_iter and step % 10 == 0:
-            print(f"    Warning: Newton reached max iterations at t={t:.4e} ns")
-
     if t_final not in output_times_saved:
         print(f"  Saving colormap at final time t = {t_final:.3f} ns")
-        plot_solution(solver, t_final, save_prefix='crooked_pipe_multigroup_noneq_uniform', show_mesh=False, first_one=first_one)
+        plot_solution(solver, t_final, save_prefix=f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}', show_mesh=False, first_one=first_one)
 
     times = np.array(times)
     for label in fiducial_data:
@@ -831,7 +1108,7 @@ def main(
     T_rad_2d = np.maximum(Er_2d / A_RAD, 0.0)**0.25
     E_r_groups_3d = (solver.phi_g_stored / C_LIGHT).reshape(n_groups, solver.nx_cells, solver.ny_cells)
 
-    npz_filename = f'crooked_pipe_multigroup_noneq_solution_uniform_{solver.nx_cells}x{solver.ny_cells}.npz'
+    npz_filename = f'crooked_pipe_{n_groups}g_noneq_solution_{mesh_tag}_{solver.nx_cells}x{solver.ny_cells}.npz'
     np.savez(
         npz_filename,
         r_centers=r_centers,
@@ -848,7 +1125,7 @@ def main(
     print(f"Saved: {npz_filename}")
 
     print("\nPlotting fiducial point temperature history...")
-    plot_fiducial_history(times, fiducial_data)
+    plot_fiducial_history(times, fiducial_data, n_groups=n_groups)
 
     print("\n" + "=" * 80)
     print("SOLUTION SUMMARY")
@@ -871,7 +1148,7 @@ def main(
 def parse_arguments():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Run multigroup non-equilibrium Crooked Pipe test problem (pseudo-gray).",
+        description="Run multigroup non-equilibrium Crooked Pipe test problem.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -883,19 +1160,19 @@ def parse_arguments():
     parser.add_argument(
         "--t-final",
         type=float,
-        default=1000.0,
+        default=50.0,
         help="Final simulation time (ns)",
     )
     parser.add_argument(
         "--dt-initial",
         type=float,
-        default=1e-3,
+        default=1e-4,
         help="Initial time step (ns)",
     )
     parser.add_argument(
         "--dt-max",
         type=float,
-        default=10.0,
+        default=0.01,
         help="Maximum time step (ns)",
     )
     parser.add_argument(
@@ -928,6 +1205,61 @@ def parse_arguments():
         default=20.0,
         help="Time to ramp boundary temperature from start to end (ns)",
     )
+    parser.add_argument(
+        "--use-refined-mesh",
+        action="store_true",
+        help="Enable mesh refinement at material interfaces",
+    )
+    parser.add_argument(
+        "--n-refine",
+        type=int,
+        default=10,
+        help="Number of refined cells per coarse cell in refinement zones",
+    )
+    parser.add_argument(
+        "--n-coarse-r",
+        type=int,
+        default=60,
+        help="Number of coarse cells in r-direction",
+    )
+    parser.add_argument(
+        "--n-coarse-z",
+        type=int,
+        default=210,
+        help="Number of coarse cells in z-direction",
+    )
+    parser.add_argument(
+        "--refine-width",
+        type=float,
+        default=0.05,
+        help="Width (in cm) around each interface to apply refinement",
+    )
+    parser.add_argument(
+        "--n-threads",
+        type=int,
+        default=None,
+        help="Number of threads for parallel group solves. "
+             "Default: min(n_groups, cpu_count // 2).",
+    )
+    parser.add_argument(
+        "--restart-file",
+        type=str,
+        default=None,
+        help="Path to a checkpoint NPZ file to restart from.",
+    )
+    parser.add_argument(
+        "--checkpoint-file",
+        type=str,
+        default=None,
+        help="Path for the checkpoint NPZ file written during the run. "
+             "Default: auto-generated from mesh type and size.",
+    )
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=0,
+        help="Save a checkpoint every N steps (0 = only at output times).",
+    )
     return parser.parse_args()
 
 
@@ -950,4 +1282,13 @@ if __name__ == "__main__":
         bc_t_start=args.bc_t_start,
         bc_t_end=args.bc_t_end,
         bc_ramp_time=args.bc_ramp_time,
+        use_refined_mesh=args.use_refined_mesh,
+        n_refine=args.n_refine,
+        n_coarse_r=args.n_coarse_r,
+        n_coarse_z=args.n_coarse_z,
+        refine_width=args.refine_width,
+        n_threads=args.n_threads,
+        restart_file=args.restart_file,
+        checkpoint_file=args.checkpoint_file,
+        checkpoint_every=args.checkpoint_every,
     )

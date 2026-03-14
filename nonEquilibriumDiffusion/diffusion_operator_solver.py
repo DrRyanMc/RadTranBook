@@ -30,13 +30,64 @@ Example usage:
 
 import numpy as np
 from scipy import sparse
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import spsolve, splu
 from typing import Callable, Optional, Tuple
-from numba import njit
+from numba import njit, prange
+import numba
 
 # Physical constants
 C_LIGHT = 2.99792458e1  # speed of light (cm/ns)
 A_RAD = 0.01372           # radiation constant (GJ/(cm³·keV⁴))
+
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _eval_func_flat_parallel(func, T_flat, X_flat, Y_flat):
+    """Evaluate func(T,x,y) over flat arrays in parallel (Numba JIT path).
+    func must itself be a @njit-compiled function.
+    Returns a 1-D float64 array of the same length.
+    """
+    n = T_flat.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    for k in prange(n):
+        out[k] = func(T_flat[k], X_flat[k], Y_flat[k])
+    return out
+
+
+def _is_njit(f):
+    """Return True if f is a Numba CPUDispatcher (i.e. decorated with @njit)."""
+    try:
+        return isinstance(f, numba.core.registry.CPUDispatcher)
+    except AttributeError:
+        return False
+
+
+def _probe_array_callable(func) -> bool:
+    """Return True if *func* accepts and returns numpy arrays element-wise.
+
+    Calls the function with two 2-element float64 arrays.  If it returns
+    an array of the same shape, the function supports vectorised numpy
+    input and can be called directly instead of through np.vectorize.
+    """
+    T_probe = np.array([1.0, 2.0])
+    x_probe = np.array([0.1, 0.2])
+    try:
+        result = func(T_probe, x_probe, x_probe)
+        return (isinstance(result, np.ndarray) and
+                result.shape == T_probe.shape)
+    except Exception:
+        return False
+
+
+def _make_callable(func):
+    """Return *func* if it accepts array inputs, else wrap with np.vectorize.
+
+    Use this in hot loops (Newton iterations, matrix assembly) to avoid
+    per-element Python overhead when the underlying function already supports
+    numpy array semantics.
+    """
+    if _probe_array_callable(func):
+        return func
+    return np.vectorize(func, otypes=[np.float64])
 
 
 class DiffusionOperatorSolver1D:
@@ -643,16 +694,18 @@ class DiffusionOperatorSolver2D:
     """
     
     def __init__(self,
-                 x_min: float,
-                 x_max: float,
-                 nx_cells: int,
-                 y_min: float,
-                 y_max: float,
-                 ny_cells: int,
+                 x_min: float = 0.0,
+                 x_max: float = 1.0,
+                 nx_cells: int = 10,
+                 y_min: float = 0.0,
+                 y_max: float = 1.0,
+                 ny_cells: int = 10,
                  geometry: str = 'cartesian',
                  diffusion_coeff_func: Optional[Callable] = None,
                  absorption_coeff_func: Optional[Callable] = None,
                  dt: float = 1.0,
+                 x_faces: Optional[np.ndarray] = None,
+                 y_faces: Optional[np.ndarray] = None,
                  left_bc_func: Optional[Callable] = None,
                  right_bc_func: Optional[Callable] = None,
                  bottom_bc_func: Optional[Callable] = None,
@@ -671,13 +724,13 @@ class DiffusionOperatorSolver2D:
         Parameters:
         -----------
         x_min, x_max : float
-            Domain boundaries in x-direction (or r for cylindrical)
+            Domain boundaries in x-direction (or r for cylindrical) - ignored if x_faces provided
         nx_cells : int
-            Number of cells in x-direction
+            Number of cells in x-direction - ignored if x_faces provided
         y_min, y_max : float
-            Domain boundaries in y-direction (or z for cylindrical)
+            Domain boundaries in y-direction (or z for cylindrical) - ignored if y_faces provided
         ny_cells : int
-            Number of cells in y-direction
+            Number of cells in y-direction - ignored if y_faces provided
         geometry : str
             'cartesian' for (x,y) or 'cylindrical' for (r,z)
         diffusion_coeff_func : callable or None
@@ -688,6 +741,8 @@ class DiffusionOperatorSolver2D:
             If None, uses σ_a = 0.0
         dt : float
             Time step for 1/(c·Δt) term
+        x_faces, y_faces : ndarray or None
+            Custom face positions. If provided, override x_min/max, nx_cells, y_min/max, ny_cells
         left_bc_func, right_bc_func, bottom_bc_func, top_bc_func : callable or None
             Boundary condition functions returning (A, B, C) for Robin BC: A·φ + B·∇φ = C
             If None, uses string-based BCs
@@ -696,13 +751,6 @@ class DiffusionOperatorSolver2D:
         left_bc_value, right_bc_value, bottom_bc_value, top_bc_value : float
             Boundary condition values (used if BC funcs are None)
         """
-        self.x_min = x_min
-        self.x_max = x_max
-        self.y_min = y_min
-        self.y_max = y_max
-        self.nx_cells = nx_cells
-        self.ny_cells = ny_cells
-        self.n_total = nx_cells * ny_cells
         self.geometry = geometry.lower()
         self.dt = dt
         
@@ -711,12 +759,38 @@ class DiffusionOperatorSolver2D:
         self._cached_A = None
         self._cached_D_x_faces = None
         self._cached_D_y_faces = None
+        # LU factorization cache — factorize once per Newton iter, reuse across all GMRES back-subs
+        self._cached_LU = None
         
-        # Mesh generation
-        self.x_faces = np.linspace(x_min, x_max, nx_cells + 1)
-        self.y_faces = np.linspace(y_min, y_max, ny_cells + 1)
-        self.x_centers = 0.5 * (self.x_faces[:-1] + self.x_faces[1:])
-        self.y_centers = 0.5 * (self.y_faces[:-1] + self.y_faces[1:])
+        # Generate or use custom grid
+        if x_faces is not None and y_faces is not None:
+            # Use custom face arrays
+            self.x_faces = np.array(x_faces)
+            self.y_faces = np.array(y_faces)
+            self.x_centers = 0.5 * (self.x_faces[:-1] + self.x_faces[1:])
+            self.y_centers = 0.5 * (self.y_faces[:-1] + self.y_faces[1:])
+            self.nx_cells = len(self.x_faces) - 1
+            self.ny_cells = len(self.y_faces) - 1
+            self.x_min = self.x_faces[0]
+            self.x_max = self.x_faces[-1]
+            self.y_min = self.y_faces[0]
+            self.y_max = self.y_faces[-1]
+        elif x_faces is not None or y_faces is not None:
+            raise ValueError("Must provide both x_faces and y_faces, or neither")
+        else:
+            # Generate uniform mesh
+            self.x_min = x_min
+            self.x_max = x_max
+            self.y_min = y_min
+            self.y_max = y_max
+            self.nx_cells = nx_cells
+            self.ny_cells = ny_cells
+            self.x_faces = np.linspace(x_min, x_max, nx_cells + 1)
+            self.y_faces = np.linspace(y_min, y_max, ny_cells + 1)
+            self.x_centers = 0.5 * (self.x_faces[:-1] + self.x_faces[1:])
+            self.y_centers = 0.5 * (self.y_faces[:-1] + self.y_faces[1:])
+        
+        self.n_total = self.nx_cells * self.ny_cells
         self.dx_cells = np.diff(self.x_faces)
         self.dy_cells = np.diff(self.y_faces)
         
@@ -753,8 +827,32 @@ class DiffusionOperatorSolver2D:
         self.bottom_bc_value = bottom_bc_value
         self.top_bc_value = top_bc_value
 
+        # Fast-path: if both material functions are @njit, use the parallel
+        # Numba kernel in assemble_matrix instead of np.vectorize.
+        self._use_numba_eval = (
+            _is_njit(self.diffusion_coeff_func) and
+            _is_njit(self.absorption_coeff_func)
+        )
+
+        # Medium fast-path: if the functions accept numpy array inputs
+        # (return a same-shaped array for array T/x/y), call them directly
+        # instead of through np.vectorize.  Direct array calls run entirely
+        # in numpy's C layer → GIL released → true thread parallelism when
+        # multiple groups are assembled concurrently.
+        self._use_array_call = False
+        if not self._use_numba_eval:
+            self._use_array_call = (
+                _probe_array_callable(self.diffusion_coeff_func) and
+                _probe_array_callable(self.absorption_coeff_func)
+            )
+
         # Precompute fixed COO stencil structure and geometric ratios.
         self._precompute_stencil()
+
+    @staticmethod
+    def _probe_array_callable(func) -> bool:
+        """Delegate to module-level helper (kept for external callers)."""
+        return _probe_array_callable(func)
 
     def _precompute_stencil(self):
         """Precompute fixed row/col arrays and geometric ratio arrays for the
@@ -926,31 +1024,41 @@ class DiffusionOperatorSolver2D:
         T_y[:, ny]   = T_2d[:, ny - 1]     # top    boundary
         T_y[:, 1:ny] = 0.5 * (T_2d[:, :-1] + T_2d[:, 1:])
 
-        # ---- Diffusion coefficients at faces (user-function loop, unavoidable) ----
-        D_x_faces = np.empty((nx + 1, ny))
-        _D   = self.diffusion_coeff_func
-        _Xf  = self._Xf_2d
-        _Yc  = self._Yc_xf
-        for i in range(nx + 1):
-            xi = _Xf[i, 0]           # x_faces[i], same for all j
-            for j in range(ny):
-                D_x_faces[i, j] = _D(T_x[i, j], xi, _Yc[i, j])
-
-        D_y_faces = np.empty((nx, ny + 1))
-        _Xc = self._Xc_yf
-        _Yf = self._Yf_2d
-        for i in range(nx):
-            for j in range(ny + 1):
-                D_y_faces[i, j] = _D(T_y[i, j], _Xc[i, j], _Yf[i, j])
-
-        # ---- Absorption coefficients at cell centres (user-function loop) ----
-        sigma_a = np.empty(n_total)
-        _sa  = self.absorption_coeff_func
-        _Xcf = self._Xc_flat
-        _Ycf = self._Yc_flat
+        # ---- Diffusion coefficients at faces ----
+        _D = self.diffusion_coeff_func
         T_1d = T_2d.ravel()
-        for k in range(n_total):
-            sigma_a[k] = _sa(T_1d[k], _Xcf[k], _Ycf[k])
+        if self._use_numba_eval:
+            D_x_faces = _eval_func_flat_parallel(
+                _D, T_x.ravel(), self._Xf_2d.ravel(), self._Yc_xf.ravel()
+            ).reshape(nx + 1, ny)
+            D_y_faces = _eval_func_flat_parallel(
+                _D, T_y.ravel(), self._Xc_yf.ravel(), self._Yf_2d.ravel()
+            ).reshape(nx, ny + 1)
+            sigma_a = _eval_func_flat_parallel(
+                self.absorption_coeff_func, T_1d, self._Xc_flat, self._Yc_flat
+            )
+        elif self._use_array_call:
+            # Direct array call: the function supports numpy array inputs.
+            # This runs entirely in numpy's C layer, releases the GIL, and
+            # avoids the per-element Python overhead of np.vectorize.
+            _D = self.diffusion_coeff_func
+            D_x_faces = np.asarray(_D(T_x, self._Xf_2d, self._Yc_xf),
+                                   dtype=np.float64)
+            D_y_faces = np.asarray(_D(T_y, self._Xc_yf, self._Yf_2d),
+                                   dtype=np.float64)
+            sigma_a = np.asarray(
+                self.absorption_coeff_func(T_1d, self._Xc_flat, self._Yc_flat),
+                dtype=np.float64
+            )
+        else:
+            _vD = np.vectorize(_D, otypes=[np.float64])
+            D_x_faces = _vD(T_x, self._Xf_2d, self._Yc_xf)      # (nx+1, ny)
+            D_y_faces = _vD(T_y, self._Xc_yf, self._Yf_2d)      # (nx, ny+1)
+            sigma_a = np.vectorize(self.absorption_coeff_func, otypes=[np.float64])(
+                T_1d, self._Xc_flat, self._Yc_flat
+            )
+
+        # ---- Absorption coefficients at cell centres ----
         sigma_a_2d = sigma_a.reshape((nx, ny))
 
         # σ_total = σ_a + 1/(c·Δt)
@@ -990,168 +1098,176 @@ class DiffusionOperatorSolver2D:
     def apply_boundary_conditions(self, A: sparse.csr_matrix, rhs: np.ndarray,
                                  phi: np.ndarray, temperature: np.ndarray,
                                  D_x_faces: np.ndarray, D_y_faces: np.ndarray,
-                                 bc_time: float = 0.0):
+                                 bc_time: float = 0.0,
+                                 skip_matrix: bool = False,
+                                 skip_rhs: bool = False):
         """
-        Apply boundary conditions to the matrix and RHS.
+        Apply boundary conditions to the matrix and/or RHS.
         Supports Robin BCs: A·φ + B·∇φ = C
-        
-        Modifies A and rhs in place.
-        
-        Parameters:
-        -----------
-        A : sparse matrix
-            Operator matrix
-        rhs : ndarray
-            Right-hand side vector (n_total,)
-        phi : ndarray
-            Current φ values (for evaluating BC functions)
-        temperature : ndarray
-            Temperature field (for evaluating diffusion coefficient at boundary)
-        D_x_faces : ndarray
-            Diffusion coefficients at x-faces (from assemble_matrix)
-        D_y_faces : ndarray
-            Diffusion coefficients at y-faces (from assemble_matrix)
-        bc_time : float
-            Physical time used to evaluate potentially time-dependent BC functions.
+
+        Parameters
+        ----------
+        skip_matrix : bool
+            If True, skip diagonal modifications to A (only update rhs).
+            Use when the LU factorization of A is already cached.
+        skip_rhs : bool
+            If True, skip source contributions to rhs (only update A).
+            Use when building the matrix for LU factorization.
         """
         nx = self.nx_cells
         ny = self.ny_cells
-        
-        A = A.tolil()  # Convert to lil format for efficient modification
-        
+
+        if not skip_matrix:
+            A = A.tolil()  # LIL allows efficient diagonal modification
+
         # Convert phi and temperature to 2D for easier indexing
         phi_2d = phi.reshape(nx, ny)
         T_2d = temperature.reshape(nx, ny)
-        
+
         # Left boundary (i=0, x=x_min)
         for j in range(ny):
             idx = self._index_2d_to_1d(0, j)
             y_pos = self.y_centers[j]
-            
+
             if self.left_bc_func is not None:
-                # Robin BC: A·φ + B·∇φ = C
                 A_bc, B_bc, C_bc = self.left_bc_func(phi_2d[0, j], (self.x_faces[0], y_pos), bc_time)
-                
+
                 if abs(B_bc) < 1e-14:
-                    # Dirichlet-type: φ_boundary = C/A
                     phi_boundary = C_bc / A_bc
                     T_avg = T_2d[0, j]
                     D_boundary = self.diffusion_coeff_func(T_avg, self.x_faces[0], y_pos)
                     dx_half = self.x_centers[0] - self.x_faces[0]
                     flux_coeff = (self.Ax_faces[0, j] * D_boundary) / (self.V_cells[0, j] * dx_half)
-                    A[idx, idx] += flux_coeff
-                    rhs[idx] += flux_coeff * phi_boundary
+                    if not skip_matrix:
+                        A[idx, idx] += flux_coeff
+                    if not skip_rhs:
+                        rhs[idx] += flux_coeff * phi_boundary
                 else:
-                    # Robin/Neumann: A·φ + B·∇φ = C
-                    # Use actual diffusion coefficient from matrix assembly
-                    # For Marshak BC: B_bc = 2D, so D/B = 1/2 appears in the coupling
                     D_boundary = D_x_faces[0, j]
                     flux_coeff = (self.Ax_faces[0, j] * D_boundary * A_bc) / (B_bc * self.V_cells[0, j])
                     rhs_contribution = (self.Ax_faces[0, j] * D_boundary * C_bc) / (B_bc * self.V_cells[0, j])
-                    A[idx, idx] += flux_coeff
-                    rhs[idx] += rhs_contribution
+                    if not skip_matrix:
+                        A[idx, idx] += flux_coeff
+                    if not skip_rhs:
+                        rhs[idx] += rhs_contribution
             else:
-                # String-based BC
                 if self.left_bc == 'dirichlet':
-                    A[idx, :] = 0.0
-                    A[idx, idx] = 1.0
-                    rhs[idx] = self.left_bc_value
+                    if not skip_matrix:
+                        A[idx, :] = 0.0
+                        A[idx, idx] = 1.0
+                    if not skip_rhs:
+                        rhs[idx] = self.left_bc_value
                 elif self.left_bc == 'neumann':
                     pass
-        
+
         # Right boundary (i=nx-1, x=x_max)
         for j in range(ny):
             idx = self._index_2d_to_1d(nx-1, j)
             y_pos = self.y_centers[j]
-            
+
             if self.right_bc_func is not None:
                 A_bc, B_bc, C_bc = self.right_bc_func(phi_2d[nx-1, j], (self.x_faces[-1], y_pos), bc_time)
-                
+
                 if abs(B_bc) < 1e-14:
                     phi_boundary = C_bc / A_bc
                     T_avg = T_2d[nx-1, j]
                     D_boundary = self.diffusion_coeff_func(T_avg, self.x_faces[-1], y_pos)
                     dx_half = self.x_faces[-1] - self.x_centers[nx-1]
                     flux_coeff = (self.Ax_faces[nx, j] * D_boundary) / (self.V_cells[nx-1, j] * dx_half)
-                    A[idx, idx] += flux_coeff
-                    rhs[idx] += flux_coeff * phi_boundary
+                    if not skip_matrix:
+                        A[idx, idx] += flux_coeff
+                    if not skip_rhs:
+                        rhs[idx] += flux_coeff * phi_boundary
                 else:
-                    # Robin/Neumann: Use actual diffusion coefficient
                     D_boundary = D_x_faces[nx, j]
                     flux_coeff = (self.Ax_faces[nx, j] * D_boundary * A_bc) / (B_bc * self.V_cells[nx-1, j])
                     rhs_contribution = (self.Ax_faces[nx, j] * D_boundary * C_bc) / (B_bc * self.V_cells[nx-1, j])
-                    A[idx, idx] += flux_coeff
-                    rhs[idx] += rhs_contribution
+                    if not skip_matrix:
+                        A[idx, idx] += flux_coeff
+                    if not skip_rhs:
+                        rhs[idx] += rhs_contribution
             else:
                 if self.right_bc == 'dirichlet':
-                    A[idx, :] = 0.0
-                    A[idx, idx] = 1.0
-                    rhs[idx] = self.right_bc_value
+                    if not skip_matrix:
+                        A[idx, :] = 0.0
+                        A[idx, idx] = 1.0
+                    if not skip_rhs:
+                        rhs[idx] = self.right_bc_value
                 elif self.right_bc == 'neumann':
                     pass
-        
+
         # Bottom boundary (j=0, y=y_min)
         for i in range(nx):
             idx = self._index_2d_to_1d(i, 0)
             x_pos = self.x_centers[i]
-            
+
             if self.bottom_bc_func is not None:
                 A_bc, B_bc, C_bc = self.bottom_bc_func(phi_2d[i, 0], (x_pos, self.y_faces[0]), bc_time)
-                
+
                 if abs(B_bc) < 1e-14:
                     phi_boundary = C_bc / A_bc
                     T_avg = T_2d[i, 0]
                     D_boundary = self.diffusion_coeff_func(T_avg, x_pos, self.y_faces[0])
                     dy_half = self.y_centers[0] - self.y_faces[0]
                     flux_coeff = (self.Ay_faces[i, 0] * D_boundary) / (self.V_cells[i, 0] * dy_half)
-                    A[idx, idx] += flux_coeff
-                    rhs[idx] += flux_coeff * phi_boundary
+                    if not skip_matrix:
+                        A[idx, idx] += flux_coeff
+                    if not skip_rhs:
+                        rhs[idx] += flux_coeff * phi_boundary
                 else:
-                    # Robin/Neumann: Use actual diffusion coefficient
                     D_boundary = D_y_faces[i, 0]
                     flux_coeff = (self.Ay_faces[i, 0] * D_boundary * A_bc) / (B_bc * self.V_cells[i, 0])
                     rhs_contribution = (self.Ay_faces[i, 0] * D_boundary * C_bc) / (B_bc * self.V_cells[i, 0])
-                    A[idx, idx] += flux_coeff
-                    rhs[idx] += rhs_contribution
+                    if not skip_matrix:
+                        A[idx, idx] += flux_coeff
+                    if not skip_rhs:
+                        rhs[idx] += rhs_contribution
             else:
                 if self.bottom_bc == 'dirichlet':
-                    A[idx, :] = 0.0
-                    A[idx, idx] = 1.0
-                    rhs[idx] = self.bottom_bc_value
+                    if not skip_matrix:
+                        A[idx, :] = 0.0
+                        A[idx, idx] = 1.0
+                    if not skip_rhs:
+                        rhs[idx] = self.bottom_bc_value
                 elif self.bottom_bc == 'neumann':
                     pass
-        
+
         # Top boundary (j=ny-1, y=y_max)
         for i in range(nx):
             idx = self._index_2d_to_1d(i, ny-1)
             x_pos = self.x_centers[i]
-            
+
             if self.top_bc_func is not None:
                 A_bc, B_bc, C_bc = self.top_bc_func(phi_2d[i, ny-1], (x_pos, self.y_faces[-1]), bc_time)
-                
+
                 if abs(B_bc) < 1e-14:
                     phi_boundary = C_bc / A_bc
                     T_avg = T_2d[i, ny-1]
                     D_boundary = self.diffusion_coeff_func(T_avg, x_pos, self.y_faces[-1])
                     dy_half = self.y_faces[-1] - self.y_centers[ny-1]
                     flux_coeff = (self.Ay_faces[i, ny] * D_boundary) / (self.V_cells[i, ny-1] * dy_half)
-                    A[idx, idx] += flux_coeff
-                    rhs[idx] += flux_coeff * phi_boundary
+                    if not skip_matrix:
+                        A[idx, idx] += flux_coeff
+                    if not skip_rhs:
+                        rhs[idx] += flux_coeff * phi_boundary
                 else:
-                    # Robin/Neumann: Use actual diffusion coefficient
                     D_boundary = D_y_faces[i, ny]
                     flux_coeff = (self.Ay_faces[i, ny] * D_boundary * A_bc) / (B_bc * self.V_cells[i, ny-1])
                     rhs_contribution = (self.Ay_faces[i, ny] * D_boundary * C_bc) / (B_bc * self.V_cells[i, ny-1])
-                    A[idx, idx] += flux_coeff
-                    rhs[idx] += rhs_contribution
+                    if not skip_matrix:
+                        A[idx, idx] += flux_coeff
+                    if not skip_rhs:
+                        rhs[idx] += rhs_contribution
             else:
                 if self.top_bc == 'dirichlet':
-                    A[idx, :] = 0.0
-                    A[idx, idx] = 1.0
-                    rhs[idx] = self.top_bc_value
+                    if not skip_matrix:
+                        A[idx, :] = 0.0
+                        A[idx, idx] = 1.0
+                    if not skip_rhs:
+                        rhs[idx] = self.top_bc_value
                 elif self.top_bc == 'neumann':
                     pass
-        
+
         return A.tocsr()
     
     def solve(self,
@@ -1165,40 +1281,19 @@ class DiffusionOperatorSolver2D:
              override_left_bc: Optional[Callable] = None,
              override_right_bc: Optional[Callable] = None,
              override_bottom_bc: Optional[Callable] = None,
-             override_top_bc: Optional[Callable] = None) -> np.ndarray:
+             override_top_bc: Optional[Callable] = None,
+             skip_bc_rhs: bool = False) -> np.ndarray:
         """
         Solve A φ = b for φ.
-        
-        Parameters:
-        -----------
-        rhs : ndarray
-            Right-hand side vector b - shape (nx, ny) or (n_total,)
-        temperature : ndarray
-            Temperature field T(x,y) - shape (nx, ny) or (n_total,)
-        phi_guess : ndarray or None
-            Initial guess for φ (used if diffusion is flux-limited)
-            Shape (nx, ny) or (n_total,)
-        use_iterative : bool
-            If True and diffusion is flux-limited, iterate to convergence
-        max_iter : int
-            Maximum iterations for flux limiting
-        tol : float
-            Tolerance for flux limiting iteration
-        bc_time : float
-            Physical time used to evaluate potentially time-dependent BC functions.
-        override_left_bc : callable or None
-            Temporarily override left boundary condition for this solve
-        override_right_bc : callable or None
-            Temporarily override right boundary condition for this solve
-        override_bottom_bc : callable or None
-            Temporarily override bottom boundary condition for this solve
-        override_top_bc : callable or None
-            Temporarily override top boundary condition for this solve
-            
-        Returns:
-        --------
-        phi : ndarray
-            Solution to A φ = b - shape (nx, ny)
+
+        Parameters
+        ----------
+        skip_bc_rhs : bool
+            When True the boundary-condition *source* terms (C_bc) are not
+            added to the RHS.  Use this for homogeneous-BC solves (operator B
+            in the GMRES matvec) where C_bc = 0 for every boundary cell.
+            Avoids all per-cell BC function calls on cache-hit paths, which
+            is the dominant cost for large meshes with many GMRES iterations.
         """
         nx = self.nx_cells
         ny = self.ny_cells
@@ -1238,35 +1333,56 @@ class DiffusionOperatorSolver2D:
         
         # Iterative solution for flux-limited diffusion
         for iteration in range(max_iter):
-            # Check if we can use cached matrix (for fixed temperature solves)
-            use_cache = (self._cached_T is not None and 
+            # ----------------------------------------------------------------
+            # LU-caching fast path
+            # Factorize A once per Newton iteration (when T changes), then
+            # reuse the factorization for every GMRES back-substitution.
+            # This eliminates ~5000 redundant factorizations per time step.
+            # ----------------------------------------------------------------
+            T_cached = (self._cached_T is not None and
                         self._cached_A is not None and
+                        self._cached_LU is not None and
                         np.array_equal(T_1d, self._cached_T))
-            
-            if use_cache:
-                # Reuse cached matrix
-                A = self._cached_A.copy()
-                D_x_faces = self._cached_D_x_faces
-                D_y_faces = self._cached_D_y_faces
+
+            if T_cached:
+                if skip_bc_rhs:
+                    # Homogeneous BC solve (GMRES operator B matvec):
+                    # C_bc = 0 everywhere → no RHS modifications needed.
+                    # Just do a back-substitution with the cached factorization.
+                    phi_new = self._cached_LU.solve(rhs_1d)
+                else:
+                    # Same T, inhomogeneous RHS: apply BC source contributions.
+                    D_x_faces = self._cached_D_x_faces
+                    D_y_faces = self._cached_D_y_faces
+                    rhs_bc = rhs_1d.copy()
+                    self.apply_boundary_conditions(
+                        self._cached_A, rhs_bc, phi_1d, T_1d,
+                        D_x_faces, D_y_faces, bc_time=bc_time,
+                        skip_matrix=True
+                    )
+                    phi_new = self._cached_LU.solve(rhs_bc)
             else:
-                # Assemble matrix
+                # T changed (or first call): assemble and factorize.
                 A, D_x_faces, D_y_faces, _ = self.assemble_matrix(T_1d, phi_1d)
-                
-                # Cache for potential reuse (only if not using flux limiting iteration)
+
+                # Build full matrix (interior + BC diagonal terms).
+                # When skip_bc_rhs=True we still need the BC matrix terms
+                # (A_bc/B_bc diagonal flux coupling) but not the RHS source.
+                rhs_bc = rhs_1d.copy()
+                A_full = self.apply_boundary_conditions(
+                    A, rhs_bc, phi_1d, T_1d, D_x_faces, D_y_faces,
+                    bc_time=bc_time, skip_rhs=skip_bc_rhs
+                )
+
+                lu = splu(A_full.tocsc())
                 if not use_iterative:
                     self._cached_T = T_1d.copy()
                     self._cached_A = A.copy()
                     self._cached_D_x_faces = D_x_faces
                     self._cached_D_y_faces = D_y_faces
-            
-            # Apply boundary conditions
-            rhs_bc = rhs_1d.copy()
-            A = self.apply_boundary_conditions(
-                A, rhs_bc, phi_1d, T_1d, D_x_faces, D_y_faces, bc_time=bc_time
-            )
-            
-            # Solve linear system
-            phi_new = spsolve(A, rhs_bc)
+                    self._cached_LU = lu
+
+                phi_new = lu.solve(rhs_bc)
             
             # Check convergence
             if use_iterative:

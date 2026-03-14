@@ -18,7 +18,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import matplotlib.pyplot as plt
-from multigroup_diffusion_solver_patched_lmfgk import MultigroupDiffusionSolver1D, C_LIGHT, A_RAD, SIGMA_SB, Bg_multigroup, flux_limiter_larsen
+from multigroup_diffusion_solver_patched_lmfgk import (MultigroupDiffusionSolver1D, C_LIGHT, A_RAD, SIGMA_SB, Bg_multigroup,
+    flux_limiter_standard, flux_limiter_larsen, flux_limiter_levermore_pomraning, flux_limiter_max)
+
+# Add project root to path for shared utilities
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+from utils.plotfuncs import show, hide_spines, font
 
 # Physical constants
 RHO = 0.01  # g/cm³
@@ -114,8 +121,8 @@ def make_powerlaw_diffusion_func(E_low, E_high, rho=1.0):
 # MARSHAK WAVE SIMULATION
 # =============================================================================
 
-def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10, 
-                                         time_dependent_bc=True):
+def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
+                                         time_dependent_bc=True, flux_limiter='larsen'):
     """Run multigroup Marshak wave simulation with power-law opacity
     
     Parameters:
@@ -126,6 +133,8 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         Number of energy groups (default: 10)
     time_dependent_bc : bool
         If True, boundary temperature varies with time (default: False)
+    flux_limiter : str
+        Flux limiter to use: 'none', 'larsen', 'levermore_pomraning', or 'max'
     """
     
     print("="*80)
@@ -142,11 +151,22 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         print("  GMRES: Using LMFG preconditioning")
     else:
         print("  GMRES: No preconditioning")
+
+    _flux_limiter_map = {
+        'none': flux_limiter_standard,
+        'larsen': flux_limiter_larsen,
+        'levermore_pomraning': flux_limiter_levermore_pomraning,
+        'max': flux_limiter_max,
+    }
+    if flux_limiter not in _flux_limiter_map:
+        raise ValueError(f"Unknown flux_limiter '{flux_limiter}'. Choose from: {list(_flux_limiter_map)}")
+    flux_limiter_func = _flux_limiter_map[flux_limiter]
+    print(f"  Flux limiter: {flux_limiter}")
     print("="*80)
     
     # Problem setup
     r_min = 0.0      # cm
-    r_max = 4.0      # cm
+    r_max = 7.0      # cm
     n_cells = 100     # Reasonable resolution
     
     # Energy group structure (keV) - logarithmically spaced
@@ -155,7 +175,7 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     print("Group energy edges (keV):", energy_edges)
     # Time stepping parameters
     dt = 0.01        # ns - timestep
-    target_times = [1.0,2.0,5.0]#[1.0,2.0]#,5.0,10.0]#, 5.0,20.]#, 10.0, 20.0]  # ns
+    target_times = [1.0,2.0,5.0,10.0]#[1.0,2.0]#,5.0,10.0]#, 5.0,20.]#, 10.0, 20.0]  # ns
     
     # Material properties
     rho = RHO  # g/cm³
@@ -273,6 +293,8 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     left_bc_funcs = [make_left_bc_func(g) for g in range(n_groups)]
     right_bc_funcs = [make_right_bc_func(g) for g in range(n_groups)]
     
+
+
     # Create solver
     print(f"\nInitializing multigroup solver with {n_cells} cells...")
     solver = MultigroupDiffusionSolver1D(
@@ -284,7 +306,7 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         geometry='planar',
         dt=dt,
         diffusion_coeff_funcs=diff_funcs,
-        flux_limiter_funcs=flux_limiter_larsen,
+        flux_limiter_funcs=flux_limiter_func,
         absorption_coeff_funcs=sigma_funcs,
         left_bc_funcs=left_bc_funcs,
         right_bc_funcs=right_bc_funcs,
@@ -432,9 +454,24 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     print(f"Total steps: {step_count}")
     print(f"Final time: {current_time:.3f} ns")
 
-    #save solutions to an NPZ file for later analysis
-    np.savez(f"marshak_wave_multigroup_powerlaw_{n_groups}g_{'precond' if use_preconditioner else 'no_precond'}{'_timeBC' if time_dependent_bc else ''}.npz", solutions=solutions)
-    print(f"Saved solutions to NPZ file: marshak_wave_multigroup_powerlaw_{n_groups}g_{'precond' if use_preconditioner else 'no_precond'}{'_timeBC' if time_dependent_bc else ''}.npz")
+    # Build structured arrays for saving
+    _times      = np.array([s['time']       for s in solutions])          # (n_saved,)
+    _r          = solutions[0]['r']                                        # (n_cells,)
+    _T_mat      = np.array([s['T']          for s in solutions])          # (n_saved, n_cells)
+    _T_rad      = np.array([s['T_rad']      for s in solutions])          # (n_saved, n_cells)
+    _E_r        = np.array([s['E_r']        for s in solutions])          # (n_saved, n_cells)
+    _phi_groups = np.array([s['phi_groups'] for s in solutions])          # (n_saved, n_groups, n_cells)
+    _E_r_groups = np.array([s['E_r_groups'] for s in solutions])          # (n_saved, n_groups, n_cells)
+
+    _npz1 = (f"marshak_wave_multigroup_powerlaw_{n_groups}g_"
+             f"{'precond' if use_preconditioner else 'no_precond'}"
+             f"{'_timeBC' if time_dependent_bc else ''}.npz")
+    np.savez(_npz1,
+             times=_times, r=_r, energy_edges=energy_edges,
+             T_mat=_T_mat, T_rad=_T_rad, E_r=_E_r,
+             phi_groups=_phi_groups, E_r_groups=_E_r_groups)
+    print(f"Saved solutions to NPZ file: {_npz1}")
+    print(f"  Arrays: times{_times.shape}, r{_r.shape}, phi_groups{_phi_groups.shape}")
     
     # =============================================================================
     # PLOTTING
@@ -442,57 +479,64 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     
     print("\nGenerating plots...")
     
-    # Create figure with 3 subplots
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    
     colors = ['blue', 'red', 'green', 'orange', 'purple', 'cyan', 'magenta', 'brown', 'olive', 'teal']
-    
-    for idx, sol in enumerate(solutions):
-        color = colors[idx]
-        label = f"t = {sol['time']:.1f} ns"
-        
-        # Temperature profile
-        axes[0].plot(sol['r'], sol['T'], color=color, linewidth=2, label=label)
-        
-        # Radiation temperature
-        axes[1].plot(sol['r'], sol['T_rad'], color=color, linewidth=2, label=label)
-        
-        # Total radiation energy
-        axes[2].semilogy(sol['r'], sol['E_r'], color=color, linewidth=2, label=label)
-    
-    # Format Temperature plot
-    axes[0].set_xlabel('Position (cm)', fontsize=12)
-    axes[0].set_ylabel('Material Temperature (keV)', fontsize=12)
-    axes[0].set_title('Material Temperature Profile', fontsize=14, fontweight='bold')
-    axes[0].legend(fontsize=10)
-    axes[0].grid(True, alpha=0.3)
-    
-    # Format Radiation Temperature plot
-    axes[1].set_xlabel('Position (cm)', fontsize=12)
-    axes[1].set_ylabel('Radiation Temperature (keV)', fontsize=12)
-    axes[1].set_title('Radiation Temperature Profile', fontsize=14, fontweight='bold')
-    axes[1].legend(fontsize=10)
-    axes[1].grid(True, alpha=0.3)
-    
-    # Format Radiation Energy plot
-    axes[2].set_xlabel('Position (cm)', fontsize=12)
-    axes[2].set_ylabel('Radiation Energy (GJ/cm³)', fontsize=12)
-    axes[2].set_title('Radiation Energy Profile', fontsize=14, fontweight='bold')
-    axes[2].legend(fontsize=10)
-    axes[2].grid(True, alpha=0.3, which='both')
-    
-    plt.tight_layout()
-    
-    # Save figure
     precond_str = "with_precond" if use_preconditioner else "no_precond"
     bc_str = "_timeBC" if time_dependent_bc else ""
-    filename = f"marshak_wave_multigroup_powerlaw_{n_groups}g_{precond_str}{bc_str}.png"
-    plt.savefig(filename, dpi=150, bbox_inches='tight')
-    print(f"Saved: {filename}")
+    base = f"marshak_wave_multigroup_powerlaw_{n_groups}g_{precond_str}{bc_str}_{flux_limiter}"
+
+    # --- Figure 1: Material Temperature ---
+    fig1, ax1 = plt.subplots(figsize=(6, 4.5))
+    for idx, sol in enumerate(solutions):
+        ax1.plot(sol['r'], sol['T'], color=colors[idx], linewidth=2,
+                label=f"material" if idx == 0 else None)
+        ax1.plot(sol['r'], sol['T_rad'], color=colors[idx], linewidth=2,
+                label=f"radiation" if idx == 0 else None, linestyle='--')
+    ax1.set_xlabel('position (cm)', fontsize=12)
+    ax1.set_ylabel('temperature (keV)', fontsize=12)
+    ax1.legend(prop=font,facecolor='white', edgecolor='none', fontsize=10)
+    ax1.grid(True, alpha=0.3)
+    plt.tight_layout()
+    show(f"{base}_T_mat.pdf", close_after=True)
+    print(f"Saved: {base}_T_mat.pdf")
+
+    # --- Figure 2: Radiation Temperature ---
+    fig2, ax2 = plt.subplots(figsize=(6, 4.5))
+    for idx, sol in enumerate(solutions):
+        ax2.plot(sol['r'], sol['T'], color=colors[idx], linewidth=2,
+                label=f"material" if idx == 0 else None)
+        ax2.plot(sol['r'], sol['T_rad'], color=colors[idx], linewidth=2,
+                label=f"radiation" if idx == 0 else None, linestyle='--')
+    ax2.set_xlabel('position (cm)', fontsize=12)
+    ax2.set_ylabel('temperature (keV)', fontsize=12)
+    ax2.set_xscale('log')
+    ax2.set_yscale('log')
+    ax2.legend(prop=font,facecolor='white', edgecolor='none', fontsize=10)
+    ax2.grid(True, alpha=0.3, which='both')
+    plt.tight_layout()
+    show(f"{base}_T_log.pdf", close_after=True)
+    print(f"Saved: {base}_T_log.pdf")
+
+    # --- Figure 3: Radiation Energy Density ---
+    fig3, ax3 = plt.subplots(figsize=(7.5, 5.25))
+    for idx, sol in enumerate(solutions):
+        ax3.semilogy(sol['r'], sol['E_r'], color=colors[idx], linewidth=2,
+                     label=f"t = {sol['time']:.1f} ns")
+    ax3.set_xlabel('Position (cm)', fontsize=12)
+    ax3.set_ylabel(r'Radiation Energy (GJ/cm$^3$)', fontsize=12)
+    ax3.legend(prop=font)
+    ax3.grid(True, alpha=0.3, which='both')
+    plt.tight_layout()
+    show(f"{base}_E_rad.pdf", close_after=True)
+    print(f"Saved: {base}_E_rad.pdf")
     
-    # Show plot
-    plt.show()
-    
+
+    # Save structured arrays (group scalar intensities phi_g and E_r_g included)
+    np.savez(f"{base}_solutions.npz",
+             times=_times, r=_r, energy_edges=energy_edges,
+             T_mat=_T_mat, T_rad=_T_rad, E_r=_E_r,
+             phi_groups=_phi_groups, E_r_groups=_E_r_groups)
+    print(f"Saved: {base}_solutions.npz")
+    print(f"  Arrays: times{_times.shape}, r{_r.shape}, phi_groups{_phi_groups.shape}")
     return solver, solutions
 
 
@@ -519,6 +563,9 @@ if __name__ == "__main__":
                        help='Number of energy groups (default: 10)')
     parser.add_argument('--no-time-bc', action='store_true',
                        help='Disable time-dependent boundary condition (default: enabled)')
+    parser.add_argument('--flux-limiter', type=str, default='larsen',
+                       choices=['none', 'larsen', 'levermore_pomraning', 'max'],
+                       help='Flux limiter to use (default: larsen)')
     
     args = parser.parse_args()
     
@@ -526,9 +573,11 @@ if __name__ == "__main__":
     use_precond = locals().get('USE_PRECONDITIONER', args.precond)
     n_groups = locals().get('NUM_GROUPS', args.groups)
     time_bc = locals().get('TIME_DEPENDENT_BC', not args.no_time_bc)
-    
+    flux_lim = locals().get('FLUX_LIMITER', args.flux_limiter)
+
     solver, solutions = run_marshak_wave_multigroup_powerlaw(
         use_preconditioner=use_precond,
         n_groups=n_groups,
-        time_dependent_bc=time_bc
+        time_dependent_bc=time_bc,
+        flux_limiter=flux_lim,
     )

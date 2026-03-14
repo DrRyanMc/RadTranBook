@@ -62,7 +62,7 @@ Trinit = np.zeros(I) + 1e-8
 T_boundary = (0.0,0)
 source = np.zeros(I)
 #set source for x<0.5 to be 1, x>0.5 to be 0
-source[mesh_midpoints<=0.5] = imc.__a*imc.__c*2
+source[mesh_midpoints<=0.5] = imc.__a*imc.__c
 sigma_a_f = lambda T: 1+0*T ##300*T**-3
 cv_val = imc.__a
 eos = lambda T: imc.__a*T**4
@@ -75,12 +75,12 @@ times, radiation_temperatures, temperatures = imc.run_simulation(Ntarget,Nbounda
 #analytic solutions
 #t =1 
 #plot temperatures as a function of space at final time
-plt.plot(mesh_midpoints,(temperatures[-1]))
-plt.plot(mesh_midpoints,radiation_temperatures[-1])
+plt.plot(mesh_midpoints,(temperatures[-1]**4))
+plt.plot(mesh_midpoints,(radiation_temperatures[-1]**4))
 print(times[-1]*imc.__c, times_data[select_time-1])
 print(a*c*times[-1])
-plt.plot(rad_data[0:last_val,0],(rad_data[0:last_val,select_time]/(imc.__a*imc.__c))**.25,"o")
-plt.plot(mat_data[:,0],mat_data[:,select_time]**.25,"v")
+plt.plot(rad_data[0:last_val,0],rad_data[0:last_val,select_time],"o")
+plt.plot(mat_data[:,0],mat_data[:,select_time],"v")
 plt.xlim([0,L])
 plt.xlabel("Position")
 plt.ylabel("Temperature")

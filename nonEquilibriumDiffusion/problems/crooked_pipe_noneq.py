@@ -14,6 +14,7 @@ Source: T = 300 eV (0.3 keV) at z=0.0 and r∈(0.0, 0.5)
 
 import sys
 import os
+import argparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
@@ -21,7 +22,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from functools import partial
-from twoDFV import NonEquilibriumRadiationDiffusionSolver2D, C_LIGHT, A_RAD, flux_limiter_larsen
+from twoDFV import NonEquilibriumRadiationDiffusionSolver2D, C_LIGHT, A_RAD, flux_limiter_larsen, flux_limiter_levermore_pomraning
 
 # Add utils to path for plotting
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'utils'))
@@ -502,7 +503,7 @@ def plot_solution(solver, time_value, save_prefix='crooked_pipe_noneq', show_mes
     print(f"Saved: {filename2}")
 
 
-def plot_fiducial_history(times, fiducial_data):
+def plot_fiducial_history(times, fiducial_data, limiter_name='larsen'):
     """
     Plot temperature history at fiducial points
     Shows both material temperature T and radiation temperature T_rad
@@ -532,7 +533,7 @@ def plot_fiducial_history(times, fiducial_data):
     ax1.grid(True, which='minor', alpha=0.15, linestyle=':')
     
     plt.tight_layout()
-    filename1 = 'crooked_pipe_noneq_fiducial_history_material.pdf'
+    filename1 = f'crooked_pipe_noneq_fiducial_history_material_{limiter_name}.pdf'
     show(filename1, close_after=True)
     print(f"Saved: {filename1}")
     
@@ -557,7 +558,7 @@ def plot_fiducial_history(times, fiducial_data):
     ax2.grid(True, which='minor', alpha=0.15, linestyle=':')
     
     plt.tight_layout()
-    filename2 = 'crooked_pipe_noneq_fiducial_history_radiation.pdf'
+    filename2 = f'crooked_pipe_noneq_fiducial_history_radiation_{limiter_name}.pdf'
     show(filename2, close_after=True)
     print(f"Saved: {filename2}")
 
@@ -566,7 +567,8 @@ def plot_fiducial_history(times, fiducial_data):
 # MAIN EXECUTION
 # =============================================================================
 
-def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0, dt_increase_factor=1.1):
+def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0,
+         dt_increase_factor=1.1, flux_limiter_name='larsen'):
     """
     Run the non-equilibrium Crooked Pipe test problem
     
@@ -583,6 +585,8 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
         Maximum time step (ns)
     dt_increase_factor : float
         Factor by which to increase dt each step (e.g., 1.1 for 10% increase)
+    flux_limiter_name : str
+        Flux limiter to use: 'larsen' or 'levermore_pomraning'
     """
     if output_times is None:
         output_times = [1.0, 5.0, 10.0, 100.0, 200.0, 500.0, 1000.0]
@@ -607,12 +611,23 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
     print()
     print(f"Output times for colormaps: {output_times} ns")
     print(f"Using refined mesh at interfaces: {use_refined_mesh}")
+    print(f"Flux limiter: {flux_limiter_name}")
     print(f"Time stepping: dt_initial = {dt_initial} ns, dt_max = {dt_max} ns, increase factor = {dt_increase_factor}")
     print("="*80)
     
     # Create solver
     print("\nSetting up solver...")
     
+    # Select flux limiter function
+    _flux_limiters = {
+        'larsen':              partial(flux_limiter_larsen, n=2),
+        'levermore_pomraning': flux_limiter_levermore_pomraning,
+    }
+    if flux_limiter_name not in _flux_limiters:
+        raise ValueError(f"Unknown flux limiter '{flux_limiter_name}'. "
+                         f"Choose from: {list(_flux_limiters.keys())}")
+    flux_limiter_func = _flux_limiters[flux_limiter_name]
+
     # Setup boundary functions
     boundary_funcs = {
         'left': bc_left_axis,
@@ -663,7 +678,7 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
             inverse_material_energy_func=inverse_material_energy,
             boundary_funcs=boundary_funcs,
             theta=1.0,
-            flux_limiter_func=partial(flux_limiter_larsen, n=2)
+            flux_limiter_func=flux_limiter_func
         )
     else:
         # Use uniform mesh (original setup)
@@ -681,7 +696,7 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
             inverse_material_energy_func=inverse_material_energy,
             boundary_funcs=boundary_funcs,
             theta=1.0,
-            flux_limiter_func=partial(flux_limiter_larsen, n=2)
+            flux_limiter_func=flux_limiter_func
         )
     
     # Initial condition: cold material
@@ -692,6 +707,7 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
     
     # Determine mesh type for file naming
     mesh_type = "refined" if use_refined_mesh else "uniform"
+    run_tag = f'{mesh_type}_{flux_limiter_name}'
     
     # Plot material properties
     print("\nPlotting material properties...")
@@ -768,7 +784,7 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
         for output_t in output_times:
             if output_t not in output_times_saved and abs(t - output_t) < 1e-6:
                 print(f"  Saving colormap at t = {t:.3f} ns (requested: {output_t} ns)")
-                plot_solution(solver, t, save_prefix=f'crooked_pipe_noneq_{mesh_type}', 
+                plot_solution(solver, t, save_prefix=f'crooked_pipe_noneq_{run_tag}', 
                             show_mesh=False, first_one=first_one)
                 output_times_saved.add(output_t)
                 first_one = False
@@ -795,7 +811,7 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
     # Plot final time if not already done
     if t_final not in output_times_saved:
         print(f"  Saving colormap at final time t = {t_final:.3f} ns")
-        plot_solution(solver, t_final, save_prefix=f'crooked_pipe_noneq_{mesh_type}',
+        plot_solution(solver, t_final, save_prefix=f'crooked_pipe_noneq_{run_tag}',
                     show_mesh=False, first_one=first_one)
     
     # Convert to numpy arrays
@@ -810,7 +826,7 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
     Er_2d = phi_2d / C_LIGHT
     T_rad_2d = (Er_2d / A_RAD)**0.25
     
-    npz_filename = f'crooked_pipe_noneq_solution_{mesh_type}_{solver.nx_cells}x{solver.ny_cells}.npz'
+    npz_filename = f'crooked_pipe_noneq_solution_{run_tag}_{solver.nx_cells}x{solver.ny_cells}.npz'
     np.savez(npz_filename,
              r_centers=r_centers,
              z_centers=z_centers,
@@ -824,7 +840,7 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
     
     # Plot fiducial point history
     print("\nPlotting fiducial point temperature history...")
-    plot_fiducial_history(times, fiducial_data)
+    plot_fiducial_history(times, fiducial_data, limiter_name=flux_limiter_name)
     
     # Print some diagnostics
     print("\n" + "="*80)
@@ -852,10 +868,65 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
     return solver
 
 #0.001,0.01,0.1,1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0
+def parse_arguments():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Run non-equilibrium Crooked Pipe test problem.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--flux-limiter",
+        type=str,
+        default="larsen",
+        choices=["larsen", "levermore_pomraning"],
+        help="Flux limiter to use",
+    )
+    parser.add_argument(
+        "--use-refined-mesh",
+        action="store_true",
+        help="Enable mesh refinement at material interfaces",
+    )
+    parser.add_argument(
+        "--output-times",
+        type=str,
+        default=None,
+        help="Comma-separated output times (ns), e.g. '1.0,10.0,100.0'. "
+             "If not provided, uses default set.",
+    )
+    parser.add_argument(
+        "--dt-initial",
+        type=float,
+        default=1e-3,
+        help="Initial time step (ns)",
+    )
+    parser.add_argument(
+        "--dt-max",
+        type=float,
+        default=10.0,
+        help="Maximum time step (ns)",
+    )
+    parser.add_argument(
+        "--dt-growth",
+        type=float,
+        default=1.1,
+        help="Time step growth factor",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    solver = main(output_times=[1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 
-                                200.0, 500.0, 1000.0], 
-                  use_refined_mesh=False,
-                  dt_initial=1e-3,
-                  dt_max=10.0,
-                  dt_increase_factor=1.1)
+    args = parse_arguments()
+
+    if args.output_times:
+        output_times = [float(t.strip()) for t in args.output_times.split(",") if t.strip()]
+    else:
+        output_times = [1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
+
+    solver = main(
+        output_times=output_times,
+        use_refined_mesh=args.use_refined_mesh,
+        dt_initial=args.dt_initial,
+        dt_max=args.dt_max,
+        dt_increase_factor=args.dt_growth,
+        flux_limiter_name=args.flux_limiter,
+    )

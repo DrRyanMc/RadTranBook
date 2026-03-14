@@ -2,7 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 import random
-from numba import jit
+from dataclasses import dataclass
+from numba import jit, prange, get_thread_id, get_num_threads
 from mpi4py import MPI
 
 __c = 29.98 #cm/ns
@@ -74,102 +75,115 @@ def move_particle(weight, mu, position, cell_l, cell_r,sigma_a, sigma_s, distanc
     return weight, mu, position, new_location, deposited_weight, deposited_intensity, distance_to_census
     
 #this function loops over all particles and moves them to the next cell or census
-@jit(nopython=True, cache=True)
-def move_particles(weights, mus, times, positions,cell_indices, mesh, sigma_a, sigma_s,dt,refl):
-    #cell_indices is a list of the indices of the cells that the particles are in
-    #mesh is a 2-D array of length I where I is the number of cells, each row is the left and right boundary of the cell
-    #assert that all arrays are the same length
+# parallel=True: numba uses prange for thread-level parallelism within each MPI rank.
+# cache=True is intentionally omitted: get_thread_id/get_num_threads use dynamic globals
+# that are incompatible with the numba cache.
+@jit(nopython=True, parallel=True)
+def move_particles(weights, mus, times, positions, cell_indices, mesh, sigma_a, sigma_s, dt, refl):
+    N = len(weights)
+    n_cells = len(sigma_a)
+    # Per-thread accumulation arrays avoid race conditions on shared deposition arrays
+    n_threads = get_num_threads()
+    dep_threads = np.zeros((n_threads, n_cells))
+    si_threads  = np.zeros((n_threads, n_cells))
 
-    if not(len(weights) == len(mus) == len(times) == len(positions) == len(cell_indices)):
-        print("Length of weights: ", len(weights))
-        print("Length of mus: ", len(mus))
-        print("Length of times: ", len(times))
-        print("Length of positions: ", len(positions))
-        print("Length of cell_indices: ", len(cell_indices))
-    assert len(weights) == len(mus) == len(times) == len(positions)
-    #initialize array to hold deposited weight
-    deposited_weights = np.zeros(len(sigma_a))
-    scalar_intensity = np.zeros(len(sigma_a))
-    #initialize array to hold new positions
-    N = len(weights) #number of particles
-    #compute sum of weights in each zone
-    zone_weights = np.zeros(len(sigma_a))
-    for i in range(N):
-        loc = int(cell_indices[i])
-        zone_weights[loc] += weights[i]
-    
-    #weights *= 0.0
-    #dxs = mesh[:,1] - mesh[:,0]
-    #return zone_weights/dxs, scalar_intensity
-    #loop over particles
-    for i in range(N):
-        distance_to_census = (dt-times[i])*__c
-        
+    for i in prange(N):
+        tid = get_thread_id()
+        distance_to_census = (dt - times[i]) * __c
+
         #move particle until it reaches census
         while distance_to_census > 0:
             loc = int(cell_indices[i])
             #check that particle is in the cell
             if positions[i] < mesh[loc][0] or positions[i] > mesh[loc][1]:
-                #print out a lot of detail
                 print("Particle not in cell")
                 print("Particle position: ", positions[i])
                 print("Cell position: ", mesh[loc][0], mesh[loc][1])
                 print("Cell index: ", loc)
                 print("Particle index: ", i)
                 print("Particle weight: ", weights[i])
-            assert positions[i] >= mesh[loc][0] and positions[i] <= mesh[loc][1], "Particle not in cell position"
-            #move particle
             output = move_particle(weights[i], mus[i], positions[i], mesh[loc][0], mesh[loc][1], sigma_a[loc], sigma_s[loc], distance_to_census)
-            #update arrays
-            weights[i] = output[0]
-            mus[i] = output[1]
+            weights[i]   = output[0]
+            mus[i]       = output[1]
             positions[i] = output[2]
-            #check to see if particle is in a new cell
             if output[3] == 1:
                 cell_indices[i] = cell_indices[i] + 1
             elif output[3] == -1:
                 cell_indices[i] = cell_indices[i] - 1
-            #update deposited weight
-            #assert output[4] >= 0, "Negative deposited weight"
-            deposited_weights[loc] += output[4]
-            #update scalar intensity
-            scalar_intensity[loc] += output[5]/dt
-            #update distance to census
+            dep_threads[tid, loc] += output[4]
+            si_threads[tid, loc]  += output[5] / dt
             distance_to_census = output[6]
-            #check to see if particle has exited the slab
             if cell_indices[i] == len(mesh):
                 if refl[1]:
                     mus[i] = -mus[i]
                     cell_indices[i] = cell_indices[i] - 1
                 else:
-                    distance_to_census = 0
+                    distance_to_census = 0.0
             elif cell_indices[i] == -1:
                 if refl[0]:
                     mus[i] = -mus[i]
                     cell_indices[i] = cell_indices[i] + 1
                 else:
-                    distance_to_census = 0
-            #if weight < 1e-10, kill particle and add energy to deposited_weights
+                    distance_to_census = 0.0
             if weights[i] < 1e-109:
                 loc = int(cell_indices[i])
-                if (loc>0) and (loc<len(sigma_a)-1):
-                    deposited_weights[loc] += weights[i]/(mesh[loc][1]-mesh[loc][0])
-                    scalar_intensity[loc] += weights[i]/dt/sigma_a[loc]/(mesh[loc][1]-mesh[loc][0])
-                    weights[i] = 0
-                    distance_to_census = 0
+                if (loc > 0) and (loc < len(sigma_a) - 1):
+                    dep_threads[tid, loc] += weights[i] / (mesh[loc][1] - mesh[loc][0])
+                    si_threads[tid, loc]  += weights[i] / dt / sigma_a[loc] / (mesh[loc][1] - mesh[loc][0])
+                weights[i] = 0.0
+                distance_to_census = 0.0
 
+    deposited_weights = dep_threads.sum(axis=0)
+    scalar_intensity  = si_threads.sum(axis=0)
     return deposited_weights, scalar_intensity
 
 #simple comb function to control particle number
 @jit(nopython=True, cache=True)
-def comb(Ntarget, N):
-    if (N < Ntarget):
-        return np.arange(N)
-    spacing = N/Ntarget
-    xi = random.random()
-    comb_vals = np.arange(0,Ntarget)*spacing+xi
-    mask = np.floor(comb_vals).astype("int")
-    return mask
+def comb(weights, cell_indices, mus, times, positions, Ntarget, n_cells):
+    """
+    Per-cell stochastic comb (matches IMCSlab.py).
+    Returns combed arrays plus a per-cell energy discrepancy array
+    (positive = energy removed from radiation by combing).
+    """
+    ecen = np.bincount(cell_indices, weights=weights, minlength=n_cells)
+    total_ecen = np.sum(ecen)
+    if total_ecen == 0:
+        return weights, cell_indices, mus, times, positions, np.zeros(n_cells)
+
+    ncen_desired = np.where(ecen > 0,
+                            np.maximum(1, np.round(Ntarget * ecen / total_ecen).astype(int)),
+                            0)
+    ew_cen = np.where(ncen_desired > 0, ecen / ncen_desired, 0.0)
+
+    new_weights      = []
+    new_mus          = []
+    new_times        = []
+    new_positions    = []
+    new_cell_indices = []
+
+    for i in range(len(weights)):
+        cell      = int(cell_indices[i])
+        ew_target = ew_cen[cell]
+        if ew_target <= 0:
+            continue
+        numcomb = int(weights[i] / ew_target + random.random())
+        for _ in range(numcomb):
+            new_weights.append(ew_target)
+            new_mus.append(mus[i])
+            new_times.append(times[i])
+            new_positions.append(positions[i])
+            new_cell_indices.append(cell)
+
+    new_weights_arr      = np.array(new_weights)
+    new_cell_indices_arr = np.array(new_cell_indices, dtype=int)
+    if len(new_weights_arr) > 0:
+        ecen_after = np.bincount(new_cell_indices_arr, weights=new_weights_arr, minlength=n_cells)
+    else:
+        ecen_after = np.zeros(n_cells)
+    energy_discrepancy = ecen - ecen_after
+    return (new_weights_arr, new_cell_indices_arr,
+            np.array(new_mus), np.array(new_times), np.array(new_positions),
+            energy_discrepancy)
 
 #function for sampling surface source
 @jit(nopython=True, cache=True)
@@ -222,34 +236,24 @@ def sample_linear_density(dx, s, T, N, adjust_slope=True):
 #function for sampling during time step
 @jit(nopython=True, cache=True)
 def equilibrium_sample(N, T, mesh):
-    #T is the temperature of the cell
-    #The energy density in each cell needs to be a*T**4
-    #Therefore, each particle will be born with energy (a*T**4)/sum(a*T**4)*N
-    #The particles will be born with a random position in the cell
-    #The particles will be born with a random direction
-    #The particles will be born with time 0
-    #The particles will be born with weight (a*T**4)/sum(a*T**4)*N/N
-    #The particles will be born with cell index i
     I = int(mesh.shape[0])
     dx = mesh[:,1] - mesh[:,0]
     total_emitted = np.sum(__a*T**4*dx)
     energy_per_zone = __a*T**4*dx
     emitted_per_zone = np.ceil(energy_per_zone/total_emitted*N).astype("int")
     N = np.sum(emitted_per_zone)
-    weights = np.empty(0)
-    positions = np.empty(0)
-    cell_indices = np.empty(0).astype("int")
+    weights      = np.empty(N)
+    positions    = np.empty(N)
+    cell_indices = np.empty(N, dtype=np.int64)
+    offset = 0
     for i in range(I):
-        temp_weights = np.zeros(emitted_per_zone[i]) + energy_per_zone[i]/emitted_per_zone[i]
-        weights = np.concatenate((weights,temp_weights))
-        temp_positions = np.random.uniform(mesh[i,0],mesh[i,1],emitted_per_zone[i])
-        temp_cell_indices = np.zeros(emitted_per_zone[i],dtype="int") + i
-        positions = np.concatenate((positions,temp_positions))
-        cell_indices = np.concatenate((cell_indices,temp_cell_indices))
-    mus = np.random.uniform(-1,1,N)
+        n = emitted_per_zone[i]
+        weights[offset:offset+n]      = energy_per_zone[i] / n
+        positions[offset:offset+n]    = np.random.uniform(mesh[i, 0], mesh[i, 1], n)
+        cell_indices[offset:offset+n] = i
+        offset += n
+    mus   = np.random.uniform(-1, 1, N)
     times = np.zeros(N)
-    #make sure all lists are the same length
-    #print out information if they are not
     assert len(weights) == len(mus) == len(times) == len(positions) == len(cell_indices)
     return weights, mus, times, positions, cell_indices
 
@@ -259,371 +263,390 @@ def emitted_particles(Ntarget, Temperatures, dt, mesh, sigma_a):
     slopes = np.zeros(Temperatures.shape)
     dx = mesh[:,1] - mesh[:,0]
 
-    
     slopes[1:-1] = (Temperatures[2:] - Temperatures[:-2])/(dx[2:]+dx[:-2])*2
     slopes[0] = (Temperatures[1] - Temperatures[0])/(dx[1] + dx[0])*2
     slopes[-1] = (Temperatures[-1] - Temperatures[-2])/(dx[-1] + dx[-2])*2
-    #check that the interpolants are non-negative at the cell boundaries
-    #evaluate T(x) = s*x + (a - s*dx/2) at the cell boundaries
-    #if the interpolant is negative, set the slope to 0
-    #do it withouth a for loop
     left_vals = slopes*0 + (Temperatures - slopes*dx/2)
     right_vals = slopes*dx + (Temperatures - slopes*dx/2)
     mask = left_vals < 0
     slopes[mask] = 0
     mask = right_vals < 0
     slopes[mask] = 0
-    
-    #assert that all temperatures are positive
+
     assert np.all(Temperatures > 0), "Negative temperature"
-    #compute emitted energy
     emitted_energies = (__a*__c*Temperatures**4)*sigma_a*dt*dx
     total_emission = np.sum(emitted_energies)
-    #loop over cells and sample particles
-    weights = []
-    mus = []
-    times = []
-    positions = []
-    cell_indices = []
+    # Pre-compute per-cell counts
+    Ns = np.empty(len(emitted_energies), dtype=np.int64)
     for i in range(len(emitted_energies)):
-        N = int(math.ceil(Ntarget*emitted_energies[i]/total_emission))
-        temp_weights = np.zeros(N) + emitted_energies[i]/N
-        temp_mus = np.random.uniform(-1,1,N)
-        temp_times = np.random.uniform(0,dt,N)
-        temp_positions = sample_linear_density(dx[i],slopes[i],Temperatures[i],N)+mesh[i,0] #np.random.uniform(mesh[i,0],mesh[i,1],N) #
-        temp_cell_indices = np.zeros(N, dtype="int") + i
-        weights.extend(temp_weights)
-        mus.extend(temp_mus)
-        times.extend(temp_times)
-        positions.extend(temp_positions)# + mesh[i,0])
-        cell_indices.extend(temp_cell_indices)
-        """ old way of sampling
-        for j in range(N):
-            weights.append(emitted_energies[i]/N)
-            mus.append(random.uniform(-1,1))
-            times.append(random.uniform(0,dt))
-            positions.append(sample_linear_density(dx[i],slopes[i],Temperatures[i],1)[0] + mesh[i,0])
-            cell_indices.append(i)"
-        """
-    weights = np.array(weights)
-    mus = np.array(mus)
-    times = np.array(times)
-    positions = np.array(positions)
-    cell_indices = np.array(cell_indices, dtype="int")
-    #print("Total emitted energy: ", total_emission, "sum of weights: ", np.sum(weights))
-    #assert that the total emitted energy is equal to the sume of the weights
+        Ns[i] = int(math.ceil(Ntarget * emitted_energies[i] / total_emission))
+    N_total      = np.sum(Ns)
+    weights      = np.empty(N_total)
+    mus          = np.empty(N_total)
+    times        = np.empty(N_total)
+    positions    = np.empty(N_total)
+    cell_indices = np.empty(N_total, dtype=np.int64)
+    offset = 0
+    for i in range(len(emitted_energies)):
+        n = Ns[i]
+        weights[offset:offset+n]      = emitted_energies[i] / n
+        mus[offset:offset+n]          = np.random.uniform(-1, 1, n)
+        times[offset:offset+n]        = np.random.uniform(0, dt, n)
+        positions[offset:offset+n]    = sample_linear_density(dx[i], slopes[i], Temperatures[i], n) + mesh[i, 0]
+        cell_indices[offset:offset+n] = i
+        offset += n
     assert np.allclose(total_emission,np.sum(weights)), "Total emitted energy not equal to sum of weights"
     return weights, mus, times, positions, cell_indices, emitted_energies
 
 @jit(nopython=True, cache=True)
 def sample_source(N,source,mesh,dt):
-    #set up lists to hold particles
-    weights = np.empty(0)
-    mus = np.empty(0)
-    times = np.empty(0)
-    positions = np.empty(0)
-    cell_indices = np.empty(0).astype("int")
     dxs = mesh[:,1] - mesh[:,0]
-    N_per_zone = np.ceil(N*source*dt*dxs/np.sum(source*dt*dxs)).astype("int")
-    #loop over cells
+    N_per_zone   = np.ceil(N*source*dt*dxs/np.sum(source*dt*dxs)).astype(np.int64)
+    N_total      = np.sum(N_per_zone)
+    weights      = np.empty(N_total)
+    mus          = np.empty(N_total)
+    times        = np.empty(N_total)
+    positions    = np.empty(N_total)
+    cell_indices = np.empty(N_total, dtype=np.int64)
+    offset = 0
     for i in range(mesh.shape[0]):
-        #sample N_per_zone[i] particles from the source
         if N_per_zone[i] > 0:
-            temp_weights = np.zeros(N_per_zone[i]) + source[i]*dt*dxs[i]/N_per_zone[i]
-            temp_mus = np.random.uniform(-1,1,N_per_zone[i])
-            temp_times = np.random.uniform(0,1,N_per_zone[i])
-            temp_positions = np.random.uniform(mesh[i,0],mesh[i,1],N_per_zone[i])
-            temp_cell_indices = np.zeros(N_per_zone[i],dtype="int") + i
-            #add the particles to the appropriate lists
-            weights = np.concatenate((weights,temp_weights))
-            mus = np.concatenate((mus,temp_mus))
-            times = np.concatenate((times,temp_times))
-            positions = np.concatenate((positions,temp_positions))
-            cell_indices = np.concatenate((cell_indices,temp_cell_indices))
-    #make sure all lists are the same length
+            n = N_per_zone[i]
+            weights[offset:offset+n]      = source[i]*dt*dxs[i]/n
+            mus[offset:offset+n]          = np.random.uniform(-1, 1, n)
+            times[offset:offset+n]        = np.random.uniform(0, 1, n)
+            positions[offset:offset+n]    = np.random.uniform(mesh[i,0], mesh[i,1], n)
+            cell_indices[offset:offset+n] = i
+            offset += n
     assert len(weights) == len(mus) == len(times) == len(positions) == len(cell_indices)
     return weights, mus, times, positions, cell_indices
-#function to run simulation
-def run_simulation(Ntarget,Nboundary,Nsource,NMax, Tinit,Tr_init, T_boundary, dt, mesh, 
-                   sigma_a_func,eos,inv_eos,cv,source, final_time, reflect=(False,False),
-                   output_freq=1):
-    comm = MPI.COMM_WORLD
+
+
+# =============================================================================
+# HYBRID MPI + NUMBA-THREADS API
+# =============================================================================
+
+@dataclass
+class SimulationState:
+    """Mutable state passed between time steps.
+
+    Each MPI rank owns a disjoint subset of particles (weights/mus/…).
+    The material fields (internal_energy, temperature) are identical on every
+    rank because the temperature update uses Allreduce so all ranks compute
+    the same result independently.
+    """
+    weights:               np.ndarray
+    mus:                   np.ndarray
+    times:                 np.ndarray
+    positions:             np.ndarray
+    cell_indices:          np.ndarray
+    internal_energy:       np.ndarray
+    temperature:           np.ndarray
+    radiation_temperature: np.ndarray
+    time:                  float
+    previous_total_energy: float
+    comm:                  object   # MPI communicator
+    rank:                  int
+    size:                  int
+    count:                 int = 0
+
+
+def init_simulation(Ntarget, Tinit, Tr_init, mesh, eos, inv_eos, comm=None, Ntarget_ic=None):
+    """Initialise per-rank particle arrays and shared material state; return a
+    SimulationState at t=0.
+
+    Each rank creates Ntarget // size particles so the total across all ranks
+    is approximately Ntarget.  Ntarget_ic independently controls the number of
+    particles used for the initial equilibrium sample (also divided by size).
+    """
+    if comm is None:
+        comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
-    Ntarget = Ntarget//size
-    Nboundary = Nboundary//size
-    Nsource = Nsource//size
-    NMax = NMax//size
-    #T_boundary is a tuple with the left and right boundary temperatures
-    I = mesh.shape[0]
-    deposited_energies = np.zeros(mesh.shape[0])
+    Ntarget_local = max(1, Ntarget // size)
+    N_ic_local    = max(1, Ntarget_ic // size) if Ntarget_ic is not None else Ntarget_local
+
+    I   = mesh.shape[0]
+    dxs = mesh[:, 1] - mesh[:, 0]
     internal_energy = eos(Tinit)
-    radiation_temperature = np.zeros(mesh.shape[0])
-    temperature = Tinit.copy()
+    temperature     = Tinit.copy()
 
-    #set global deposited and emitted energy
+    assert np.allclose(inv_eos(internal_energy), Tinit), "Inverse equation of state not working"
+
+    p            = equilibrium_sample(N_ic_local, Tr_init, mesh)
+    weights      = p[0]
+    mus          = p[1]
+    times        = p[2]
+    positions    = p[3]
+    cell_indices = p[4]
+
+    # Radiation temperature is set from the input Tr_init (same on all ranks)
+    radiation_temperature = Tr_init.copy()
+
+    total_internal_energy  = np.sum(internal_energy * dxs)
+    total_radiation_energy = float(comm.allreduce(np.sum(weights), op=MPI.SUM))
+    previous_total_energy  = total_internal_energy + total_radiation_energy
+    total_particles        = int(comm.allreduce(len(weights), op=MPI.SUM))
+
     if rank == 0:
-        global_deposited = np.zeros(1)
-        global_emitted = np.zeros(1)
-        global_boundary_emission = np.zeros(1)
-        global_boundary_loss = np.zeros(1)
-        global_energy_loss = np.zeros(1)
-        global_total_energy = np.zeros(1)
-        global_total_internal_energy = np.zeros(1)
-        global_total_radiation_energy = np.zeros(1)
-        global_scalar_intensity = np.zeros(I)
-        global_total_particles = np.zeros(1, dtype="int")
-        global_previous_total_energy = np.zeros(1)
-        global_deposited = np.zeros(I)
-        global_emitted = np.zeros(1)
-    else:
-        global_deposited = None
-        global_emitted = None
-        global_boundary_emission = None
-        global_boundary_loss = None
-        global_energy_loss = None
-        global_total_energy = None
-        global_total_internal_energy = None
-        global_total_radiation_energy = None
-        global_scalar_intensity = None
-        global_total_particles = None
+        print("Time", "N", "Total Energy", "Total Internal Energy", "Total Radiation Energy",
+              "Boundary Emission", "Lost Energy", sep='\t')
+        print("=" * 111)
+        print("{:.6f}".format(0.0), total_particles,
+              "{:.6f}".format(previous_total_energy),
+              "{:.6f}".format(total_internal_energy),
+              "{:.6f}".format(total_radiation_energy),
+              "{:.6f}".format(0.0), "{:.6f}".format(0.0), sep='\t')
 
-    #initialize time
-    time = 0
-    weights = np.empty(0)
-    mus = np.empty(0)
-    times = np.empty(0)
-    positions = np.empty(0)
-    cell_indices = np.empty(0, dtype=int)
-    #sample initial particles from equilibrium with the initial temperature
-    initial_particles = equilibrium_sample(Ntarget, Tr_init, mesh)
-    weights = np.concatenate((weights,initial_particles[0]))
-    mus = np.concatenate((mus,initial_particles[1]))
-    times = np.concatenate((times,initial_particles[2]))
-    positions = np.concatenate((positions,initial_particles[3]))
-    cell_indices = np.concatenate((cell_indices,initial_particles[4]))
+    return SimulationState(
+        weights=weights, mus=mus, times=times, positions=positions,
+        cell_indices=cell_indices, internal_energy=internal_energy,
+        temperature=temperature, radiation_temperature=radiation_temperature,
+        time=0.0, previous_total_energy=previous_total_energy,
+        comm=comm, rank=rank, size=size, count=0,
+    )
 
-    dxs = mesh[:,1] - mesh[:,0]
-    boundary_loss = 0.0
+
+def step(state, Ntarget, Nboundary, Nsource, NMax, T_boundary, dt, mesh,
+         sigma_a_func, inv_eos, cv, source, reflect=(False, False), theta=1.0,
+         use_scalar_intensity_Tr=True, conserve_comb_energy=False):
+    """Advance the simulation by one time step dt (hybrid MPI + numba threads).
+
+    theta is the implicitness factor (default 1 = fully implicit).  It scales
+    the Fleck-factor denominator: f = 1 / (1 + theta*beta*sigma_a*c*dt).
+    theta=1 recovers standard IMC; theta=0 gives an explicit update.
+
+    use_scalar_intensity_Tr (default True): estimate radiation temperature from
+    the time-averaged scalar intensity after Allreduce,
+    T_r = (global_scalar_intensity / (a*c))^0.25.  If False, use the weight
+    bincount of surviving particles on rank 0 instead (approximate in parallel).
+
+    Within each MPI rank, move_particles uses numba prange for thread-level
+    parallelism.  After transport, deposited energy and scalar flux are reduced
+    across ranks with Allreduce so that every rank can update the shared
+    material temperature identically — no separate Bcast required.
+
+    Returns (state, info) where info contains global diagnostics.
+    """
+    comm = state.comm
+    rank = state.rank
+    size = state.size
+    Ntarget_local   = max(1, Ntarget   // size)
+    Nboundary_local = max(1, Nboundary // size) if Nboundary > 0 else 0
+    Nsource_local   = max(1, Nsource   // size) if Nsource   > 0 else 0
+    NMax_local      = max(1, NMax      // size)
+
+    I   = mesh.shape[0]
+    dxs = mesh[:, 1] - mesh[:, 0]
+
+    weights      = state.weights
+    mus          = state.mus
+    times        = state.times
+    positions    = state.positions
+    cell_indices = state.cell_indices
+    internal_energy = state.internal_energy
+    temperature     = state.temperature
+
+    # --- Fleck-factor cross sections ---
+    sigma_a_true = sigma_a_func(temperature)
+    beta = 4 * __a * temperature**3 / cv(temperature)
+    f    = 1 / (1 + theta * beta * sigma_a_true * __c * dt)
+    assert np.all(f >= 0) and np.all(f <= 1), "Fleck factor out of bounds"
+    sigma_s = sigma_a_true * (1 - f)
+    sigma_a = sigma_a_true * f
+
+    # --- Boundary sources ---
+    # Support scalar or callable (time-dependent) boundary temperatures
+    T_left  = T_boundary[0](state.time) if callable(T_boundary[0]) else T_boundary[0]
+    T_right = T_boundary[1](state.time) if callable(T_boundary[1]) else T_boundary[1]
     boundary_emission = 0.0
+    if T_left > 0:
+        bs = create_boundary(Nboundary_local, T_left, dt)
+        weights      = np.concatenate((weights,      bs[0]))
+        mus          = np.concatenate((mus,           bs[1]))
+        times        = np.concatenate((times,         bs[2]))
+        positions    = np.concatenate((positions,     bs[3]))
+        cell_indices = np.concatenate((cell_indices,  bs[4]))
+        boundary_emission += np.sum(bs[0])
+    if T_right > 0:
+        bs = create_boundary(Nboundary_local, T_right, dt)
+        weights      = np.concatenate((weights,      bs[0]))
+        mus          = np.concatenate((mus,          -bs[1]))
+        times        = np.concatenate((times,         bs[2]))
+        positions    = np.concatenate((positions,     np.full(len(bs[0]), mesh[-1, 1])))
+        cell_indices = np.concatenate((cell_indices,  np.full(len(bs[0]), I - 1, dtype=int)))
+        boundary_emission += np.sum(bs[0])
 
-    #create variables to hold radiation temperature and material temperature over time
-    radiation_temperatures = []
-    temperatures = []
-    time_values = []
+    # --- Fixed source ---
+    source_emission = 0.0
+    if np.max(source) > 0 and Nsource_local > 0:
+        sp = sample_source(Nsource_local, source, mesh, dt)
+        weights      = np.concatenate((weights,      sp[0]))
+        mus          = np.concatenate((mus,           sp[1]))
+        times        = np.concatenate((times,         sp[2]))
+        positions    = np.concatenate((positions,     sp[3]))
+        cell_indices = np.concatenate((cell_indices,  sp[4]))
+        source_emission = np.sum(sp[0])
 
-    initial_radiation_temperature = np.zeros(I)
-    for i in range(I):
-        #mask particles in cell i
-        mask = cell_indices == i
-        #compute radiation temperature in cell i
-        initial_radiation_temperature[i] = (np.sum(weights[mask]/dxs[i])/__a)**0.25
-    radiation_temperatures.append(initial_radiation_temperature)
-    temperatures.append(Tinit)
-    time_values.append(0.0)
-    #make sure inv_eos returns temperature using np.all_close
-    assert np.allclose(inv_eos(internal_energy),Tinit), "Inverse equation of state not working"
+    # --- Internal emission ---
+    internal_source = emitted_particles(Ntarget_local, temperature, dt, mesh, sigma_a)
+    weights      = np.concatenate((weights,      internal_source[0]))
+    mus          = np.concatenate((mus,           internal_source[1]))
+    times        = np.concatenate((times,         internal_source[2]))
+    positions    = np.concatenate((positions,     internal_source[3]))
+    cell_indices = np.concatenate((cell_indices,  internal_source[4]))
 
+    # --- Transport (numba prange threads within each rank) ---
+    deposited, scalar_intensity = move_particles(
+        weights, mus, times, positions, cell_indices, mesh, sigma_a, sigma_s, dt, reflect)
 
-    #now print the values at time 0
-    total_internal_energy = np.sum(internal_energy*dxs)
-    total_radiation_energy = np.sum(weights) #np.sum(a*radiation_temperature**4*dxs)
+    # --- MPI Allreduce: aggregate deposition and scalar flux across all ranks.
+    #     Every rank receives the global sum so each can update temperature
+    #     independently — no extra Bcast needed.
+    global_deposited        = np.zeros_like(deposited)
+    global_scalar_intensity = np.zeros_like(scalar_intensity)
+    comm.Allreduce(deposited,        global_deposited,        op=MPI.SUM)
+    comm.Allreduce(scalar_intensity, global_scalar_intensity, op=MPI.SUM)
+
+    # --- Update material state (identical on all ranks).
+    #     emitted_energies is deterministic from temperature — the same value
+    #     on every rank, so no reduction is needed for it.
+    emitted_energies = internal_source[5]
+    internal_energy  = internal_energy + global_deposited - emitted_energies / dxs
+    temperature      = inv_eos(internal_energy)
+
+    new_time = state.time + dt
+    if use_scalar_intensity_Tr:
+        radiation_temperature = (global_scalar_intensity / __a / __c) ** 0.25
+    else:
+        # Weight-based estimate: uses only the particles on this rank, so it is
+        # approximate in parallel (rank 0 holds a representative sample).
+        valid = (cell_indices >= 0) & (cell_indices < I)
+        local_weights = np.zeros_like(dxs)
+        for idx in range(len(cell_indices)):
+            if valid[idx]:
+                local_weights[cell_indices[idx]] += weights[idx]
+        global_weights = np.zeros_like(local_weights)
+        comm.Allreduce(local_weights, global_weights, op=MPI.SUM)
+        radiation_temperature = (global_weights / dxs / __a) ** 0.25
+
+    # --- Remove escaped particles ---
+    boundary_loss = 0.0
+    mask = cell_indices < 0
+    if reflect[0]:
+        mus[mask] = -mus[mask]
+        cell_indices[mask] = 0
+    else:
+        boundary_loss = np.sum(weights[mask])
+        keep = ~mask
+        weights = weights[keep]; mus = mus[keep]; times = times[keep]
+        positions = positions[keep]; cell_indices = cell_indices[keep]
+
+    mask = cell_indices >= I
+    if reflect[1]:
+        mus[mask] = -mus[mask]
+        cell_indices[mask] = I - 1
+    else:
+        boundary_loss += np.sum(weights[mask])
+        keep = ~mask
+        weights = weights[keep]; mus = mus[keep]; times = times[keep]
+        positions = positions[keep]; cell_indices = cell_indices[keep]
+
+    # --- Particle combing (per-rank, per-cell) ---
+    weights, cell_indices, mus, times, positions, comb_discrepancy = comb(
+        weights, cell_indices, mus, times, positions, NMax_local, I)
+
+    # Optional: deposit per-cell comb energy discrepancy back into the material.
+    # Allreduce so the correction is global and every rank's material state stays
+    # identical.
+    if conserve_comb_energy:
+        global_comb_discrepancy = np.zeros(I)
+        comm.Allreduce(comb_discrepancy, global_comb_discrepancy, op=MPI.SUM)
+        internal_energy = internal_energy + global_comb_discrepancy / dxs
+        temperature     = inv_eos(internal_energy)
+
+    times = np.zeros(times.shape)
+
+    # --- Energy diagnostics (Allreduce so all ranks have consistent values) ---
+    total_internal_energy   = np.sum(internal_energy * dxs)
+    total_radiation_energy  = float(comm.allreduce(np.sum(weights),    op=MPI.SUM))
+    total_boundary_emission = float(comm.allreduce(boundary_emission,  op=MPI.SUM))
+    total_boundary_loss     = float(comm.allreduce(boundary_loss,      op=MPI.SUM))
+    total_source_emission   = float(comm.allreduce(source_emission,    op=MPI.SUM))
+    total_N                 = int  (comm.allreduce(len(weights),       op=MPI.SUM))
+
     total_energy = total_internal_energy + total_radiation_energy
-    previous_total_energy = total_energy
-    #no emission or loss at time 0
-    boundary_emission = 0.
-    total_particles = len(weights)
-    energy_loss = 0.
-    comm.Reduce(np.array(total_energy),global_total_energy,op=MPI.SUM)
-    comm.Reduce(np.array(total_internal_energy),global_total_internal_energy,op=MPI.SUM)
-    comm.Reduce(np.array(total_radiation_energy),global_total_radiation_energy,op=MPI.SUM)
-    comm.Reduce(np.array(total_particles, dtype="int"),global_total_particles,op=MPI.SUM)
+    energy_loss  = (total_energy - state.previous_total_energy
+                    - total_boundary_emission + total_boundary_loss - total_source_emission)
 
-    if rank == 0:
-        #print the table header
-        print("Time", "N", "Total Energy", "Total Internal Energy", "Total Radiation Energy", "Boundary Emission","Lost Energy", sep='\t')
-        print("===============================================================================================================")
-        print("{:.6f}".format(time), (global_total_particles[0]), "{:.6f}".format(global_total_energy[0]/size), "{:.6f}".format(global_total_internal_energy[0]/size),
-            "{:.6f}".format(global_total_radiation_energy[0]/size), "{:.6f}".format(0.0), "{:.6f}".format(0.0), sep='\t')
-     
-    count = 0 #number to steps we have taken   
-    while time < final_time:
-        if time + dt > final_time:
-            dt = final_time - time
-        #compute sigma_a
-        sigma_a_true = sigma_a_func(temperature)
-        #compute beta
-        beta = 4*__a*temperature**3/cv(temperature)
-        #compute Fleck factor
-        f = 1/(1+beta*sigma_a_true*__c*dt)
-        #check that each f is between 0 and 1 using np.all
-        assert np.all(f >= 0) and np.all(f <= 1), "Fleck factor out of bounds"
+    # --- Update state in-place ---
+    state.weights               = weights
+    state.mus                   = mus
+    state.times                 = times
+    state.positions             = positions
+    state.cell_indices          = cell_indices
+    state.internal_energy       = internal_energy
+    state.temperature           = temperature
+    state.radiation_temperature = radiation_temperature
+    state.time                  = new_time
+    state.previous_total_energy = total_energy
+    state.count                += 1
 
-        #compute sigma_s
-        sigma_s = sigma_a_true*(1-f)
-        sigma_a = sigma_a_true*f
-        #sample boundary source
-        #sample from the left boundary?
-        boundary_emission = 0.0
-        if (T_boundary[0] > 0):
-            boundary_source = create_boundary(Nboundary,T_boundary[0],dt)
-            #add the particles to the appropriate lists
-            weights = np.concatenate((weights,boundary_source[0]))
-            mus = np.concatenate((mus,boundary_source[1]))
-            times = np.concatenate((times,boundary_source[2]))
-            positions = np.concatenate((positions,boundary_source[3]))
-            cell_indices = np.concatenate((cell_indices,boundary_source[4]))
-            boundary_emission += np.sum(boundary_source[0])
-            #print(np.sum(boundary_source[0])/c,0.5*a*dt*(T_boundary[0]**4))
-        #sample from the right boundary?
-        if (T_boundary[1] > 0):
-            boundary_source = create_boundary(Nboundary,T_boundary[1],dt)
-            #add the particles to the appropriate lists
-            weights = np.concatenate((weights,boundary_source[0]))
-            mus = np.concatenate((mus,-boundary_source[1]))
-            times = np.concatenate((times,boundary_source[2]))
-            positions = np.concatenate((positions,mesh[-1,1]))
-            cell_indices = np.concatenate((cell_indices,I-1))
-            boundary_emission += np.sum(boundary_source[0])
-        #sample from fixed source
-        source_emission = 0.0
-        if np.max(source) > 0 and Nsource > 0:
-            source_particles = sample_source(Nsource,source,mesh,dt)
-            #add the particles to the appropriate lists
-            weights = np.concatenate((weights,source_particles[0]))
-            mus = np.concatenate((mus,source_particles[1]))
-            times = np.concatenate((times,source_particles[2]))
-            positions = np.concatenate((positions,source_particles[3]))
-            cell_indices = np.concatenate((cell_indices,source_particles[4]))
-            source_emission = np.sum(source_particles[0])
-        #sample from internal source
-        internal_source = emitted_particles(Ntarget, temperature, dt, mesh, sigma_a)
-        #add the particles to the appropriate lists
-        weights = np.concatenate((weights,internal_source[0]))
-        mus = np.concatenate((mus,internal_source[1]))
-        times = np.concatenate((times,internal_source[2]))
-        positions = np.concatenate((positions,internal_source[3]))
-        cell_indices = np.concatenate((cell_indices,internal_source[4]))
-        #move particles
-        deposited, scalar_intensity = move_particles(weights, mus, times, positions, cell_indices, mesh, sigma_a, sigma_s, dt, reflect)
-        #print(np.sum(deposited/dxs),np.sum(0.5*a*dt*(T_boundary[0]**4)), sum(scalar_intensity/c),sum(weights)/c)
-        #update internal energy
-        emitted_energies = internal_source[5]
-        #print("sum of emitted_energies: ", np.sum(emitted_energies))
-        #gather deposited energy
-        comm.Reduce(deposited,global_deposited,op=MPI.SUM)
-        comm.Reduce(scalar_intensity,global_scalar_intensity,op=MPI.SUM)
-        comm.Reduce(np.array(np.sum(emitted_energies)),global_emitted,op=MPI.SUM)
-        comm.Reduce(np.array(boundary_emission),global_boundary_emission,op=MPI.SUM)
-        comm.Reduce(np.array(source_emission),global_boundary_loss,op=MPI.SUM)
-        comm.Reduce(np.array(len(weights),dtype="int"),global_total_particles,op=MPI.SUM)
-        #update internal energy
-        if rank == 0:
-            internal_energy += global_deposited - global_emitted/dxs #deposited - emitted_energies/dxs
-        #update temperature
-            temperature = inv_eos(internal_energy)
-        #update radiation temperature   
-            radiation_temperature = (global_scalar_intensity/size/__a/__c)**.25
-
-        #now broadcast the temperature and radiation temperature to all processors
-        comm.Bcast(temperature,root=0)
-        comm.Bcast(radiation_temperature,root=0)
-        # radiation_temperature = np.zeros(I)
-        # for i in range(I):
-        #     #mask particles in cell i
-        #     mask = cell_indices == i
-        #     #compute radiation temperature in cell i
-        #     radiation_temperature[i] = (np.sum(weights[mask]))
-        # radiation_temperature /= dxs
-        # radiation_temperature = (radiation_temperature/__a)**0.25
-        #update time
-        time += dt
-        #clean up particles that left the slab and store their weights in boundary_loss
-        #check left boundary
-        mask = cell_indices < 0
+    info = {
+        'time':                   new_time,
+        'radiation_temperature':  radiation_temperature,
+        'temperature':            temperature,
+        'N_particles':            total_N,
+        'total_energy':           total_energy,
+        'total_internal_energy':  total_internal_energy,
+        'total_radiation_energy': total_radiation_energy,
+        'boundary_emission':      total_boundary_emission,
+        'boundary_loss':          total_boundary_loss,
+        'source_emission':        total_source_emission,
+        'energy_loss':            energy_loss,
+    }
+    return state, info
 
 
-        #now check right boundary
-        mask = cell_indices < 0
-        boundary_loss = 0.
-        if (reflect[0]): #reflecting boundary
-            mus[mask] = -mus[mask]
-            cell_indices[mask] = 0
-        else:
-            boundary_loss = np.sum(weights[mask])
-            weights = weights[~mask]
-            mus = mus[~mask]
-            times = times[~mask]
-            positions = positions[~mask]
-            cell_indices = cell_indices[~mask]
-        #now check right boundary
-        mask = cell_indices >= I
-        if (reflect[1]): #reflecting boundary
-            mus[mask] = -mus[mask]
-            cell_indices[mask] = I-1
-        else:
-            boundary_loss += np.sum(weights[mask])
-            weights = weights[~mask]
-            mus = mus[~mask]
-            times = times[~mask]
-            positions = positions[~mask]
-            cell_indices = cell_indices[~mask]
+def run_simulation(Ntarget, Nboundary, Nsource, NMax, Tinit, Tr_init, T_boundary, dt, mesh,
+                   sigma_a_func, eos, inv_eos, cv, source, final_time, reflect=(False, False),
+                   output_freq=1, theta=1.0, use_scalar_intensity_Tr=True, Ntarget_ic=None,
+                   conserve_comb_energy=False):
+    """Run the full simulation.  Delegates to init_simulation + step.
 
-        
-        #apply particle combing
-        if (len(weights) > NMax):
-            Ncurr = len(weights)
-            mask = comb(NMax, len(weights))
-            previous_weights = np.sum(weights)
-            lost_weight = np.sum(weights[~mask])
-            weights = weights[mask]
-            current_weights = np.sum(weights)
-            weights *= previous_weights/current_weights
-            #check that the resultings weights are the same
-            assert np.allclose(np.sum(weights),previous_weights), "Particle combing failed"
-            mus = mus[mask]
-            times = times[mask]
-            positions = positions[mask]
-            cell_indices = cell_indices[mask]
+    Only rank 0 accumulates and returns history arrays with meaningful data;
+    other ranks return empty arrays.  The caller should guard output with
+    ``if MPI.COMM_WORLD.Get_rank() == 0``.
+    """
+    comm = MPI.COMM_WORLD
+    state = init_simulation(Ntarget, Tinit, Tr_init, mesh, eos, inv_eos, comm, Ntarget_ic=Ntarget_ic)
 
-        #set all particle times to 0
-        times = np.zeros(times.shape)
-        total_internal_energy = np.sum(internal_energy*dxs)
-        total_radiation_energy = np.sum(weights) #np.sum(a*radiation_temperature**4*dxs)
-        total_energy = total_internal_energy + total_radiation_energy
-        energy_loss = total_energy-previous_total_energy - boundary_emission + boundary_loss - source_emission
-        previous_total_energy = total_energy
-        #print("total internal energy from eos: ", np.sum(eos(temperature)*dxs))
+    radiation_temperatures = [state.radiation_temperature.copy()]
+    temperatures           = [state.temperature.copy()]
+    time_values            = [0.0]
 
-        #update the global variables
+    while state.time < final_time:
+        step_dt = min(dt, final_time - state.time)
+        state, info = step(state, Ntarget, Nboundary, Nsource, NMax, T_boundary, step_dt,
+                           mesh, sigma_a_func, inv_eos, cv, source, reflect, theta=theta,
+                           use_scalar_intensity_Tr=use_scalar_intensity_Tr,
+                           conserve_comb_energy=conserve_comb_energy)
 
-        total_particles = len(weights)
-        comm.Reduce(np.array(total_energy),global_total_energy,op=MPI.SUM)
-        comm.Reduce(np.array(total_internal_energy),global_total_internal_energy,op=MPI.SUM)
-        comm.Reduce(np.array(total_radiation_energy),global_total_radiation_energy,op=MPI.SUM)
-        comm.Reduce(np.array(boundary_emission),global_boundary_emission,op=MPI.SUM)
-        comm.Reduce(np.array(boundary_loss),global_boundary_loss,op=MPI.SUM)
-        comm.Reduce(np.array(energy_loss),global_energy_loss,op=MPI.SUM)
-        comm.Reduce(np.array(total_particles, dtype="int"),global_total_particles,op=MPI.SUM)
-        #store the radiation and material temperatures
-        if rank == 0:
-            if count % output_freq == 0 or (time - final_time) < dt:
-                radiation_temperatures.append(radiation_temperature.copy())
-                temperatures.append(temperature.copy())
-                time_values.append(time)
-                #print to the screen a row in a table containing the time, number of particles, the total energy, the total internal energy, and the total radiation energy, the boundary emission, energy_loss with tabs between each value
-                #also limit every number to 6 decimal places
-                print("{:.6f}".format(time), (global_total_particles[0]), "{:.6f}".format(global_total_energy[0]/size), "{:.6f}".format(global_total_internal_energy[0]/size),
-                    "{:.6f}".format(global_total_radiation_energy[0]/size), "{:.6f}".format(global_boundary_emission[0]/size), "{:.6f}".format(global_energy_loss[0]/size), sep='\t')
+        if (state.count - 1) % output_freq == 0 or (info['time'] - final_time) < step_dt:
+            radiation_temperatures.append(state.radiation_temperature.copy())
+            temperatures.append(state.temperature.copy())
+            time_values.append(info['time'])
+            if state.rank == 0:
+                print("{:.6f}".format(info['time']), info['N_particles'],
+                      "{:.6f}".format(info['total_energy']),
+                      "{:.6f}".format(info['total_internal_energy']),
+                      "{:.6f}".format(info['total_radiation_energy']),
+                      "{:.6f}".format(info['boundary_emission']),
+                      "{:.6e}".format(info['energy_loss']), sep='\t')
 
-        #increment count
-        count += 1      
-
-    #make times, radiation_temperatures and temperatures into numpy arrays
-    time_values = np.array(time_values)
-    radiation_temperatures = np.array(radiation_temperatures)
-    temperatures = np.array(temperatures)
-    return time_values,radiation_temperatures, temperatures
+    return (np.array(time_values),
+            np.array(radiation_temperatures),
+            np.array(temperatures))
 
 if __name__ == "__main__":
 

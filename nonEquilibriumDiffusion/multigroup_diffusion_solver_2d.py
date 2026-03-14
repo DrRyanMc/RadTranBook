@@ -52,7 +52,8 @@ try:
     from diffusion_operator_solver import (
         DiffusionOperatorSolver2D,
         C_LIGHT,
-        A_RAD
+        A_RAD,
+        _make_callable,
     )
 except ImportError as e:
     print(f"Warning: Could not import from diffusion_operator_solver: {e}")
@@ -181,15 +182,17 @@ class MultigroupDiffusionSolver2D:
     
     def __init__(self,
                  n_groups: int,
-                 x_min: float,
-                 x_max: float,
-                 nx_cells: int,
-                 y_min: float,
-                 y_max: float,
-                 ny_cells: int,
-                 energy_edges: np.ndarray,
+                 x_min: float = 0.0,
+                 x_max: float = 1.0,
+                 nx_cells: int = 10,
+                 y_min: float = 0.0,
+                 y_max: float = 1.0,
+                 ny_cells: int = 10,
+                 energy_edges: Optional[np.ndarray] = None,
                  geometry: str = 'cartesian',
                  dt: float = 1e-3,
+                 x_faces: Optional[np.ndarray] = None,
+                 y_faces: Optional[np.ndarray] = None,
                  diffusion_coeff_funcs: Optional[List[Callable]] = None,
                  absorption_coeff_funcs: Optional[List[Callable]] = None,
                  rosseland_opacity_funcs: Optional[List[Callable]] = None,
@@ -218,19 +221,21 @@ class MultigroupDiffusionSolver2D:
         n_groups : int
             Number of energy groups G
         x_min, x_max : float
-            Domain boundaries in first coordinate
+            Domain boundaries in first coordinate - ignored if x_faces provided
         nx_cells : int
-            Number of cells in first coordinate
+            Number of cells in first coordinate - ignored if x_faces provided
         y_min, y_max : float
-            Domain boundaries in second coordinate
+            Domain boundaries in second coordinate - ignored if y_faces provided
         ny_cells : int
-            Number of cells in second coordinate
-        energy_edges : ndarray
+            Number of cells in second coordinate - ignored if y_faces provided
+        energy_edges : ndarray or None
             Energy group edges (length n_groups + 1), in keV
         geometry : str
             'cartesian' for (x,y) or 'cylindrical' for (r,z)
         dt : float
             Time step
+        x_faces, y_faces : ndarray or None
+            Custom face positions. If provided, override x_min/max, nx_cells, y_min/max, ny_cells
         diffusion_coeff_funcs : list of callable or None
             List of G functions D_g(T, x, y) for each group
         absorption_coeff_funcs : list of callable or None
@@ -262,7 +267,7 @@ class MultigroupDiffusionSolver2D:
         cv : float
             Specific heat (GJ/(g·keV)) - only used if specific_heat_func is None
         x_stretch, y_stretch : float
-            Grid stretching factors
+            Grid stretching factors - ignored if x_faces/y_faces provided
         max_newton_iter : int
             Maximum Newton iterations per time step
         newton_tol : float
@@ -271,19 +276,38 @@ class MultigroupDiffusionSolver2D:
             Time discretization parameter (1.0 = implicit Euler)
         """
         self.n_groups = n_groups
-        self.x_min = x_min
-        self.x_max = x_max
-        self.nx_cells = nx_cells
-        self.y_min = y_min
-        self.y_max = y_max
-        self.ny_cells = ny_cells
-        self.n_total = nx_cells * ny_cells
         self.geometry = geometry
         self.dt = dt
         self.rho = rho
         self.max_newton_iter = max_newton_iter
         self.newton_tol = newton_tol
         self.theta = theta
+        
+        # Handle custom mesh or uniform mesh
+        if x_faces is not None and y_faces is not None:
+            self.x_faces = np.array(x_faces)
+            self.y_faces = np.array(y_faces)
+            self.x_centers = 0.5 * (self.x_faces[:-1] + self.x_faces[1:])
+            self.y_centers = 0.5 * (self.y_faces[:-1] + self.y_faces[1:])
+            self.nx_cells = len(self.x_faces) - 1
+            self.ny_cells = len(self.y_faces) - 1
+            self.x_min = self.x_faces[0]
+            self.x_max = self.x_faces[-1]
+            self.y_min = self.y_faces[0]
+            self.y_max = self.y_faces[-1]
+            self._use_custom_faces = True
+        elif x_faces is not None or y_faces is not None:
+            raise ValueError("Must provide both x_faces and y_faces, or neither")
+        else:
+            self.x_min = x_min
+            self.x_max = x_max
+            self.nx_cells = nx_cells
+            self.y_min = y_min
+            self.y_max = y_max
+            self.ny_cells = ny_cells
+            self._use_custom_faces = False
+        
+        self.n_total = self.nx_cells * self.ny_cells
         
         # Store cv as either scalar or function
         if callable(cv):
@@ -396,29 +420,50 @@ class MultigroupDiffusionSolver2D:
             bottom_bc_func_g = self.bottom_bc_funcs[g] if self.bottom_bc_funcs is not None else None
             top_bc_func_g = self.top_bc_funcs[g] if self.top_bc_funcs is not None else None
             
-            solver = DiffusionOperatorSolver2D(
-                x_min=x_min, x_max=x_max, nx_cells=nx_cells,
-                y_min=y_min, y_max=y_max, ny_cells=ny_cells,
-                geometry=geometry,
-                diffusion_coeff_func=diffusion_coeff_funcs[g],
-                absorption_coeff_func=absorption_coeff_funcs[g],
-                dt=dt,
-                left_bc_func=left_bc_func_g,
-                right_bc_func=right_bc_func_g,
-                bottom_bc_func=bottom_bc_func_g,
-                top_bc_func=top_bc_func_g,
-                left_bc=self.left_bc, right_bc=self.right_bc,
-                bottom_bc=self.bottom_bc, top_bc=self.top_bc,
-                left_bc_value=self.left_bc_value, right_bc_value=self.right_bc_value,
-                bottom_bc_value=self.bottom_bc_value, top_bc_value=self.top_bc_value
-            )
+            if self._use_custom_faces:
+                # Use custom face arrays
+                solver = DiffusionOperatorSolver2D(
+                    x_faces=self.x_faces,
+                    y_faces=self.y_faces,
+                    geometry=geometry,
+                    diffusion_coeff_func=diffusion_coeff_funcs[g],
+                    absorption_coeff_func=absorption_coeff_funcs[g],
+                    dt=dt,
+                    left_bc_func=left_bc_func_g,
+                    right_bc_func=right_bc_func_g,
+                    bottom_bc_func=bottom_bc_func_g,
+                    top_bc_func=top_bc_func_g,
+                    left_bc=self.left_bc, right_bc=self.right_bc,
+                    bottom_bc=self.bottom_bc, top_bc=self.top_bc,
+                    left_bc_value=self.left_bc_value, right_bc_value=self.right_bc_value,
+                    bottom_bc_value=self.bottom_bc_value, top_bc_value=self.top_bc_value
+                )
+            else:
+                # Use uniform mesh parameters
+                solver = DiffusionOperatorSolver2D(
+                    x_min=self.x_min, x_max=self.x_max, nx_cells=self.nx_cells,
+                    y_min=self.y_min, y_max=self.y_max, ny_cells=self.ny_cells,
+                    geometry=geometry,
+                    diffusion_coeff_func=diffusion_coeff_funcs[g],
+                    absorption_coeff_func=absorption_coeff_funcs[g],
+                    dt=dt,
+                    left_bc_func=left_bc_func_g,
+                    right_bc_func=right_bc_func_g,
+                    bottom_bc_func=bottom_bc_func_g,
+                    top_bc_func=top_bc_func_g,
+                    left_bc=self.left_bc, right_bc=self.right_bc,
+                    bottom_bc=self.bottom_bc, top_bc=self.top_bc,
+                    left_bc_value=self.left_bc_value, right_bc_value=self.right_bc_value,
+                    bottom_bc_value=self.bottom_bc_value, top_bc_value=self.top_bc_value
+                )
             self.solvers.append(solver)
         
-        # Extract grid information from first solver
-        self.x_centers = self.solvers[0].x_centers
-        self.y_centers = self.solvers[0].y_centers
-        self.x_faces = self.solvers[0].x_faces
-        self.y_faces = self.solvers[0].y_faces
+        # Extract grid information from first solver (all solvers share the same grid)
+        if not self._use_custom_faces:
+            self.x_centers = self.solvers[0].x_centers
+            self.y_centers = self.solvers[0].y_centers
+            self.x_faces = self.solvers[0].x_faces
+            self.y_faces = self.solvers[0].y_faces
         self.X_centers = self.solvers[0].X_centers
         self.Y_centers = self.solvers[0].Y_centers
         
@@ -483,7 +528,21 @@ class MultigroupDiffusionSolver2D:
         else:
             # Compute from Rosseland integrals
             self.chi = self.compute_emission_fractions(T_ref=1.0)
-        
+
+        # Pre-test material functions for numpy array compatibility.
+        # _make_callable returns the function unchanged if it supports array
+        # inputs, or wraps it with np.vectorize otherwise.  This eliminates
+        # per-element Python overhead in the Newton loop hot paths.
+        self._abs_coeff_callables = [
+            _make_callable(f) for f in self.absorption_coeff_funcs
+        ]
+        self._mat_energy_callable = _make_callable(self.material_energy_func)
+        self._inv_mat_energy_callable = _make_callable(self.inverse_material_energy_func)
+        if self.cv_is_function:
+            self._cv_callable = _make_callable(self.cv_func)
+        else:
+            self._cv_callable = None
+
         print(f"\n2D Multigroup Solver initialized:")
         print(f"  Geometry: {geometry}")
         print(f"  Grid: {nx_cells} × {ny_cells} = {self.n_total} cells")
@@ -524,7 +583,7 @@ class MultigroupDiffusionSolver2D:
     def update_absorption_coefficients(self, T: np.ndarray):
         """Update group absorption coefficients σ*_{a,g} at all cells."""
         for g in range(self.n_groups):
-            self.sigma_a[g, :] = np.vectorize(self.absorption_coeff_funcs[g])(
+            self.sigma_a[g, :] = self._abs_coeff_callables[g](
                 T, self.X_flat, self.Y_flat
             )
 
@@ -547,7 +606,7 @@ class MultigroupDiffusionSolver2D:
 
     def _compute_material_energy(self, T: np.ndarray) -> np.ndarray:
         """Compute material energy e(T, x, y) for all cells."""
-        return np.vectorize(self.material_energy_func)(T, self.X_flat, self.Y_flat)
+        return self._mat_energy_callable(T, self.X_flat, self.Y_flat)
 
     def _compute_external_source(self, g: int, t: float) -> np.ndarray:
         """Compute external source Q_g(x, y, t) for one group."""
@@ -577,7 +636,7 @@ class MultigroupDiffusionSolver2D:
         sum_sigma_dB = np.sum(self.sigma_a * dB_star, axis=0)
 
         if self.cv_is_function:
-            cv_arr = np.vectorize(self.cv_func)(T, self.X_flat, self.Y_flat)
+            cv_arr = self._cv_callable(T, self.X_flat, self.Y_flat)
         else:
             cv_arr = self.cv
 
@@ -615,7 +674,16 @@ class MultigroupDiffusionSolver2D:
         """
         if verbose:
             print(f"\n=== Time step at t = {self.t:.4e} ===")
-        
+
+        # Propagate dt to per-group solvers.  The matrix contains 1/(c·Δt),
+        # so any dt change must invalidate the matrix and LU caches.
+        for g in range(self.n_groups):
+            if self.solvers[g].dt != self.dt:
+                self.solvers[g].dt = self.dt
+                self.solvers[g]._cached_T  = None
+                self.solvers[g]._cached_A  = None
+                self.solvers[g]._cached_LU = None
+
         # Store old values
         self.T_old[:] = self.T
         self.E_r_old[:] = self.E_r
@@ -985,40 +1053,23 @@ class MultigroupDiffusionSolver2D:
         """
         f = self.fleck_factor
         result = kappa.copy().astype(np.float64)
-        
-        # Reshape temperature to 2D for solvers
-        T_2d = unflatten_2d(T_star, self.nx_cells, self.ny_cells)
 
-        # Build homogeneous BC wrappers once per matvec call.
-        override_left = [self._make_homogeneous_bc(self.left_bc_funcs[g]) for g in range(self.n_groups)] if self.left_bc_funcs is not None else None
-        override_right = [self._make_homogeneous_bc(self.right_bc_funcs[g]) for g in range(self.n_groups)] if self.right_bc_funcs is not None else None
-        override_bottom = [self._make_homogeneous_bc(self.bottom_bc_funcs[g]) for g in range(self.n_groups)] if self.bottom_bc_funcs is not None else None
-        override_top = [self._make_homogeneous_bc(self.top_bc_funcs[g]) for g in range(self.n_groups)] if self.top_bc_funcs is not None else None
-        
-        # Subtract Σ_g σ*_{a,g}·A_g^{-1}[χ_g(1-f)κ]
+        nu_kappa = (1.0 - f) * kappa
+        T_2d = unflatten_2d(T_star, self.nx_cells, self.ny_cells)
+        nx, ny = self.nx_cells, self.ny_cells
+
+        # Homogeneous-BC solve: C_bc = 0 everywhere, so skip_bc_rhs=True
+        # eliminates all per-cell BC function calls (the dominant cost at
+        # large mesh sizes with many GMRES iterations).
         for g in range(self.n_groups):
-            # RHS for group g: χ_g(1-f)κ
-            rhs_g = self.chi[g] * (1.0 - f) * kappa
-            
-            # Reshape to 2D for solver
-            rhs_g_2d = unflatten_2d(rhs_g, self.nx_cells, self.ny_cells)
-            
-            # Solve A_g φ_g = rhs_g with HOMOGENEOUS BCs
+            rhs_g_2d = unflatten_2d(self.chi[g] * nu_kappa, nx, ny)
             phi_g_2d = self.solvers[g].solve(
                 rhs_g_2d, T_2d,
                 bc_time=bc_time,
-                override_left_bc=override_left[g] if override_left is not None else None,
-                override_right_bc=override_right[g] if override_right is not None else None,
-                override_bottom_bc=override_bottom[g] if override_bottom is not None else None,
-                override_top_bc=override_top[g] if override_top is not None else None
+                skip_bc_rhs=True,
             )
-            
-            # Flatten back to 1D
-            phi_g = flatten_2d(phi_g_2d, self.nx_cells, self.ny_cells)
-            
-            # Subtract σ*_{a,g} φ_g
-            result -= self.sigma_a[g, :] * phi_g
-        
+            result -= self.sigma_a[g, :] * flatten_2d(phi_g_2d, nx, ny)
+
         return result
     
     def compute_rhs_for_kappa(self, T_star: np.ndarray,
@@ -1163,7 +1214,7 @@ class MultigroupDiffusionSolver2D:
         e_new = e_n + self.dt * f * (kappa - sum_planck) + (1.0 - f) * Delta_e
         
         # Invert to get temperature
-        T_new = np.vectorize(self.inverse_material_energy_func)(e_new, self.X_flat, self.Y_flat)
+        T_new = self._inv_mat_energy_callable(e_new, self.X_flat, self.Y_flat)
         
         return T_new
     
