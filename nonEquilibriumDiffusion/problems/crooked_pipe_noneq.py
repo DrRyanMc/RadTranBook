@@ -22,7 +22,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from functools import partial
-from twoDFV import NonEquilibriumRadiationDiffusionSolver2D, C_LIGHT, A_RAD, flux_limiter_larsen, flux_limiter_levermore_pomraning
+from twoDFV import NonEquilibriumRadiationDiffusionSolver2D, C_LIGHT, A_RAD, flux_limiter_larsen, flux_limiter_levermore_pomraning, flux_limiter_max, flux_limiter_standard
 
 # Add utils to path for plotting
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'utils'))
@@ -622,6 +622,8 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
     _flux_limiters = {
         'larsen':              partial(flux_limiter_larsen, n=2),
         'levermore_pomraning': flux_limiter_levermore_pomraning,
+        'max':                 flux_limiter_max,
+        'none':                 flux_limiter_standard
     }
     if flux_limiter_name not in _flux_limiters:
         raise ValueError(f"Unknown flux limiter '{flux_limiter_name}'. "
@@ -878,7 +880,7 @@ def parse_arguments():
         "--flux-limiter",
         type=str,
         default="larsen",
-        choices=["larsen", "levermore_pomraning"],
+        choices=["larsen", "levermore_pomraning", "max", "none"],
         help="Flux limiter to use",
     )
     parser.add_argument(

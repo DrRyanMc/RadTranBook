@@ -140,6 +140,14 @@ def comb(weights, cell_indices, mus, times, positions, Ntarget, n_cells):
     ew_target(cell) = ecen(cell) / ncen_desired(cell) and ncen_desired is
     proportional to each cell's energy fraction of the global target.
     """
+    # Remove zero-weight dead particles before combing.
+    alive = weights > 0.0
+    weights      = weights[alive]
+    cell_indices = cell_indices[alive]
+    mus          = mus[alive]
+    times        = times[alive]
+    positions    = positions[alive]
+
     ecen = np.bincount(cell_indices, weights=weights, minlength=n_cells)
     total_ecen = np.sum(ecen)
     if total_ecen == 0:

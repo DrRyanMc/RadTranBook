@@ -195,7 +195,8 @@ flux_limiters = {
     'Levermore-Pomraning': flux_limiter_levermore_pomraning,
     'Larsen n=2': flux_limiter_larsen,
     'Sum': flux_limiter_sum,
-    'Max': flux_limiter_max
+    'Max': flux_limiter_max,
+    'None': flux_limiter_standard
 }
 
 # Storage for results
@@ -301,14 +302,16 @@ flux_limiter_colors = {
     'Levermore-Pomraning': 'red',
     'Larsen n=2': 'green',
     'Sum': 'black',
-    'Max': 'purple'
+    'Max': 'purple',
+    'None': 'blue'
 }
 
 flux_limiter_linestyles = {
     'Levermore-Pomraning': '--',
     'Larsen n=2': '-.',
     'Sum': '-',
-    'Max': (0, (3, 1, 1, 1))  # densely dashdotted
+    'Max': (0, (3, 1, 1, 1)),  # densely dashdotted
+    'None': ':'
 }
 
 # ============================================================================
@@ -374,7 +377,7 @@ ax1.set_xscale('log')
 # Create custom legend with flux limiters and reference symbols
 legend_elements = []
 # Add flux limiters
-for limiter_name in ['Levermore-Pomraning', 'Larsen n=2', 'Sum', 'Max']:
+for limiter_name in ['Levermore-Pomraning', 'Larsen n=2', 'Sum', 'Max', 'None']:
     legend_elements.append(
         Line2D([0], [0], color=flux_limiter_colors[limiter_name], 
                linestyle=flux_limiter_linestyles[limiter_name], 
@@ -457,7 +460,7 @@ ax2.set_xscale('log')
 # Create custom legend with flux limiters and reference symbols
 legend_elements = []
 # Add flux limiters
-for limiter_name in ['Levermore-Pomraning', 'Larsen n=2', 'Sum', 'Max']:
+for limiter_name in ['Levermore-Pomraning', 'Larsen n=2', 'Sum', 'Max', 'None']:
     legend_elements.append(
         Line2D([0], [0], color=flux_limiter_colors[limiter_name], 
                linestyle=flux_limiter_linestyles[limiter_name], 

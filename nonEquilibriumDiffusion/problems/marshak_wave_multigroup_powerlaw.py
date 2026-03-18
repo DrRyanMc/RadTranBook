@@ -167,7 +167,7 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     # Problem setup
     r_min = 0.0      # cm
     r_max = 7.0      # cm
-    n_cells = 100     # Reasonable resolution
+    n_cells = 140     # Reasonable resolution
     
     # Energy group structure (keV) - logarithmically spaced
     # Range from 1e-4 keV to 25.0 keV
@@ -316,7 +316,7 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     
     # Initial condition: cold everywhere
     r_centers = solver.r_centers
-    T_init = 0.001 * np.ones(n_cells)  # Cold initial state
+    T_init = 0.005 * np.ones(n_cells)  # Cold initial state
     #T_init[(r_centers > .25*r_max) & (r_centers < .75*r_max)] = 0.5  # Hot region in the middle
     solver.T = T_init.copy()
     solver.T_old = solver.T.copy()
@@ -344,7 +344,17 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     
     # Time stepping loop
     max_steps = 2500
-    while current_time < target_times[-1] and step_count < max_steps:
+    while (current_time < target_times[-1] + 1e-6*dt) and step_count < max_steps:
+        # Clamp dt so we land exactly on the next target time
+        dt_saved = solver.dt
+        if target_idx < len(target_times) and solver.t + solver.dt > target_times[target_idx]:
+            solver.dt = target_times[target_idx] - solver.t
+            print(f"\n--- Adjusting dt to {solver.dt:.4e} ns to hit target time {target_times[target_idx]:.3f} ns ---")
+            if (solver.dt <= 0):
+                #set it to be dt
+                solver.dt = dt_saved
+                print(f"  Warning: Adjusted dt became non-positive. Resetting to nominal dt = {solver.dt:.4e} ns")
+            assert solver.dt > 0, "Time stepping error: dt became non-positive"
         # For implicit methods, BC should be evaluated at the NEW time (t + dt)
         bc_time = solver.t + solver.dt
         
@@ -393,10 +403,10 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         info = solver.step(
             max_newton_iter=10,
             newton_tol=1e-6,
-            gmres_tol=1e-8,
-            gmres_maxiter=200,
+            gmres_tol=1e-10,
+            gmres_maxiter=300,
             use_preconditioner=use_preconditioner,
-            max_relative_change=1.0,
+            max_relative_change=2.0,
             verbose=False
         )
         
@@ -406,14 +416,14 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         
         # Print progress
         if step_count % 5 == 0 or (target_idx < len(target_times) and 
-                                    abs(current_time - target_times[target_idx]) < 0.5*dt):
+                                    np.abs(current_time - target_times[target_idx]) < 0.5*dt):
             gmres_iter = info['gmres_info']['iterations']
             print(f"{step_count:<6} {current_time:<10.4f} {solver.T.max():<12.6f} "
                   f"{solver.T.min():<12.6f} {solver.E_r.max():<15.6e} "
                   f"{info['newton_iter']:<8} {gmres_iter:<8}")
         
         # Save solution at target times
-        if target_idx < len(target_times) and current_time >= target_times[target_idx]:
+        if target_idx < len(target_times) and np.abs(current_time - target_times[target_idx]) < 0.5*dt:
             r = solver.r_centers.copy()
             T = solver.T.copy()
             E_r = solver.E_r.copy()
@@ -446,8 +456,9 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
             print(f"    E_r: max = {E_r.max():.6e} GJ/cm³\n")
             
             target_idx += 1
-        
-        # Advance to next time step
+
+        # Restore nominal dt (in case it was clamped) then advance
+        solver.dt = dt_saved
         solver.advance_time()
     
     print("\nSimulation complete!")

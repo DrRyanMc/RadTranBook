@@ -242,14 +242,13 @@ def plot_results(solutions, save_prefix='converging_marshak_wave'):
         t_label = f't = {t_ns:.2f} ns'
         ax.plot(r_cm / 1e-4, T_HeV/10, color=col, lw=2, label=t_label)
         T_ref = T_analytic_HeV_vec(r_anal, t_ns)
-        ax.plot(r_anal / 1e-4, T_ref/10, color=col, lw=1.5, ls='--',
-                label=f'analytic ({t_label})')
+        ax.plot(r_anal / 1e-4, T_ref/10, color=col, lw=1.5, ls='--')#,                label=f'analytic ({t_label})')
     ax.set_xlabel(r'$r$ ($\mu$m)')
     ax.set_ylabel(r'$T$ (keV)')
     ticks = np.linspace(0, R / 1e-4, 11)
     ax.set_xticks(ticks)
     ax.set_xticklabels([f'{t:g}' for t in ticks])
-    ax.legend(fontsize=9, loc='upper left')
+    #ax.legend(fontsize=9, loc='upper left')
     ax.grid(alpha=0.3)
     plt.tight_layout()
     outfile = f'{save_prefix}_T.pdf'
@@ -266,14 +265,13 @@ def plot_results(solutions, save_prefix='converging_marshak_wave'):
         t_label = f't = {t_ns:.2f} ns'
         ax.plot(r_cm / 1e-4, u_sim/1e3, color=col, lw=2, label=t_label)
         u_ref = u_analytic_erg_per_1e13(r_anal, t_ns)
-        ax.plot(r_anal / 1e-4, u_ref/1e3, color=col, lw=1.5, ls='--',
-                label=f'analytic ({t_label})')
-    ax.set_xlabel(r'$r$ ($\mu$m]')
+        ax.plot(r_anal / 1e-4, u_ref/1e3, color=col, lw=1.5, ls='--')#,                label=f'analytic ({t_label})')
+    ax.set_xlabel(r'$r$ ($\mu$m)')
     ax.set_ylabel(r'$e(T)$ (GJ/cm$^3$)')
     ticks = np.linspace(0, R / 1e-4, 11)
     ax.set_xticks(ticks)
     ax.set_xticklabels([f'{t:g}' for t in ticks])
-    ax.legend(fontsize=9, loc='upper left')
+    #ax.legend(fontsize=9, loc='upper left')
     ax.grid(alpha=0.3)
     plt.tight_layout()
     outfile = f'{save_prefix}_u.pdf'
@@ -409,5 +407,5 @@ if __name__ == "__main__":
         dt_initial=0.0001,
         dt_max=0.01,
         dt_growth=1.05,
-        t_duration=OUTPUT_TIMES_NS[0]-T_INIT_NS,
+        t_duration=OUTPUT_TIMES_NS[-1]-T_INIT_NS,
     )
