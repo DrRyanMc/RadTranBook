@@ -155,10 +155,12 @@ def run_mpi(
         t_phys = base.T_INIT_NS + state.time
 
         if rank == 0 and (step_count % output_freq == 0 or step_count <= 2):
-            T_surf_HeV = base.outer_T_keV(state.time) * base.T_HEV_PER_KEV
+            T_bath_HeV = base.T_bath_keV(t_phys) * base.T_HEV_PER_KEV
+            T_surf_HeV = base.T_analytic_keV(base.R, t_phys) * base.T_HEV_PER_KEV
             print(
                 f"  step {step_count:5d}  t_phys={t_phys:9.4f} ns"
                 f"  T_surf={T_surf_HeV:.4f} HeV"
+                f"  T_bath={T_bath_HeV:.4f} HeV"
                 f"  T_center={state.temperature[0]*base.T_HEV_PER_KEV:.4f} HeV"
                 f"  N={info['N_particles']:6d}"
                 f"  dE={info['energy_loss']:.3e} GJ"

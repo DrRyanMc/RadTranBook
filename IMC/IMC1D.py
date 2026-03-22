@@ -42,7 +42,27 @@ import matplotlib.pyplot as plt
 import math
 import random
 from dataclasses import dataclass
-from numba import jit, prange, get_thread_id, get_num_threads
+try:
+    from numba import jit, prange, get_thread_id, get_num_threads
+except Exception:
+    # Fallback path for environments where numba/llvmlite are unavailable.
+    def jit(*jit_args, **jit_kwargs):
+        if len(jit_args) == 1 and callable(jit_args[0]) and not jit_kwargs:
+            return jit_args[0]
+
+        def _decorator(func):
+            return func
+
+        return _decorator
+
+    def prange(*args):
+        return range(*args)
+
+    def get_thread_id():
+        return 0
+
+    def get_num_threads():
+        return 1
 
 __c = 29.98   # cm/ns
 __a = 0.01372  # radiation constant

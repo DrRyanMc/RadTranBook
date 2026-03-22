@@ -223,7 +223,7 @@ def left_bc(phi, x):
 def right_bc(phi, x):
     """r = R: time-dependent Dirichlet at T_s(t)."""
     T_s = _surface_T_keV(_t_phys_ns_state[0])
-    phi_bc = C_LIGHT * A_RAD * T_s ** 4
+    phi_bc = C_LIGHT * A_RAD * T_s**4
     return 1.0, 0.0, phi_bc   # 1·φ + 0·(dφ/dr) = phi_bc
 
 
@@ -418,6 +418,6 @@ if __name__ == "__main__":
     solver, solutions = run(
         n_cells=200,
         dt_initial=0.0001,
-        dt_max=0.05,
+        dt_max=0.01,
         dt_growth=1.05,
     )

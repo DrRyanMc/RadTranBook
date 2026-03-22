@@ -124,16 +124,42 @@ def _W_scalar(xi):
 _W = np.vectorize(_W_scalar)
 
 
+def _V_scalar(xi):
+    """Similarity profile V(ξ) for Test 1 — scalar version.
+    
+    V(ξ) = 0.4345 ξ^{-2.752} + 0.2451 ξ^{-1.454}
+    """
+    return 0.4345 * xi**(-2.752) + 0.2451 * xi**(-1.454)
+
+
+_V = np.vectorize(_V_scalar)
+
+
 def xi_rt(r, t_ns):
     """Similarity coordinate  ξ(r, t) = (r / 0.1R) / (−t)^δ."""
     return (r / (R / 10.0)) / (-t_ns)**DELTA
 
 
 def T_analytic_keV(r, t_ns):
-    """Analytic temperature [keV] at (r, t_ns)."""
+    """Analytic temperature profile [keV] at (r, t_ns).
+    
+    This is the interior temperature solution (for comparison).
+    """
     xi = xi_rt(r, t_ns)
     T_HeV = T_ANALYTIC_AMP * (-t_ns)**T_ANALYTIC_EXP * _W(xi)**0.625
     return T_HeV / T_HEV_PER_KEV
+
+
+def T_bath_keV(t_ns):
+    """Bath (outer boundary) temperature [keV] from self-similar solution.
+    
+    T_bath = T_AMP * (-t)^T_EXP * W(ξ_R)^0.625 * V(ξ_R)
+    where ξ_R = (r / 0.1R) / (-t)^δ
+    """
+    t_clamped = max(float(t_ns), -1e30)  # ensure negative
+    xi_R = (R / (R / 10.0)) / (-t_clamped)**DELTA
+    T_HeV = T_ANALYTIC_AMP * (-t_clamped)**T_ANALYTIC_EXP * _W_scalar(xi_R)**0.625 * _V_scalar(xi_R)
+    return max(float(T_HeV) / T_HEV_PER_KEV, 1e-8)
 
 # =============================================================================
 # TIME-DEPENDENT OUTER BOUNDARY TEMPERATURE
@@ -144,15 +170,10 @@ def outer_T_keV(tau_elapsed):
     Surface temperature [keV] as a function of elapsed simulation time τ [ns].
 
     τ = t_phys − T_INIT_NS, so t_phys = T_INIT_NS + τ.
-    At τ = 0 the similarity coordinate ξ_R ≈ 1 and W(1) = 0, so T_s → 0.
+    Uses the bath temperature formula combining W(ξ) and V(ξ).
     """
     t_phys = T_INIT_NS + tau_elapsed
-    # Clamp: physical time must stay negative for the analytic expression
-    if t_phys >= 0.0:
-        return 1e-8
-    xi = xi_rt(R, t_phys)
-    T_HeV = T_ANALYTIC_AMP * (-t_phys)**T_ANALYTIC_EXP * _W_scalar(xi)**0.625
-    return max(float(T_HeV) / T_HEV_PER_KEV, 1e-8)
+    return T_bath_keV(t_phys)
 
 
 # =============================================================================
@@ -411,9 +432,11 @@ def run(n_cells=50, Ntarget=5000, Nboundary=2000, NMax=20000,
         t_phys = T_INIT_NS + state.time
 
         if step_count % output_freq == 0 or step_count <= 2:
-            T_surf_HeV = outer_T_keV(state.time) * T_HEV_PER_KEV
+            T_bath_HeV = T_bath_keV(t_phys) * T_HEV_PER_KEV
+            T_surf_HeV = T_analytic_keV(R, t_phys) * T_HEV_PER_KEV
             print(f'  step {step_count:5d}  t_phys={t_phys:9.4f} ns'
                   f'  T_surf={T_surf_HeV:.4f} HeV'
+                  f'  T_bath={T_bath_HeV:.4f} HeV'
                   f'  T_center={state.temperature[0]*T_HEV_PER_KEV:.4f} HeV'
                   f'  N={info["N_particles"]:6d}'
                   f'  ΔE={info["energy_loss"]:.3e} GJ')

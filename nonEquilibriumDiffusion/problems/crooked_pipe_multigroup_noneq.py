@@ -23,6 +23,7 @@ Source: T = 300 eV (0.3 keV) at z=0 and r in (0, 0.5)
 
 import sys
 import os
+import time as _time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
@@ -988,6 +989,8 @@ def main(
         print(f"  Periodic checkpoints every {checkpoint_every} steps")
     print()
 
+    _t_run_start = _time.perf_counter()
+
     while t < t_final:
         step += 1
         dt_current = solver.dt
@@ -1026,8 +1029,11 @@ def main(
             flush=True,
         )
 
+        _t_step_start = _time.perf_counter()
         info = solver.step(verbose=False, gmres_tol=1e-8, gmres_maxiter=300,
                            use_preconditioner=False)
+        _dt_wall = _time.perf_counter() - _t_step_start
+        _elapsed  = _time.perf_counter() - _t_run_start
         t = solver.t
 
         n_newt  = info['newton_iterations']
@@ -1037,7 +1043,8 @@ def main(
         warn    = "  *** MAX NEWTON ***" if n_newt >= solver.max_newton_iter else ""
         print(
             f"  Done  | Newton: {n_newt} | GMRES: {n_gmres}"
-            f" | r_E = {r_E:.2e}, r_T = {r_T:.2e}{warn}",
+            f" | r_E = {r_E:.2e}, r_T = {r_T:.2e}"
+            f" | step {_dt_wall:.1f}s  elapsed {_elapsed:.0f}s{warn}",
             flush=True,
         )
 

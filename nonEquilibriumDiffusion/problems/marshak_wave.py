@@ -161,7 +161,7 @@ def run_marshak_wave():
     
     # Time stepping parameters
     dt = 0.01        # ns (start with small time step)
-    target_times = [1.0, 10.0, 20.0]  # ns
+    target_times = [1.0]#, 10.0, 20.0]  # ns
     
     # Create solver with Marshak wave properties
     print(f"\nInitializing solver with {n_cells} cells...")
