@@ -8,7 +8,7 @@ import numpy as np
 import sys
 sys.path.insert(0, '/Users/ryanmcclarren/Dropbox/Papers/RadTranBook/nonEquilibriumDiffusion')
 
-from multigroup_diffusion_solver_patched_lmfgk import MultigroupDiffusionSolver1D
+from multigroup_diffusion_solver import MultigroupDiffusionSolver1D
 
 A_RAD = 0.01372  # GJ/(cm^3·keV^4)
 

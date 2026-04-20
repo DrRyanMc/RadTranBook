@@ -156,7 +156,7 @@ def compare_spectra(npz_paths, target_time, target_r, plot_phi=False, outbase=No
         dE        = group_widths(energy_edges)
         n_groups  = len(E_centers)
 
-        spectrum_Er  = E_r_groups[t_idx, :, r_idx]
+        spectrum_Er  = E_r_groups[t_idx, :, r_idx]/dE
         spectrum_phi = phi_groups[t_idx, :, r_idx]
 
         label = label_from_filename(path)
@@ -187,7 +187,7 @@ def compare_spectra(npz_paths, target_time, target_r, plot_phi=False, outbase=No
 
     # --- format E_r panel ---
     ax_Er.set_xlabel('photon energy (keV)', fontsize=12)
-    ax_Er.set_ylabel(r'$E_{r,g}$ (GJ$\,$cm$^{-3}$)', fontsize=12)
+    ax_Er.set_ylabel(r'$E_{r,g}$ (GJ$/$cm$^{3}/$keV)', fontsize=12)
     #ax_Er.set_title(f'{t_str},  {r_str}', fontsize=11)
     ax_Er.set_xscale('log')
     ax_Er.set_yscale('log')

@@ -11,8 +11,8 @@ import numpy as np
 sys.path.insert(0, '/Users/ryanmcclarren/Dropbox/Papers/RadTranBook/nonEquilibriumDiffusion')
 
 from diffusion_operator_solver import C_LIGHT, A_RAD
-import multigroup_diffusion_solver_patched_lmfgk as m
-from multigroup_diffusion_solver_patched_lmfgk import MultigroupDiffusionSolver1D
+import multigroup_diffusion_solver as m
+from multigroup_diffusion_solver import MultigroupDiffusionSolver1D
 
 print("USING SOLVER FILE:", m.__file__)
 print("Testing LMFGK Preconditioner - GRAY LIMIT (all groups identical)")

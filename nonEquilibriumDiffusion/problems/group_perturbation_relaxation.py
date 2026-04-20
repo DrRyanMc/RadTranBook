@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import matplotlib.pyplot as plt
-from multigroup_diffusion_solver_patched_lmfgk import (
+from multigroup_diffusion_solver import (
     MultigroupDiffusionSolver1D, C_LIGHT, A_RAD, Bg_multigroup, flux_limiter_larsen
 )
 

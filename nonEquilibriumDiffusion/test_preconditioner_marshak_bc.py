@@ -11,11 +11,11 @@ import sys
 import numpy as np
 sys.path.insert(0, '/Users/ryanmcclarren/Dropbox/Papers/RadTranBook/nonEquilibriumDiffusion')
 
-from multigroup_diffusion_solver_patched_lmfgk import (
+from multigroup_diffusion_solver import (
     MultigroupDiffusionSolver1D, flux_limiter_larsen, Bg_multigroup
 )
 from diffusion_operator_solver import C_LIGHT, A_RAD
-import multigroup_diffusion_solver_patched_lmfgk as m
+import multigroup_diffusion_solver as m
 print("USING SOLVER FILE:", m.__file__)
 
 print("Testing LMFG Preconditioner - 10 Groups, Marshak BC")

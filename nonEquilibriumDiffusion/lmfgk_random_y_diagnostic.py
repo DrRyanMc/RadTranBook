@@ -15,7 +15,7 @@ This directly checks the internal *gray operator H* build is consistent with
 the gray solver's solve/apply_operator methods.
 
 Requirements:
-  - multigroup_diffusion_solver_patched_lmfgk.py (or your renamed equivalent)
+  - multigroup_diffusion_solver.py (or your renamed equivalent)
   - diffusion_operator_solver.py
 
 Usage:
@@ -26,7 +26,7 @@ import numpy as np
 
 # ---- Import your solver module here ----
 # If you've renamed the file, change this import accordingly.
-import multigroup_diffusion_solver_patched_lmfgk as mg
+import multigroup_diffusion_solver as mg
 from diffusion_operator_solver import DiffusionOperatorSolver1D, C_LIGHT
 
 

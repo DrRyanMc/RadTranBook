@@ -1,6 +1,6 @@
 """Quick summary showing Newton damping effect."""
 import numpy as np
-from multigroup_diffusion_solver_patched_lmfgk import MultigroupDiffusionSolver1D
+from multigroup_diffusion_solver import MultigroupDiffusionSolver1D
 
 A_RAD = 0.01372
 n_groups, n_cells = 10, 30

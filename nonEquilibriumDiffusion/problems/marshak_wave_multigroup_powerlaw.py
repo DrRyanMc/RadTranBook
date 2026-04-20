@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import matplotlib.pyplot as plt
-from multigroup_diffusion_solver_patched_lmfgk import (MultigroupDiffusionSolver1D, C_LIGHT, A_RAD, SIGMA_SB, Bg_multigroup,
+from multigroup_diffusion_solver import (MultigroupDiffusionSolver1D, C_LIGHT, A_RAD, SIGMA_SB, Bg_multigroup,
     flux_limiter_standard, flux_limiter_larsen, flux_limiter_levermore_pomraning, flux_limiter_max)
 
 # Add project root to path for shared utilities
@@ -29,6 +29,7 @@ from utils.plotfuncs import show, hide_spines, font
 
 # Physical constants
 RHO = 0.01  # g/cm³
+MIN_DT_ADJUST = 1e-10  # ns; floor for dt when clamping to output times
 
 # =============================================================================
 # POWER-LAW OPACITY FUNCTIONS
@@ -242,8 +243,8 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     F_total = (A_RAD * C_LIGHT * T_bc**4) / 2.0
     F_g_values = [chi[g] * F_total for g in range(n_groups)]
     F_g_right = [0.0] * n_groups  # No incoming flux on right boundary
-    # Robin BC parameters: A*phi + B*dphi/dr = C
-    # For Marshak BC in this solver: phi_g/2 + (2D_g)*dphi_g/dr = F_in,g
+    # Robin BC parameters: A*phi + B*(dphi/dn) = C
+    # For Marshak BC: A = 1/2, B = D_g, C = acT^4/2 per group
     # Compute group-dependent diffusion coefficient for BC (at left boundary, T ≈ T_bc)
     BC_A = 0.5
     BC_B_values = []
@@ -251,8 +252,8 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     for g in range(n_groups):
         D_g_bc = diff_funcs[g](T_bc, 0.0)
         BC_right_values = diff_funcs[g](0.0, r_max)
-        BC_B_values.append(2.0 * D_g_bc)
-        BC_B_right_values.append(2.0 * BC_right_values)
+        BC_B_values.append(D_g_bc)
+        BC_B_right_values.append(BC_right_values)
     BC_C_values = F_g_values.copy()
     BC_C_right_values = F_g_right.copy()
     
@@ -348,8 +349,16 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         # Clamp dt so we land exactly on the next target time
         dt_saved = solver.dt
         if target_idx < len(target_times) and solver.t + solver.dt > target_times[target_idx]:
-            solver.dt = target_times[target_idx] - solver.t
-            print(f"\n--- Adjusting dt to {solver.dt:.4e} ns to hit target time {target_times[target_idx]:.3f} ns ---")
+            dt_to_target = target_times[target_idx] - solver.t
+            if dt_to_target < MIN_DT_ADJUST:
+                solver.dt = dt_saved
+                print(
+                    f"\n--- dt-to-target {dt_to_target:.4e} ns is below floor; "
+                    f"using dt = {solver.dt:.4e} ns (target {target_times[target_idx]:.3f} ns) ---"
+                )
+            else:
+                solver.dt = dt_to_target
+                print(f"\n--- Adjusting dt to {solver.dt:.4e} ns to hit target time {target_times[target_idx]:.3f} ns ---")
             if (solver.dt <= 0):
                 #set it to be dt
                 solver.dt = dt_saved
@@ -360,7 +369,7 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         
         # Update boundary conditions if time-dependent
         if time_dependent_bc:
-            # Ramp T_bc from 0.05 keV to 0.25 keV over 1 ns
+            # Ramp T_bc from 0.05 keV to 0.25 keV over 5.0 ns
             T_bc_start = 0.05  # keV
             T_bc_end = 0.25     # keV
             t_ramp = 5.0      # ns
@@ -381,7 +390,7 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
             
             for g in range(n_groups):
                 # Update diffusion coefficient (evaluated at average temperature)
-                B_g = 2.0 * diff_funcs[g](T_avg_bc, 0.0)
+                B_g = diff_funcs[g](T_avg_bc, 0.0)
                 # Update incoming flux (temperature AND spectrum-dependent)
                 C_g = chi_current[g] * F_total_current
                 

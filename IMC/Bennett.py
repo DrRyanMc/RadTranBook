@@ -18,7 +18,48 @@ if project_root not in sys.path:
 import IMCSlab as imc
 import numpy as np
 import matplotlib.pyplot as plt
-from utils.plotfuncs import font, hide_spines, show
+import matplotlib as mpl
+
+mpl.rcParams.update({
+    # Typography
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Univers LT Std", "TeX Gyre Heros", "Helvetica", "Arial", "DejaVu Sans"],
+    "font.size": 12,
+    "axes.labelsize": 12,
+    "font.variant": "small-caps",
+    "axes.titlesize": 18,
+    "mathtext.fontset": "dejavusans",
+    "mathtext.default": "it",
+
+    # Figure
+    "figure.facecolor": "white",
+    "axes.facecolor": "white",
+    "savefig.facecolor": "white",
+    "savefig.bbox": "tight",
+
+    # Axes/spines
+    "axes.edgecolor": "black",
+    "axes.linewidth": 1.15,
+    "axes.grid": False,
+
+    # Ticks
+    "xtick.color": "black",
+    "ytick.color": "black",
+    "xtick.major.width": 1.0,
+    "ytick.major.width": 1.0,
+    "xtick.major.size": 6,
+    "ytick.major.size": 6,
+    "xtick.direction": "out",
+    "ytick.direction": "out",
+
+    # Lines
+    "lines.linewidth": 1.8,
+    "lines.solid_capstyle": "round",
+    "lines.dash_capstyle": "round",
+
+    # Legend
+    "legend.frameon": False,
+})
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def last_nonzero(data, column):
@@ -76,20 +117,20 @@ mat_data = np.array([
 alpha   = 0.03           # linear material constant: e = alpha * T
 Ntarget  = 10000
 Nboundary = 0
-NMax      = 1*10**6
+NMax      = 1*10**5
 Nsource   = 20000
 
 times_data = [0.1, 0.31623, 1.0, 3.16228, 10.0, 31.62278, 100.0]
 select_time = 5          # 1-based index into times_data
 
-dt         = 0.001
+dt         = 0.1/c/10 #want 10 times steps to get to the first time 0.1/c
 final_time = times_data[select_time - 1] / c
 print("final time (dimensionless) =", final_time * c)
 
 L  = 1.25 * (0.5 + final_time * c)
 if (select_time == 5):
-    L = 6.0
-I  = 200
+    L = 8.0
+I  = 240
 mesh = np.zeros((I, 2))
 dx = L / I
 for i in range(I):
@@ -128,33 +169,52 @@ def make_panel(quantity, ylabel, outfile, log=False):
         snap      = int(np.argmin(np.abs(times * c - t_target)))
 
         if quantity == 'rad':
-            imc_vals        = radiation_temperatures[snap]
-            bm_mask         = rad_data[:, idx + 1] > 0
-            bm_x, bm_y     = rad_data[bm_mask, 0], rad_data[bm_mask, idx + 1]**.25
-        else:
-            imc_vals        = temperatures[snap]
-            bm_mask         = mat_data[:, idx + 1] > 0
-            bm_x, bm_y     = mat_data[bm_mask, 0], mat_data[bm_mask, idx + 1]/(alpha/a)
+            if log:
+                bm_mask         = rad_data[:, idx + 1] > 0
+                imc_vals        = radiation_temperatures[snap]**4
+                bm_x, bm_y     = rad_data[bm_mask, 0], rad_data[bm_mask, idx + 1]
 
+            else:
+                bm_mask         = rad_data[:, idx + 1] > 0
+                imc_vals        = radiation_temperatures[snap]
+                bm_x, bm_y     = rad_data[bm_mask, 0], rad_data[bm_mask, idx + 1]**.25
+        else:
+            bm_mask         = mat_data[:, idx + 1] > 0
+            if log:
+                imc_vals        = temperatures[snap]*alpha/a
+                bm_x, bm_y     = mat_data[bm_mask, 0], mat_data[bm_mask, idx + 1]
+            else:
+                imc_vals        = temperatures[snap]
+                bm_x, bm_y     = mat_data[bm_mask, 0], mat_data[bm_mask, idx + 1]/(alpha/a)
         ax.plot(mesh_midpoints, imc_vals, color=col, lw=1.4, label=f"IMC" if idx==0 else None)
         ax.plot(bm_x, bm_y, "o", color=col, fillstyle="none", ms=5, label=f"reference" if idx==0 else None)
 
     if log:
         ax.set_xscale('log')
         ax.set_yscale('log')
-        ax.set_ylim(1e-4, 2e0)
+        ax.set_xlim(.2,8)
+        if  quantity == 'rad':
+            ax.set_ylim(1e-3, 3e0)
+        else:
+            ax.set_ylim(1e-5, 4e0)
         ax.grid(True, alpha=0.2, which='both')
     else:
         ax.grid(True, alpha=0.3)
         ax.set_xlim(0,4)
 
-    ax.set_xlabel("x", fontsize=10)
-    ax.set_ylabel(ylabel, fontsize=10)
-    ax.legend(prop=font, facecolor="white", edgecolor="none", fontsize=8)
-    show(outfile, close_after=True)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_linewidth(1.5)
+    ax.spines['left'].set_linewidth(1.5)
+    ax.set_xlabel("position (cm)")
+    ax.set_ylabel(ylabel)
+    ax.legend(fontsize=8)
+    plt.tight_layout()
+    plt.savefig(outfile, dpi=600)
     print(f"Saved {outfile}")
+    plt.close()
 
-make_panel('rad', r"$\overline{T}_\mathrm{r}$", "bennett_radiation_linear.pdf", log=False)
-make_panel('rad', r"$\overline{T}_\mathrm{r}$", "bennett_radiation_loglog.pdf",  log=True)
-make_panel('mat', r"$\overline{T}$",   "bennett_material_linear.pdf",  log=False)
-make_panel('mat', r"$\overline{T}$",   "bennett_material_loglog.pdf",  log=True)
+make_panel('rad', "radiation temperature (keV)", "bennett_radiation_linear.pdf", log=False)
+make_panel('rad', "norm. radiation energy density", "bennett_radiation_loglog.pdf",  log=True)
+make_panel('mat', "material temperature (keV)",   "bennett_material_linear.pdf",  log=False)
+make_panel('mat', "norm. material energy density",   "bennett_material_loglog.pdf",  log=True)

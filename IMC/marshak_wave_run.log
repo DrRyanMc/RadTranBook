@@ -1,0 +1,6 @@
+/Users/ryanmcclarren/Dropbox/Papers/RadTranBook/IMC/IMCSlab.py:158: RuntimeWarning: invalid value encountered in divide
+  ew_cen = np.where(ncen_desired > 0, ecen / ncen_desired, 0.0)
+/Users/ryanmcclarren/Dropbox/Papers/RadTranBook/IMC/IMC1D_CarterForest.py:506: RuntimeWarning: invalid value encountered in divide
+  ew_cen = np.where(ncen_desired > 0, ecen / ncen_desired, 0.0)
+/Users/ryanmcclarren/Dropbox/Papers/RadTranBook/IMC/IMCSlab.py:158: RuntimeWarning: invalid value encountered in divide
+  ew_cen = np.where(ncen_desired > 0, ecen / ncen_desired, 0.0)

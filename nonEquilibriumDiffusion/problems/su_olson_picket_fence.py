@@ -22,7 +22,7 @@ from matplotlib.lines import Line2D
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from multigroup_diffusion_solver_patched_lmfgk import MultigroupDiffusionSolver1D, C_LIGHT, A_RAD
+from multigroup_diffusion_solver import MultigroupDiffusionSolver1D, C_LIGHT, A_RAD
 
 # Add project root to path for shared utilities
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import IMC1D as imc1d
 import IMC2D as imc2d
+import IMC2D_CarterForest as imc2d_cf
 
 
 CV_VAL = 0.3
@@ -117,6 +118,7 @@ def _capture_snapshots_2d(
     T_boundary,
     reflect,
     max_events_per_particle,
+    method='fc',
 ):
     nx = len(edges1) - 1
     ny = len(edges2) - 1
@@ -125,7 +127,10 @@ def _capture_snapshots_2d(
     Trinit = np.full((nx, ny), 1e-4)
     source = np.zeros((nx, ny))
 
-    state = imc2d.init_simulation(
+    # Select implementation
+    imc_module = imc2d_cf if method == 'cf' else imc2d
+    
+    state = imc_module.init_simulation(
         Ntarget,
         Tinit,
         Trinit,
@@ -141,7 +146,7 @@ def _capture_snapshots_2d(
     for tout in sorted(output_times):
         while state.time < tout - 1e-12:
             step_dt = min(dt, tout - state.time)
-            state, info = imc2d.step(
+            state, info = imc_module.step(
                 state,
                 Ntarget,
                 Nboundary,
@@ -214,6 +219,7 @@ def run_xy_symmetry_check(
     Nboundary=12000,
     Nmax=80000,
     max_events_per_particle=100,
+    method='fc',
 ):
     x_edges = np.linspace(0.0, L, n + 1)
     y_edges = np.linspace(0.0, L, n + 1)
@@ -233,6 +239,7 @@ def run_xy_symmetry_check(
         Tbc_x,
         ref_x,
         max_events_per_particle,
+        method,
     )
 
     # y-propagating case: source at bottom boundary.
@@ -250,6 +257,7 @@ def run_xy_symmetry_check(
         Tbc_y,
         ref_y,
         max_events_per_particle,
+        method,
     )
 
     # Compare 1D profiles: average over transverse dimension.
@@ -277,6 +285,7 @@ def run_rz_planar_limit_check(
     Nboundary=12000,
     Nmax=120000,
     max_events_per_particle=100,
+    method='fc',
 ):
     z_edges = np.linspace(0.0, Lz, nz + 1)
     r_edges = np.linspace(r0, r0 + dr, nr + 1)
@@ -310,6 +319,7 @@ def run_rz_planar_limit_check(
         Tbc_rz,
         ref_rz,
         max_events_per_particle,
+        method,
     )
 
     vols = imc2d._cell_volumes_rz(r_edges, z_edges)
@@ -401,10 +411,20 @@ def main():
     parser.add_argument("--Nboundary", type=int, default=12000)
     parser.add_argument("--Nmax", type=int, default=120000)
     parser.add_argument("--max-events-per-particle", type=int, default=10**6)
+    parser.add_argument("--method", type=str, choices=['fc', 'cf'], default='fc',
+                        help="Transport method: 'fc' (Fleck-Cummings) or 'cf' (Carter-Forest)")
     args = parser.parse_args()
 
     output_times = sorted(args.times)
+    
+    # Append method to save_prefix to avoid overwriting FC/CF results
+    save_prefix = f"{args.save_prefix}_{args.method}"
 
+    print("=" * 72)
+    print(f"Running validation with method: {args.method.upper()}")
+    print(f"Output prefix: {save_prefix}")
+    print("=" * 72)
+    
     print("=" * 72)
     print("Running RZ planar-limit check against 1D slab...")
     print("=" * 72)
@@ -419,6 +439,7 @@ def main():
         Nboundary=args.Nboundary,
         Nmax=args.Nmax,
         max_events_per_particle=args.max_events_per_particle,
+        method=args.method,
     )
 
     print("=" * 72)
@@ -432,6 +453,7 @@ def main():
         Nboundary=args.Nboundary,
         Nmax=args.Nmax,
         max_events_per_particle=args.max_events_per_particle,
+        method=args.method,
     )
 
     print("\nError summary:")
@@ -452,7 +474,7 @@ def main():
         )
 
     fig_path = save_plots_and_npz(
-        args.save_prefix,
+        save_prefix,
         output_times,
         xy_centers,
         xy_profiles,
@@ -462,7 +484,7 @@ def main():
         rz_errs,
     )
     print(f"\nSaved: {fig_path}")
-    print(f"Saved: {args.save_prefix}.npz")
+    print(f"Saved: {save_prefix}.npz")
 
 
 if __name__ == "__main__":

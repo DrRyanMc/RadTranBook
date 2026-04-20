@@ -24,7 +24,7 @@ import numpy as np
 
 # ---- IMPORT YOUR SOLVER MODULE HERE ----
 # If you renamed the file, change this to match your module name.
-import multigroup_diffusion_solver_patched_lmfgk as mg
+import multigroup_diffusion_solver as mg
 
 from diffusion_operator_solver import A_RAD
 

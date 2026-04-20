@@ -1,0 +1,78 @@
+{
+  "case": {
+    "cells": 50,
+    "domain_cm": 0.2,
+    "dt_ns": 0.025,
+    "event_cap_per_particle": 0,
+    "fastpath_threshold": 0.0,
+    "geometry": "spherical",
+    "n_boundary": 10000,
+    "n_max": 40000,
+    "n_target": 10000,
+    "reflect": [
+      true,
+      false
+    ],
+    "t_boundary": [
+      0.0,
+      1.0
+    ],
+    "t_final_ns": 1.0
+  },
+  "cf": {
+    "avg_events_per_particle_overall": 28.649516930487316,
+    "event_totals": {
+      "absorption_capture_events": 1077284,
+      "absorption_continue_events": 51129720,
+      "boundary_crossings": 14474800,
+      "census_events": 112969,
+      "event_cap_hits": 0,
+      "n_particles_transported": 2331445,
+      "reflections": 0,
+      "total": 66794773,
+      "weight_floor_kills": 10024
+    },
+    "final_particles": 39991,
+    "final_time": 1.0,
+    "final_total_energy": 0.005099471006233266,
+    "method": "CF",
+    "phase_totals_s": {
+      "postprocess": 2.3942909539982793,
+      "sampling": 2.217437539002276,
+      "total": 10.704013318005309,
+      "transport": 6.090457399011939
+    },
+    "steps": 40,
+    "wall_s": 10.718959679994441
+  },
+  "fc": {
+    "avg_events_per_particle_overall": 155.02125922218633,
+    "event_totals": {
+      "boundary_crossings": 61337477,
+      "census_events": 391527,
+      "n_particles_transported": 2331741,
+      "reflections": 0,
+      "scatter_events": 299740422,
+      "total": 361469426,
+      "weight_floor_kills": 387100
+    },
+    "final_particles": 40001,
+    "final_time": 1.0,
+    "final_total_energy": 0.005942312294630614,
+    "method": "FC",
+    "phase_totals_s": {
+      "postprocess": 1.7361754570083576,
+      "sampling": 0.08307225598400692,
+      "total": 16.159104579986888,
+      "transport": 14.336689108997234
+    },
+    "steps": 40,
+    "wall_s": 16.168122344999574
+  },
+  "ratios": {
+    "avg_events_per_particle": 0.18481024521562558,
+    "total_events": 0.1847867847058246,
+    "transport_phase": 0.42481617287702556,
+    "wall": 0.6629687388102655
+  }
+}

@@ -6,9 +6,9 @@ a = imc.__a
 c = imc.__c
 
 # --- Problem parameters ---
-Ntarget    = 10000
-Nboundary  = 10000
-NMax       = 4*10**4
+Ntarget    = 100000
+Nboundary  = 100000
+NMax       = 4*10**5
 Nsource    = 0
 dt         = 0.01
 L          = 0.20
@@ -91,7 +91,7 @@ snap_times = np.array([s[0] for s in snapshots])
 snap_T_mat = np.array([s[1] for s in snapshots])
 snap_T_rad = np.array([s[2] for s in snapshots])
 
-fname = f"marshak_wave_output_{int(final_time*1e3)}ps.npz"
+fname = f"marshak_wave_output_{int(final_time*1e3)}ps_{Ntarget}.npz"
 np.savez(fname,
     problem_parameters=np.array({
         "Ntarget": Ntarget, "Nboundary": Nboundary, "NMax": NMax, "Nsource": Nsource,

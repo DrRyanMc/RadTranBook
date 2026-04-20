@@ -36,7 +36,41 @@ TIMES_NS   = list(COLORS.keys())   # [1.0, 2.0, 5.0, 10.0]
 def load_solutions(G):
     path = os.path.join(NPZ_DIR, FILE_PATTERN.format(G=G))
     data = np.load(path, allow_pickle=True)
-    return list(data["solutions"])   # list of dicts
+
+    # Backward-compatible loader:
+    # 1) old format: object array under key 'solutions'
+    # 2) new format: structured arrays (times, r, T_mat, T_rad)
+    if "solutions" in data:
+        return list(data["solutions"])   # list of dicts
+
+    required = ("times", "r", "T_mat", "T_rad")
+    if all(k in data for k in required):
+        times = np.asarray(data["times"], dtype=float)
+        r = np.asarray(data["r"], dtype=float)
+        T_mat = np.asarray(data["T_mat"], dtype=float)
+        T_rad = np.asarray(data["T_rad"], dtype=float)
+
+        if T_mat.ndim != 2 or T_rad.ndim != 2:
+            raise ValueError(
+                f"Unexpected temperature array shapes in {os.path.basename(path)}: "
+                f"T_mat{T_mat.shape}, T_rad{T_rad.shape}"
+            )
+
+        n_saved = min(len(times), T_mat.shape[0], T_rad.shape[0])
+        return [
+            {
+                "time": float(times[i]),
+                "r": r,
+                "T": T_mat[i, :],
+                "T_rad": T_rad[i, :],
+            }
+            for i in range(n_saved)
+        ]
+
+    raise KeyError(
+        f"Unsupported NPZ schema for {os.path.basename(path)}. "
+        f"Expected either 'solutions' or keys {required}; got {list(data.keys())}"
+    )
 
 
 def find_solution(solutions, target_time):
@@ -85,7 +119,7 @@ def make_plot(key: str, ylabel: str, outfile: str) -> None:
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xticks([0.1,1.0])
-    ax.set_xlim(0.02,7)
+    ax.set_xlim(0.01,7)
     ax.grid(True, alpha=0.2,which='both')
     #hide_spines(ax, intx=True)
     show(outfile, close_after=True)

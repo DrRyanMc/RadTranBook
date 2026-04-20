@@ -41,6 +41,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 import random
+import time
 from dataclasses import dataclass
 try:
     from numba import jit, prange, get_thread_id, get_num_threads
@@ -119,23 +120,35 @@ def move_particle(weight, mu, position, cell_l, cell_r, sigma_a, sigma_s, distan
         deposited_intensity = weight * distance_to_next_event / dx
     deposited_weight = deposited_intensity * sigma_a
     weight = weight * weight_factor
-    return weight, mu, position, new_location, deposited_weight, deposited_intensity, distance_to_census
+    if math.fabs(distance_to_boundary - distance_to_next_event) < 1e-10:
+        event_code = 1  # boundary crossing
+    elif distance_to_next_event == distance_to_scatter:
+        event_code = 2  # scatter
+    else:
+        event_code = 3  # census
+    return (weight, mu, position, new_location, deposited_weight,
+            deposited_intensity, distance_to_census, event_code)
 
 
 @jit(nopython=True, parallel=True)
-def move_particles(weights, mus, times, positions, cell_indices, mesh, sigma_a, sigma_s, dt, refl, weight_floor=0.0):
+def move_particles(weights, mus, times, positions, cell_indices, mesh, sigma_a, sigma_s,
+                   dt, refl, stats_accum, weight_floor=0.0):
     """Transport all slab particles for one time step using numba thread parallelism."""
     N = len(weights)
     n_cells = len(sigma_a)
     n_threads = get_num_threads()
     dep_threads = np.zeros((n_threads, n_cells))
     si_threads  = np.zeros((n_threads, n_cells))
+    # stats columns: [0]=events, [1]=boundary, [2]=scatter,
+    # [3]=census, [4]=weight_floor_kill, [5]=reflections
+    stats_threads = np.zeros((n_threads, 6), dtype=np.int64)
 
     for i in prange(N):
         tid = get_thread_id()
         distance_to_census = (dt - times[i]) * __c
         while distance_to_census > 0:
             loc = int(cell_indices[i])
+            stats_threads[tid, 0] += 1
             if positions[i] < mesh[loc][0] or positions[i] > mesh[loc][1]:
                 print("Particle not in cell"); print("position:", positions[i])
                 print("cell:", mesh[loc][0], mesh[loc][1]); print("index:", loc, i)
@@ -152,19 +165,28 @@ def move_particles(weights, mus, times, positions, cell_indices, mesh, sigma_a, 
             dep_threads[tid, loc] += output[4]
             si_threads[tid, loc]  += output[5] / dt
             distance_to_census = output[6]
+            if output[7] == 1:
+                stats_threads[tid, 1] += 1
+            elif output[7] == 2:
+                stats_threads[tid, 2] += 1
+            else:
+                stats_threads[tid, 3] += 1
             if cell_indices[i] == len(mesh):
                 if refl[1]:
                     mus[i] = -mus[i]
                     cell_indices[i] -= 1
+                    stats_threads[tid, 5] += 1
                 else:
                     distance_to_census = 0.0
             elif cell_indices[i] == -1:
                 if refl[0]:
                     mus[i] = -mus[i]
                     cell_indices[i] += 1
+                    stats_threads[tid, 5] += 1
                 else:
                     distance_to_census = 0.0
             if weights[i] < weight_floor:
+                stats_threads[tid, 4] += 1
                 loc = int(cell_indices[i])
                 if 0 < loc < len(sigma_a) - 1:
                     dep_threads[tid, loc] += weights[i] / (mesh[loc][1] - mesh[loc][0])
@@ -172,6 +194,9 @@ def move_particles(weights, mus, times, positions, cell_indices, mesh, sigma_a, 
                 weights[i] = 0.0
                 distance_to_census = 0.0
 
+    stats_sum = stats_threads.sum(axis=0)
+    for j in range(len(stats_sum)):
+        stats_accum[j] += stats_sum[j]
     return dep_threads.sum(axis=0), si_threads.sum(axis=0)
 
 
@@ -390,24 +415,34 @@ def move_particle_spherical(weight, mu, r, r_inner, r_outer, sigma_a, sigma_s, d
     deposited_weight = deposited_intensity * sigma_a
     weight *= weight_factor
 
-    return weight, mu_new, r_new, new_location, deposited_weight, deposited_intensity, distance_to_census
+    if math.fabs(distance_to_boundary - distance_to_next_event) < 1e-10:
+        event_code = 1  # boundary crossing
+    elif distance_to_next_event == distance_to_scatter:
+        event_code = 2  # scatter
+    else:
+        event_code = 3  # census
+    return (weight, mu_new, r_new, new_location, deposited_weight,
+            deposited_intensity, distance_to_census, event_code)
 
 
 @jit(nopython=True, parallel=True)
 def move_particles_spherical(weights, mus, times, positions, cell_indices,
-                              mesh, sigma_a, sigma_s, dt, refl, weight_floor=0.0):
+                              mesh, sigma_a, sigma_s, dt, refl, stats_accum,
+                              weight_floor=0.0):
     """Transport all spherical particles for one time step (numba prange)."""
     N = len(weights)
     n_cells = len(sigma_a)
     n_threads = get_num_threads()
     dep_threads = np.zeros((n_threads, n_cells))
     si_threads  = np.zeros((n_threads, n_cells))
+    stats_threads = np.zeros((n_threads, 6), dtype=np.int64)
 
     for i in prange(N):
         tid = get_thread_id()
         distance_to_census = (dt - times[i]) * __c
         while distance_to_census > 0:
             loc = int(cell_indices[i])
+            stats_threads[tid, 0] += 1
             output = move_particle_spherical(
                 weights[i], mus[i], positions[i],
                 mesh[loc][0], mesh[loc][1],
@@ -422,19 +457,28 @@ def move_particles_spherical(weights, mus, times, positions, cell_indices,
             dep_threads[tid, loc] += output[4]
             si_threads[tid, loc]  += output[5] / dt
             distance_to_census = output[6]
+            if output[7] == 1:
+                stats_threads[tid, 1] += 1
+            elif output[7] == 2:
+                stats_threads[tid, 2] += 1
+            else:
+                stats_threads[tid, 3] += 1
             if cell_indices[i] == len(mesh):
                 if refl[1]:
                     mus[i] = -mus[i]
                     cell_indices[i] -= 1
+                    stats_threads[tid, 5] += 1
                 else:
                     distance_to_census = 0.0
             elif cell_indices[i] == -1:
                 if refl[0]:
                     mus[i] = -mus[i]
                     cell_indices[i] += 1
+                    stats_threads[tid, 5] += 1
                 else:
                     distance_to_census = 0.0
             if weights[i] < weight_floor:
+                stats_threads[tid, 4] += 1
                 loc = int(cell_indices[i])
                 if 0 < loc < len(sigma_a) - 1:
                     r0 = mesh[loc][0]; r1 = mesh[loc][1]
@@ -445,6 +489,9 @@ def move_particles_spherical(weights, mus, times, positions, cell_indices,
                 weights[i] = 0.0
                 distance_to_census = 0.0
 
+    stats_sum = stats_threads.sum(axis=0)
+    for j in range(len(stats_sum)):
+        stats_accum[j] += stats_sum[j]
     return dep_threads.sum(axis=0), si_threads.sum(axis=0)
 
 
@@ -693,10 +740,15 @@ def comb(weights, cell_indices, mus, times, positions, Ntarget, n_cells):
     if total_ecen == 0:
         return weights, cell_indices, mus, times, positions, np.zeros(n_cells)
 
-    ncen_desired = np.where(ecen > 0,
-                            np.maximum(1, np.round(Ntarget * ecen / total_ecen).astype(int)),
-                            0)
-    ew_cen = np.where(ncen_desired > 0, ecen / ncen_desired, 0.0)
+    ncen_desired = np.zeros(n_cells, dtype=int)
+    active = ecen > 0
+    ncen_desired[active] = np.maximum(
+        1,
+        np.round(Ntarget * ecen[active] / total_ecen).astype(int)
+    )
+    ew_cen = np.zeros(n_cells)
+    positive_counts = ncen_desired > 0
+    ew_cen[positive_counts] = ecen[positive_counts] / ncen_desired[positive_counts]
 
     new_weights       = []
     new_mus           = []
@@ -817,6 +869,7 @@ def step(state, Ntarget, Nboundary, Nsource, NMax, T_boundary, dt, mesh,
 
     All other parameters identical to IMCSlab.py ``step()``.
     """
+    t_step_start = time.perf_counter()
     I       = mesh.shape[0]
     volumes = _cell_volumes(mesh, geometry)
 
@@ -835,6 +888,8 @@ def step(state, Ntarget, Nboundary, Nsource, NMax, T_boundary, dt, mesh,
     assert np.all(f >= 0) and np.all(f <= 1), "Fleck factor out of bounds"
     sigma_s = sigma_a_true * (1.0 - f)
     sigma_a = sigma_a_true * f
+
+    t_sampling_start = time.perf_counter()
 
     # --- Boundary sources ---
     T_left  = T_boundary[0](state.time) if callable(T_boundary[0]) else T_boundary[0]
@@ -896,16 +951,22 @@ def step(state, Ntarget, Nboundary, Nsource, NMax, T_boundary, dt, mesh,
     positions    = np.concatenate((positions,     internal_source[3]))
     cell_indices = np.concatenate((cell_indices,  internal_source[4]))
 
+    t_transport_start = time.perf_counter()
+
     # --- Transport ---
     weight_floor = 1e-10 * np.sum(weights) / max(len(weights), 1)
+    transport_stats = np.zeros(6, dtype=np.int64)
+    n_particles_transported = len(weights)
     if geometry == 'slab':
         deposited, scalar_intensity = move_particles(
             weights, mus, times, positions, cell_indices,
-            mesh, sigma_a, sigma_s, dt, reflect, weight_floor)
+            mesh, sigma_a, sigma_s, dt, reflect, transport_stats, weight_floor)
     else:
         deposited, scalar_intensity = move_particles_spherical(
             weights, mus, times, positions, cell_indices,
-            mesh, sigma_a, sigma_s, dt, reflect, weight_floor)
+            mesh, sigma_a, sigma_s, dt, reflect, transport_stats, weight_floor)
+
+    t_post_start = time.perf_counter()
 
     # --- Update material state ---
     emitted_energies = internal_source[5]
@@ -975,6 +1036,10 @@ def step(state, Ntarget, Nboundary, Nsource, NMax, T_boundary, dt, mesh,
     state.previous_total_energy = total_energy
     state.count                += 1
 
+    t_step_end = time.perf_counter()
+    events_total = int(transport_stats[0])
+    avg_events_per_particle = events_total / max(n_particles_transported, 1)
+
     info = {
         'time':                   new_time,
         'radiation_temperature':  radiation_temperature,
@@ -987,6 +1052,24 @@ def step(state, Ntarget, Nboundary, Nsource, NMax, T_boundary, dt, mesh,
         'boundary_loss':          boundary_loss,
         'source_emission':        source_emission,
         'energy_loss':            energy_loss,
+        'profiling': {
+            'phase_times_s': {
+                'sampling': t_transport_start - t_sampling_start,
+                'transport': t_post_start - t_transport_start,
+                'postprocess': t_step_end - t_post_start,
+                'total': t_step_end - t_step_start,
+            },
+            'transport_events': {
+                'total': events_total,
+                'boundary_crossings': int(transport_stats[1]),
+                'scatter_events': int(transport_stats[2]),
+                'census_events': int(transport_stats[3]),
+                'weight_floor_kills': int(transport_stats[4]),
+                'reflections': int(transport_stats[5]),
+                'avg_events_per_particle': avg_events_per_particle,
+                'n_particles_transported': int(n_particles_transported),
+            },
+        },
     }
     return state, info
 

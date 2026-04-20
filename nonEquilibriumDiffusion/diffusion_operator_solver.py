@@ -376,7 +376,7 @@ class DiffusionOperatorSolver1D:
         else:
             # Robin/Neumann BC: A·φ + B·(∂φ/∂n) = C
             # Use actual diffusion coefficient from matrix assembly
-            # For Marshak BC: B = 2D, A = 1/2, C = F_in
+            # For Marshak BC: A = 1/2, B = D, C = acT^4/2
             D_boundary = D_faces[0]
             
             flux_coeff = (self.A_faces[0] * D_boundary * A_bc) / (B_bc * self.V_cells[0])

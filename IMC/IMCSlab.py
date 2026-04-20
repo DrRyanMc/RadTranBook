@@ -74,17 +74,15 @@ def move_particle(weight, mu, position, cell_l, cell_r,sigma_a, sigma_s, distanc
     return weight, mu, position, new_location, deposited_weight, deposited_intensity, distance_to_census
     
 #this function loops over all particles and moves them to the next cell or census
-@jit(nopython=True, parallel=True)
+@jit(nopython=True, parallel=False)  # Disabled parallel due to control flow complexity
 def move_particles(weights, mus, times, positions, cell_indices, mesh, sigma_a, sigma_s, dt, refl):
     N = len(weights)
     n_cells = len(sigma_a)
-    # Per-thread accumulation arrays avoid race conditions on deposition
-    n_threads = get_num_threads()
-    dep_threads = np.zeros((n_threads, n_cells))
-    si_threads  = np.zeros((n_threads, n_cells))
+    # Direct accumulation arrays (no threading needed)
+    deposited_weights = np.zeros(n_cells)
+    scalar_intensity = np.zeros(n_cells)
 
-    for i in prange(N):
-        tid = get_thread_id()
+    for i in range(N):  # Changed from prange to range (non-parallel)
         distance_to_census = (dt - times[i]) * __c
 
         #move particle until it reaches census
@@ -106,8 +104,8 @@ def move_particles(weights, mus, times, positions, cell_indices, mesh, sigma_a, 
                 cell_indices[i] = cell_indices[i] + 1
             elif output[3] == -1:
                 cell_indices[i] = cell_indices[i] - 1
-            dep_threads[tid, loc] += output[4]
-            si_threads[tid, loc]  += output[5] / dt
+            deposited_weights[loc] += output[4]
+            scalar_intensity[loc]  += output[5] / dt
             distance_to_census = output[6]
             if cell_indices[i] == len(mesh):
                 if refl[1]:
@@ -124,13 +122,11 @@ def move_particles(weights, mus, times, positions, cell_indices, mesh, sigma_a, 
             if weights[i] < 1e-14:
                 loc = int(cell_indices[i])
                 if (loc > 0) and (loc < len(sigma_a) - 1):
-                    dep_threads[tid, loc] += weights[i] / (mesh[loc][1] - mesh[loc][0])
-                    si_threads[tid, loc]  += weights[i] / dt / sigma_a[loc] / (mesh[loc][1] - mesh[loc][0])
+                    deposited_weights[loc] += weights[i] / (mesh[loc][1] - mesh[loc][0])
+                    scalar_intensity[loc]  += weights[i] / dt / sigma_a[loc] / (mesh[loc][1] - mesh[loc][0])
                 weights[i] = 0.0
                 distance_to_census = 0.0
 
-    deposited_weights = dep_threads.sum(axis=0)
-    scalar_intensity  = si_threads.sum(axis=0)
     return deposited_weights, scalar_intensity
 
 def comb(weights, cell_indices, mus, times, positions, Ntarget, n_cells):

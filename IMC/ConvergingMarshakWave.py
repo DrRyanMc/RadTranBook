@@ -41,6 +41,11 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+# Add utils to path for plotting
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'utils'))
+from plotfuncs import show
 
 # =============================================================================
 # PHYSICAL CONSTANTS  (match IMC1D)
@@ -149,17 +154,35 @@ def T_analytic_keV(r, t_ns):
     T_HeV = T_ANALYTIC_AMP * (-t_ns)**T_ANALYTIC_EXP * _W(xi)**0.625
     return T_HeV / T_HEV_PER_KEV
 
+def _Lambda(xi):
+    """Λ(ξ) = ξ^0.6625 V(ξ) W^{-1}(ξ) for Test 3 (equation 8.88)."""
+    W_val = _W_scalar(xi)
+    V_val = _V_scalar(xi)
+    if W_val < 1e-30:
+        return 0.0
+    return (xi) * V_val * (W_val ** (-1.5))
 
 def T_bath_keV(t_ns):
-    """Bath (outer boundary) temperature [keV] from self-similar solution.
+    """Bath (outer boundary) temperature [keV] from equation (8.88).
     
-    T_bath = T_AMP * (-t)^T_EXP * W(ξ_R)^0.625 * V(ξ_R)
-    where ξ_R = (r / 0.1R) / (-t)^δ
+    T_bath(t) = [1 + 0.075821 Λ(ξ_R(t)) (-t/ns)^{-0.316092}]^{1/4} T_s(t)
+    
+    where Λ(ξ) = ξ^0.6625 V(ξ) W^{-1}(ξ)
     """
     t_clamped = max(float(t_ns), -1e30)  # ensure negative
-    xi_R = (R / (R / 10.0)) / (-t_clamped)**DELTA
-    T_HeV = T_ANALYTIC_AMP * (-t_clamped)**T_ANALYTIC_EXP * _W_scalar(xi_R)**0.625 * _V_scalar(xi_R)
-    return max(float(T_HeV) / T_HEV_PER_KEV, 1e-8)
+    xi_R = (R / 1e-4) / (-t_clamped)**DELTA
+    
+    # Surface temperature (interior solution at r=R)
+    T_s_HeV = T_ANALYTIC_AMP * (-t_clamped)**T_ANALYTIC_EXP * _W_scalar(xi_R)**(5/8)
+    T_s_keV = T_s_HeV / T_HEV_PER_KEV
+    
+    # Compute bath temperature correction
+    Lambda_R = _Lambda(xi_R)
+    correction = 1.0 + 0.103502 * Lambda_R * (-t_clamped) ** (-0.541423)
+    correction = max(correction, 0.0) ** 0.25  # [...]^{1/4}
+    
+    return max(T_s_keV * correction, 1e-8)
+
 
 # =============================================================================
 # TIME-DEPENDENT OUTER BOUNDARY TEMPERATURE
@@ -279,12 +302,12 @@ def plot_results(snapshots, save_prefix='converging_marshak_wave_imc'):
     ax.set_xlabel(r'$r$ ($\mu$m)')
     ax.set_ylabel(r'$T$ (keV)')
     ax.set_xlim([0, R / 1e-4])
-    ax.set_title('Converging Marshak Wave — IMC  (temperature)')
-    ax.legend(fontsize=8, loc='upper left')
+    #ax.set_title('Converging Marshak Wave — IMC  (temperature)')
+    #ax.legend(fontsize=8, loc='upper left')
     ax.grid(alpha=0.3)
     plt.tight_layout()
-    fname = f'{save_prefix}_T.png'
-    plt.savefig(fname, dpi=150)
+    fname = f'{save_prefix}_T.pdf'
+    show(fname,close_after=True)
     print(f'Saved: {fname}')
     plt.close()
 
@@ -294,20 +317,21 @@ def plot_results(snapshots, save_prefix='converging_marshak_wave_imc'):
     for (t_snap, T_mid, r_mid), col in zip(snapshots, colors):
         label = f't = {t_snap:.2f} ns'
         u_sim = eos(T_mid) * 1e3   # 10^13 erg/cm³
-        ax.plot(r_mid / 1e-4, u_sim, color=col, lw=2, label=label)
+        ax.plot(r_mid / 1e-4, u_sim/1e3, color=col, lw=2, label=label)
         T_ref = np.vectorize(lambda r: T_analytic_keV(r, t_snap))(r_anal)
         u_ref = eos(T_ref) * 1e3
-        ax.plot(r_anal / 1e-4, u_ref, color=col, lw=1.5, ls='--',
+        ax.plot(r_anal / 1e-4, u_ref/1e3, color=col, lw=1.5, ls='--',
                 label=f'analytic ({label})')
     ax.set_xlabel(r'$r$ ($\mu$m)')
-    ax.set_ylabel(r'$e(T)$  ($10^{13}$ erg/cm$^3$)')
+    
+    ax.set_ylabel(r'$e(T)$ (GJ/cm$^3$)')#ax.set_ylabel(r'$e(T)$  ($10^{13}$ erg/cm$^3$)')
     ax.set_xlim([0, R / 1e-4])
-    ax.set_title('Converging Marshak Wave — IMC  (energy density)')
-    ax.legend(fontsize=8, loc='upper left')
+    #ax.set_title('Converging Marshak Wave — IMC  (energy density)')
+    #ax.legend(fontsize=8, loc='upper left')
     ax.grid(alpha=0.3)
     plt.tight_layout()
-    fname = f'{save_prefix}_u.png'
-    plt.savefig(fname, dpi=150)
+    fname = f'{save_prefix}_u.pdf'
+    show(fname,close_after=True)
     print(f'Saved: {fname}')
     plt.close()
 

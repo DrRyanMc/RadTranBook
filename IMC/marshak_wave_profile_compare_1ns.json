@@ -1,0 +1,69 @@
+{
+  "case": {
+    "cells": 50,
+    "domain_cm": 0.2,
+    "dt_ns": 0.025,
+    "event_cap_per_particle": 0,
+    "fastpath_threshold": 0.0,
+    "n_boundary": 10000,
+    "n_max": 40000,
+    "n_target": 10000,
+    "t_final_ns": 1.0
+  },
+  "cf": {
+    "avg_events_per_particle_overall": 29.154239652567522,
+    "event_totals": {
+      "absorption_capture_events": 1128256,
+      "absorption_continue_events": 52692537,
+      "boundary_crossings": 14032178,
+      "census_events": 110168,
+      "event_cap_hits": 0,
+      "n_particles_transported": 2331158,
+      "reflections": 0,
+      "total": 67963139,
+      "weight_floor_kills": 10000
+    },
+    "final_particles": 40011,
+    "final_time": 1.0,
+    "final_total_energy": 0.011428256466846882,
+    "method": "CF",
+    "phase_totals_s": {
+      "postprocess": 2.215685240982566,
+      "sampling": 0.294098592014052,
+      "total": 7.241335024016735,
+      "transport": 4.730065080017084
+    },
+    "steps": 40,
+    "wall_s": 7.253435118997004
+  },
+  "fc": {
+    "avg_events_per_particle_overall": 183.24037503152283,
+    "event_totals": {
+      "boundary_crossings": 62555326,
+      "census_events": 382650,
+      "n_particles_transported": 2331644,
+      "reflections": 0,
+      "scatter_events": 364313345,
+      "total": 427251321,
+      "weight_floor_kills": 442483
+    },
+    "final_particles": 39980,
+    "final_time": 1.0,
+    "final_total_energy": 0.013511371911997075,
+    "method": "FC",
+    "phase_totals_s": {
+      "postprocess": 1.786419800017029,
+      "sampling": 0.07368241298536304,
+      "total": 16.942599409027025,
+      "transport": 15.079742463007278
+    },
+    "steps": 40,
+    "wall_s": 16.950405291994684
+  },
+  "ratios": {
+    "avg_events_per_particle": 0.15910379820796655,
+    "total_events": 0.15907063514965702,
+    "transport_phase": 0.31367014997905945,
+    "wall": 0.42792104342322995
+  }
+}

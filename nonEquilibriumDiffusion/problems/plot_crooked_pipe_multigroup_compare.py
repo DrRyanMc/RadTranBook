@@ -92,7 +92,9 @@ def _plot_combined_panel(ax, datasets, quantity, point_labels):
                 markevery=max(1, len(times) // 15),
                 alpha=0.85,
             )
-
+    #set x lower limit to be 0.01 ns (10 ps) to avoid cluttering the plot with very early time points
+    if (np.min(T)> 5e-3):
+        ax.set_xlim(left=0.05)
     # Invisible lines for the linestyle/run legend
     for ds_idx, (run_label, _, _) in enumerate(datasets):
         ls = _LINESTYLES[ds_idx % len(_LINESTYLES)]

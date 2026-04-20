@@ -659,8 +659,8 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
             plt.plot([z, z],[0, 2],  color='black', linewidth=0.25, alpha=0.5)
         plt.xlim(0, 7)
         plt.ylim(0, 2)
-        plt.xlabel('r (cm)', fontsize=12)
-        plt.ylabel('z (cm)', fontsize=12)
+        plt.xlabel('z (cm)', fontsize=12)
+        plt.ylabel('r (cm)', fontsize=12)
         #plt.title(f'Refined Mesh for Crooked Pipe Nr = {len(r_faces)-1}, Nz = {len(z_faces)-1}', fontsize=14, fontweight='bold')
         plt.gca().set_aspect('equal')
         plt.tight_layout()
@@ -879,4 +879,4 @@ def main(output_times=None, use_refined_mesh=False, dt_initial=1e-3, dt_max=10.0
 if __name__ == "__main__":
     solver = main(output_times=[1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 
                                 200.0, 500.0, 1000.0], 
-                  use_refined_mesh=False)#, 2.0, 5.0, 10.0])
+                  use_refined_mesh=True)#, 2.0, 5.0, 10.0])

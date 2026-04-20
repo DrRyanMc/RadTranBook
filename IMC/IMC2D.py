@@ -57,6 +57,10 @@ _CROSS_I_MINUS = 2
 _CROSS_J_PLUS = 3
 _CROSS_J_MINUS = 4
 
+_EVT_CENSUS = 0
+_EVT_BOUNDARY = 1
+_EVT_SCATTER = 2
+
 
 @dataclass
 class SimulationState2D:
@@ -150,12 +154,19 @@ def _boundary_temperature_value(Tb, t):
     return Tb(t) if callable(Tb) else Tb
 
 
-def _sample_boundary_xy(n, side, T, dt, x_edges, y_edges):
+def _sample_boundary_xy(n, side, T, dt, x_edges, y_edges, boundary_source_func=None):
     """Half-Lambertian boundary source for Cartesian geometry.
 
     side in {'left', 'right', 'bottom', 'top'}
+    
+    boundary_source_func: optional callable(x, y, side) -> float
+        Returns temperature (keV) at position (x, y) on given side.
+        If None, uses uniform temperature T.
     """
-    if n <= 0 or T <= 0.0:
+    if n <= 0:
+        return None
+    
+    if T <= 0.0 and boundary_source_func is None:
         return None
 
     x0 = x_edges[0]
@@ -168,6 +179,108 @@ def _sample_boundary_xy(n, side, T, dt, x_edges, y_edges):
     else:
         area = x1 - x0
 
+    # If boundary_source_func is provided, sample from cells with position-dependent temperature
+    if boundary_source_func is not None:
+        # Identify which boundary cells should emit and at what temperature
+        if side in ("left", "right"):
+            # For left/right boundaries, cells are indexed by y
+            X = x0 if side == "left" else x1
+            y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+            
+            # Get temperature for each y-cell
+            cell_temps = np.array([boundary_source_func(X, y_c, side) for y_c in y_centers])
+            emit_mask = cell_temps > 0.0
+            
+            if not np.any(emit_mask):
+                return None  # No cells should emit
+            
+            # Calculate emission from each cell (proportional to length * T^4)
+            dy = np.diff(y_edges)
+            cell_lengths = dy[emit_mask]
+            cell_temps_emit = cell_temps[emit_mask]
+            cell_emissions = __a * __c * cell_temps_emit**4 / 4.0 * cell_lengths * dt
+            total_emission = np.sum(cell_emissions)
+            
+            # Distribute particles proportional to cell emission
+            cell_fractions = cell_emissions / total_emission
+            n_per_cell = np.random.multinomial(n, cell_fractions)
+            
+            # Sample positions within each emitting cell
+            x_all = []
+            y_all = []
+            for idx, (emit_idx, n_cell) in enumerate(zip(np.where(emit_mask)[0], n_per_cell)):
+                if n_cell > 0:
+                    x_all.append(np.full(n_cell, X + (1e-12 if side == "left" else -1e-12)))
+                    y_all.append(np.random.uniform(y_edges[emit_idx], y_edges[emit_idx + 1], n_cell))
+            
+            if len(x_all) == 0:
+                return None
+            
+            x = np.concatenate(x_all)
+            y = np.concatenate(y_all)
+            
+        else:  # bottom or top
+            # For bottom/top boundaries, cells are indexed by x
+            Y = y0 if side == "bottom" else y1
+            x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+            
+            # Get temperature for each x-cell
+            cell_temps = np.array([boundary_source_func(x_c, Y, side) for x_c in x_centers])
+            emit_mask = cell_temps > 0.0
+            
+            if not np.any(emit_mask):
+                return None  # No cells should emit
+            
+            # Calculate emission from each cell (proportional to length * T^4)
+            dx = np.diff(x_edges)
+            cell_lengths = dx[emit_mask]
+            cell_temps_emit = cell_temps[emit_mask]
+            cell_emissions = __a * __c * cell_temps_emit**4 / 4.0 * cell_lengths * dt
+            total_emission = np.sum(cell_emissions)
+            
+            # Distribute particles proportional to cell emission
+            cell_fractions = cell_emissions / total_emission
+            n_per_cell = np.random.multinomial(n, cell_fractions)
+            
+            # Sample positions within each emitting cell
+            x_all = []
+            y_all = []
+            for idx, (emit_idx, n_cell) in enumerate(zip(np.where(emit_mask)[0], n_per_cell)):
+                if n_cell > 0:
+                    x_all.append(np.random.uniform(x_edges[emit_idx], x_edges[emit_idx + 1], n_cell))
+                    y_all.append(np.full(n_cell, Y + (1e-12 if side == "bottom" else -1e-12)))
+            
+            if len(x_all) == 0:
+                return None
+            
+            x = np.concatenate(x_all)
+            y = np.concatenate(y_all)
+        
+        # Sample directions
+        n_actual = len(x)
+        weights = np.full(n_actual, total_emission / n_actual)
+        times = np.random.uniform(0.0, dt, n_actual)
+        
+        mu_n = np.sqrt(np.random.uniform(0.0, 1.0, n_actual))
+        mu_t = np.sqrt(np.maximum(0.0, 1.0 - mu_n * mu_n))
+        phi  = np.random.uniform(0.0, 2.0 * np.pi, n_actual)
+
+        if side == "left":
+            ux = mu_n
+            uy = mu_t * np.cos(phi)
+        elif side == "right":
+            ux = -mu_n
+            uy = mu_t * np.cos(phi)
+        elif side == "bottom":
+            uy = mu_n
+            ux = mu_t * np.cos(phi)
+        elif side == "top":
+            uy = -mu_n
+            ux = mu_t * np.cos(phi)
+        
+        return weights, ux, uy, times, x, y
+    
+    # Original uniform sampling if no boundary_source_func
     total_emission = __a * __c * T**4 / 4.0 * area * dt
     weights = np.full(n, total_emission / n)
     times = np.random.uniform(0.0, dt, n)
@@ -206,12 +319,21 @@ def _sample_boundary_xy(n, side, T, dt, x_edges, y_edges):
     return weights, ux, uy, times, x, y
 
 
-def _sample_boundary_rz(n, side, T, dt, r_edges, z_edges):
+def _sample_boundary_rz(n, side, T, dt, r_edges, z_edges, boundary_source_func=None):
     """Boundary source for cylindrical r-z geometry.
 
     side in {'rmin','rmax','zmin','zmax'}
+    boundary_source_func: optional callable(r, z, side) -> float
+        If provided, returns temperature (keV) for emission at position (r, z).
+        Return 0.0 or negative for no emission. Overrides T parameter.
+        Allows position-dependent boundary temperatures.
+        Particles are distributed among emitting cells proportional to area * T^4.
+        For zmin/zmax: cells are annular rings at different radii.
+        For rmin/rmax: cells are axial segments at different z.
     """
-    if n <= 0 or T <= 0.0:
+    if n <= 0:
+        return None
+    if T <= 0.0 and boundary_source_func is None:
         return None
 
     r0 = r_edges[0]
@@ -225,6 +347,111 @@ def _sample_boundary_rz(n, side, T, dt, r_edges, z_edges):
     else:
         area = np.pi * (r1 * r1 - r0 * r0)
 
+    # If boundary_source_func is provided, sample from cells with position-dependent temperature
+    if boundary_source_func is not None:
+        # Identify which boundary cells should emit and at what temperature
+        if side in ("rmin", "rmax"):
+            # For radial boundaries, cells are indexed by z
+            R = r0 if side == "rmin" else r1
+            z_centers = 0.5 * (z_edges[:-1] + z_edges[1:])
+            
+            # Get temperature for each z-cell
+            cell_temps = np.array([boundary_source_func(R, z_c, side) for z_c in z_centers])
+            emit_mask = cell_temps > 0.0
+            
+            if not np.any(emit_mask):
+                return None  # No cells should emit
+            
+            # Calculate emission from each cell (proportional to area * T^4)
+            dz = np.diff(z_edges)
+            cell_areas = 2.0 * np.pi * R * dz[emit_mask]
+            cell_temps_emit = cell_temps[emit_mask]
+            cell_emissions = __a * __c * cell_temps_emit**4 / 4.0 * cell_areas * dt
+            total_emission = np.sum(cell_emissions)
+            
+            # Distribute particles proportional to cell emission
+            cell_fractions = cell_emissions / total_emission
+            n_per_cell = np.random.multinomial(n, cell_fractions)
+            
+            # Sample positions within each emitting cell
+            r_all = []
+            z_all = []
+            for idx, (emit_idx, n_cell) in enumerate(zip(np.where(emit_mask)[0], n_per_cell)):
+                if n_cell > 0:
+                    r_all.append(np.full(n_cell, R + (1e-12 if side == "rmin" else -1e-12)))
+                    z_all.append(np.random.uniform(z_edges[emit_idx], z_edges[emit_idx + 1], n_cell))
+            
+            if len(r_all) == 0:
+                return None
+            
+            r = np.concatenate(r_all)
+            z = np.concatenate(z_all)
+            
+        else:  # zmin or zmax
+            # For z boundaries, cells are indexed by r (annular rings)
+            Z = z0 if side == "zmin" else z1
+            r_centers = 0.5 * (r_edges[:-1] + r_edges[1:])
+            
+            # Get temperature for each r-cell
+            cell_temps = np.array([boundary_source_func(r_c, Z, side) for r_c in r_centers])
+            emit_mask = cell_temps > 0.0
+            
+            if not np.any(emit_mask):
+                return None  # No cells should emit
+            
+            # Calculate emission from each cell (proportional to area * T^4)
+            r_inner = r_edges[:-1][emit_mask]
+            r_outer = r_edges[1:][emit_mask]
+            cell_areas = np.pi * (r_outer**2 - r_inner**2)
+            cell_temps_emit = cell_temps[emit_mask]
+            cell_emissions = __a * __c * cell_temps_emit**4 / 4.0 * cell_areas * dt
+            total_emission = np.sum(cell_emissions)
+            
+            # Distribute particles proportional to cell emission
+            cell_fractions = cell_emissions / total_emission
+            n_per_cell = np.random.multinomial(n, cell_fractions)
+            
+            # Sample positions within each emitting cell (uniform in annular ring)
+            r_all = []
+            z_all = []
+            for idx, (emit_idx, n_cell) in enumerate(zip(np.where(emit_mask)[0], n_per_cell)):
+                if n_cell > 0:
+                    r_in = r_edges[emit_idx]
+                    r_out = r_edges[emit_idx + 1]
+                    # Sample radius uniformly in annular area: r = sqrt(r_in^2 + xi*(r_out^2 - r_in^2))
+                    xi = np.random.uniform(0.0, 1.0, n_cell)
+                    r_all.append(np.sqrt(r_in**2 + xi * (r_out**2 - r_in**2)))
+                    z_all.append(np.full(n_cell, Z + (1e-12 if side == "zmin" else -1e-12)))
+            
+            if len(r_all) == 0:
+                return None
+            
+            r = np.concatenate(r_all)
+            z = np.concatenate(z_all)
+        
+        # Total emission already calculated above
+        n_actual = len(r)
+        weights = np.full(n_actual, total_emission / n_actual)
+        times = np.random.uniform(0.0, dt, n_actual)
+        
+        # Sample directions
+        eta = np.random.uniform(-1.0, 1.0, n_actual)
+        mu_abs = np.sqrt(np.random.uniform(0.0, 1.0, n_actual))
+        
+        if side == "rmin":
+            mu = mu_abs
+        elif side == "rmax":
+            mu = -mu_abs
+        elif side == "zmin":
+            eta = np.sqrt(np.random.uniform(0.0, 1.0, n_actual))
+            mu = np.cos(2.0 * np.pi * np.random.uniform(0.0, 1.0, n_actual))
+        elif side == "zmax":
+            eta = -np.sqrt(np.random.uniform(0.0, 1.0, n_actual))
+            mu = np.cos(2.0 * np.pi * np.random.uniform(0.0, 1.0, n_actual))
+        
+        return weights, mu, eta, times, r, z
+    
+    # Original uniform sampling if no boundary_source_func
     total_emission = __a * __c * T**4 / 4.0 * area * dt
     weights = np.full(n, total_emission / n)
     times = np.random.uniform(0.0, dt, n)
@@ -545,13 +772,15 @@ def _move_particle_xy_jit(weight, ux, uy, x, y, i, j, x_edges, y_edges, sigma_a,
         s_event = distance_to_census
 
     if s_event <= 0.0:
-        return weight, ux, uy, x, y, _CROSS_NONE, 0.0, 0.0, 0.0
+        return weight, ux, uy, x, y, _CROSS_NONE, 0.0, 0.0, 0.0, _EVT_CENSUS
 
     x_new = x + ux * s_event
     y_new = y + uy * s_event
 
     crossed = _CROSS_NONE
+    evt = _EVT_CENSUS
     if abs(s_event - s_boundary) < 1e-11:
+        evt = _EVT_BOUNDARY
         if sx <= sy:
             if ux > 0.0:
                 x_new = x_r
@@ -567,6 +796,7 @@ def _move_particle_xy_jit(weight, ux, uy, x, y, i, j, x_edges, y_edges, sigma_a,
                 y_new = y_l
                 crossed = _CROSS_J_MINUS
     elif s_event == s_scatter:
+        evt = _EVT_SCATTER
         ux, uy = _sample_isotropic_xy_single()
 
     distance_to_census -= s_event
@@ -589,6 +819,7 @@ def _move_particle_xy_jit(weight, ux, uy, x, y, i, j, x_edges, y_edges, sigma_a,
         deposited_weight,
         deposited_intensity,
         distance_to_census,
+        evt,
     )
 
 
@@ -636,7 +867,7 @@ def _move_particle_rz_jit(weight, mu_perp, eta, r, z, i, j, r_edges, z_edges, si
         s_event = distance_to_census
 
     if s_event <= 0.0:
-        return weight, mu_perp, eta, r, z, _CROSS_NONE, 0.0, 0.0, 0.0
+        return weight, mu_perp, eta, r, z, _CROSS_NONE, 0.0, 0.0, 0.0, _EVT_CENSUS
 
     one_minus_eta2 = 1.0 - eta * eta
     if one_minus_eta2 < 0.0:
@@ -660,7 +891,9 @@ def _move_particle_rz_jit(weight, mu_perp, eta, r, z, i, j, r_edges, z_edges, si
     eta_new = eta
 
     crossed = _CROSS_NONE
+    evt = _EVT_CENSUS
     if abs(s_event - s_boundary) < 1e-11:
+        evt = _EVT_BOUNDARY
         if s_boundary == s_r_in:
             # Nudge just inside new cell to prevent near-tangential ping-pong.
             r_new = r_in * (1.0 - 1e-12) if r_in > 0.0 else 1e-12
@@ -675,6 +908,7 @@ def _move_particle_rz_jit(weight, mu_perp, eta, r, z, i, j, r_edges, z_edges, si
             z_new = z_hi
             crossed = _CROSS_J_PLUS
     elif s_event == s_scatter:
+        evt = _EVT_SCATTER
         mu_new, eta_new = _sample_isotropic_rz_single()
 
     distance_to_census -= s_event
@@ -697,6 +931,7 @@ def _move_particle_rz_jit(weight, mu_perp, eta, r, z, i, j, r_edges, z_edges, si
         deposited_weight,
         deposited_intensity,
         distance_to_census,
+        evt,
     )
 
 
@@ -727,6 +962,7 @@ def _transport_particles_2d(
     dep_threads = np.zeros((n_threads, nx, ny))
     si_threads  = np.zeros((n_threads, nx, ny))
     bl_threads  = np.zeros(n_threads)
+    stats_threads = np.zeros((n_threads, 8), dtype=np.int64)
 
     for k in prange(n):
         tid = get_thread_id()
@@ -734,7 +970,9 @@ def _transport_particles_2d(
         events = 0
         while dcen > 0.0:
             events += 1
+            stats_threads[tid, 0] += 1
             if events > max_events_per_particle:
+                stats_threads[tid, 7] += 1
                 dcen = 0.0
                 break
 
@@ -787,7 +1025,15 @@ def _transport_particles_2d(
                 dep_w,
                 dep_i,
                 dcen,
+                evt,
             ) = out
+
+            if evt == _EVT_BOUNDARY:
+                stats_threads[tid, 1] += 1
+            elif evt == _EVT_SCATTER:
+                stats_threads[tid, 2] += 1
+            else:
+                stats_threads[tid, 3] += 1
 
             vol = volumes[i, j]
             dep_threads[tid, i, j] += dep_w / vol
@@ -797,6 +1043,7 @@ def _transport_particles_2d(
             if w_new <= weight_floor:
                 # Weight dropped to/below floor (fully absorbed or negligible);
                 # deposit remainder and stop.
+                stats_threads[tid, 5] += 1
                 break
             dir1[k] = d1_new
             dir2[k] = d2_new
@@ -820,6 +1067,7 @@ def _transport_particles_2d(
                     if reflect[0]:
                         dir1[k] = -dir1[k]
                         cell_i[k] = 0
+                        stats_threads[tid, 6] += 1
                     else:
                         bl_threads[tid] += weights[k]
                         weights[k] = 0.0
@@ -828,6 +1076,7 @@ def _transport_particles_2d(
                     if reflect[1]:
                         dir1[k] = -dir1[k]
                         cell_i[k] = nx - 1
+                        stats_threads[tid, 6] += 1
                     else:
                         bl_threads[tid] += weights[k]
                         weights[k] = 0.0
@@ -836,6 +1085,7 @@ def _transport_particles_2d(
                     if reflect[2]:
                         dir2[k] = -dir2[k]
                         cell_j[k] = 0
+                        stats_threads[tid, 6] += 1
                     else:
                         bl_threads[tid] += weights[k]
                         weights[k] = 0.0
@@ -844,6 +1094,7 @@ def _transport_particles_2d(
                     if reflect[3]:
                         dir2[k] = -dir2[k]
                         cell_j[k] = ny - 1
+                        stats_threads[tid, 6] += 1
                     else:
                         bl_threads[tid] += weights[k]
                         weights[k] = 0.0
@@ -853,7 +1104,7 @@ def _transport_particles_2d(
                 weights[k] = 0.0
                 dcen = 0.0
 
-    return dep_threads.sum(axis=0), si_threads.sum(axis=0), bl_threads.sum()
+    return dep_threads.sum(axis=0), si_threads.sum(axis=0), bl_threads.sum(), stats_threads.sum(axis=0)
 
 
 def _equilibrium_sample_xy(N, Tr, x_edges, y_edges):
@@ -1358,6 +1609,7 @@ def step(
     geometry="xy",
     rz_linear_source=True,
     max_events_per_particle=1_000_000,
+    boundary_source_func=None,
     _timing=False,
 ):
     """Advance one 2D IMC step for geometry='xy' or 'rz'.
@@ -1366,6 +1618,13 @@ def step(
       (left/min-1, right/max-1, bottom/min-2, top/max-2)
     For rz this maps to:
       (rmin, rmax, zmin, zmax)
+    
+    boundary_source_func: optional callable(r_or_x, z_or_y, side) -> float
+        For 'rz' geometry only. Returns boundary temperature (keV) at position.
+        Called with (r, z, side) where side is 'rmin', 'rmax', 'zmin', or 'zmax'.
+        Return value > 0.0 to emit at that temperature, 0.0 for no emission.
+        Enables position-dependent boundary temperatures (e.g., spatially-varying sources).
+        When provided, overrides T_boundary for that boundary side.
     """
     nx, ny = _shape_from_edges(edges1, edges2)
     volumes = _cell_volumes(edges1, edges2, geometry)
@@ -1380,6 +1639,8 @@ def step(
     cell_j = state.cell_j
     internal_energy = state.internal_energy
     temperature = state.temperature
+
+    t_step_start = _time.perf_counter()
 
     _t0 = _time.perf_counter() if _timing else 0.0
     sigma_a_true = sigma_a_func(temperature)
@@ -1405,7 +1666,7 @@ def step(
                 ("bottom", b_bottom),
                 ("top", b_top),
             ):
-                s = _sample_boundary_xy(Nboundary, side, Tb, dt, edges1, edges2)
+                s = _sample_boundary_xy(Nboundary, side, Tb, dt, edges1, edges2, boundary_source_func)
                 if s is None:
                     continue
                 w, d1, d2, t, p1, p2 = s
@@ -1426,7 +1687,7 @@ def step(
                 ("zmin", b_bottom),
                 ("zmax", b_top),
             ):
-                s = _sample_boundary_rz(Nboundary, side, Tb, dt, edges1, edges2)
+                s = _sample_boundary_rz(Nboundary, side, Tb, dt, edges1, edges2, boundary_source_func)
                 if s is None:
                     continue
                 w, d1, d2, t, p1, p2 = s
@@ -1504,9 +1765,16 @@ def step(
 
     if _timing: print(f"  [step/{geometry}] emission_sample: {_time.perf_counter()-_t0:.3f}s  N={len(weights)}", flush=True); _t0 = _time.perf_counter()
     # Transport particles with JIT-compiled kernel.
+    t_transport_start = _time.perf_counter()
+    n_particles_transported = len(weights)
     geometry_code = _GEOM_XY if geometry == "xy" else _GEOM_RZ
     weight_floor = 1e-10 * float(np.sum(weights)) / max(len(weights), 1)
-    dep_cell, si_cell, boundary_loss = _transport_particles_2d(
+    
+    # Report thread count on first step
+    if state.count == 0:
+        print(f"[IMC2D FC] Using {get_num_threads()} threads for transport")
+    
+    dep_cell, si_cell, boundary_loss, stats = _transport_particles_2d(
         weights,
         dir1,
         dir2,
@@ -1526,6 +1794,7 @@ def step(
         geometry_code,
         weight_floor,
     )
+    t_post_start = _time.perf_counter()
 
     if _timing: print(f"  [step/{geometry}] transport: {_time.perf_counter()-_t0:.3f}s", flush=True); _t0 = _time.perf_counter()
     # Material/radiation update.
@@ -1587,6 +1856,10 @@ def step(
     state.previous_total_energy = total_energy
     state.count += 1
 
+    t_end = _time.perf_counter()
+    events_total = int(stats[0])
+    n_transported = max(int(n_particles_transported), 1)
+
     info = {
         "time": state.time,
         "temperature": temperature,
@@ -1599,6 +1872,26 @@ def step(
         "boundary_loss": boundary_loss,
         "source_emission": source_emission,
         "energy_loss": energy_loss,
+        "profiling": {
+            "phase_times_s": {
+                "sampling": t_transport_start - t_step_start,
+                "transport": t_post_start - t_transport_start,
+                "postprocess": t_end - t_post_start,
+                "total": t_end - t_step_start,
+            },
+            "transport_events": {
+                "total": events_total,
+                "boundary_crossings": int(stats[1]),
+                "absorption_continue_events": int(stats[2]),
+                "census_events": int(stats[3]),
+                "absorption_capture_events": int(stats[4]),
+                "weight_floor_kills": int(stats[5]),
+                "reflections": int(stats[6]),
+                "event_cap_hits": int(stats[7]),
+                "avg_events_per_particle": events_total / n_transported,
+                "n_particles_transported": int(n_transported),
+            },
+        },
     }
 
     return state, info

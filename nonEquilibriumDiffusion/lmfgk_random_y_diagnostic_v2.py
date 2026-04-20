@@ -18,7 +18,7 @@ Edit the solver import below if you've renamed the module.
 
 import numpy as np
 
-import multigroup_diffusion_solver_patched_lmfgk as mg
+import multigroup_diffusion_solver as mg
 from diffusion_operator_solver import DiffusionOperatorSolver1D, C_LIGHT
 
 

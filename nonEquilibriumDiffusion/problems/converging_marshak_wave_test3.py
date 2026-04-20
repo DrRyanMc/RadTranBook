@@ -257,7 +257,7 @@ def plot_results(solutions, save_prefix='converging_marshak_wave_test3'):
     ticks = np.linspace(0, R / 1e-4, 11)
     ax.set_xticks(ticks)
     ax.set_xticklabels([f'{t:g}' for t in ticks])
-    ax.legend(fontsize=9, loc='upper left')
+    #ax.legend(fontsize=9, loc='upper left')
     ax.grid(alpha=0.3)
     plt.tight_layout()
     outfile = f'{save_prefix}_T.pdf'
@@ -273,17 +273,17 @@ def plot_results(solutions, save_prefix='converging_marshak_wave_test3'):
         rho_cells = rho_r(np.maximum(r_cm, 1e-30))
         u_sim = test3_material_energy(sol['T_keV'], r_cm) * 1e3   # ×10¹³ erg/cm³
         t_label = f't = {t_ns:.2f} ns'
-        ax.plot(r_cm / 1e-4, u_sim, color=col, lw=2, label=t_label)
+        ax.plot(r_cm / 1e-4, u_sim/1e3, color=col, lw=2, label=t_label)
         u_ref = u_analytic_per_1e13(r_anal, t_ns)
-        ax.plot(r_anal / 1e-4, u_ref, color=col, lw=1.5, ls='--',
+        ax.plot(r_anal / 1e-4, u_ref/1e3, color=col, lw=1.5, ls='--',
                 label=f'analytic ({t_label})')
     ax.set_xlabel(r'$r$ ($\mu$m)')
-    ax.set_ylabel(r'$u$ ($10^{13}$ erg/cm$^3$)')
-    ax.set_ylim(ymin=0, ymax=45)
+    ax.set_ylabel(r'$e(T)$ (GJ/cm$^3$)')
+    ax.set_ylim(ymin=0, ymax=45/1e3)
     ticks = np.linspace(0, R / 1e-4, 11)
     ax.set_xticks(ticks)
     ax.set_xticklabels([f'{t:g}' for t in ticks])
-    ax.legend(fontsize=9, loc='upper left')
+    #ax.legend(fontsize=9, loc='upper left')
     ax.grid(alpha=0.3)
     plt.tight_layout()
     outfile = f'{save_prefix}_u.pdf'
@@ -348,7 +348,7 @@ def run(n_cells=200, dt_initial=0.0001, dt_max=0.5, dt_growth=1.05,
         inverse_material_energy_func=test3_inverse_material_energy,
         left_bc_func=left_bc,
         right_bc_func=right_bc,
-        theta=1.0,
+        theta=1.0
     )
 
     # Uniform cold initial condition
@@ -381,7 +381,7 @@ def run(n_cells=200, dt_initial=0.0001, dt_max=0.5, dt_growth=1.05,
         t_end_ns = T_INIT_NS + phys_elapsed + dt_step
         _t_phys_ns_state[0] = t_end_ns
 
-        solver.time_step(n_steps=1, verbose=False)
+        solver.time_step_trbdf2(n_steps=1, verbose=False)
         phys_elapsed += dt_step
 
         if step % 50 == 0 or step <= 3:
@@ -416,8 +416,8 @@ def run(n_cells=200, dt_initial=0.0001, dt_max=0.5, dt_growth=1.05,
 
 if __name__ == "__main__":
     solver, solutions = run(
-        n_cells=200,
-        dt_initial=0.0001,
+        n_cells=100,
+        dt_initial=0.001,
         dt_max=0.01,
         dt_growth=1.05,
     )
