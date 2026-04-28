@@ -1,3 +1,4 @@
 *.pdf
 *.png
+*.npz
 human_play_data.pkl
