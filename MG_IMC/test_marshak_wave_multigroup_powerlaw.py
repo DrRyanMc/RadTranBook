@@ -38,6 +38,9 @@ def _planck_group_integral(E_low, E_high, T):
     nquad = 80
     E = np.linspace(E_low, E_high, nquad)
     B_E = (2.0 * E**3 / C_LIGHT**2) / (np.exp(E / T) - 1.0 + 1e-300)
+    # NumPy compatibility: newer builds may only expose trapezoid.
+    if hasattr(np, "trapezoid"):
+        return np.trapezoid(B_E, E)
     return np.trapz(B_E, E)
 
 
