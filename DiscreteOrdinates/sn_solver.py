@@ -116,6 +116,40 @@ def _get_matrices(order, hx):
     return _mk_cache[key]
 
 
+def build_reflecting_BCs(bcs, psi_old, reflect_left, reflect_right, N, order):
+    """Populate incoming boundary states from mirrored outgoing angular flux.
+
+    Parameters
+    ----------
+    bcs : ndarray (N, order+1)
+        Boundary coefficients to modify in-place and return.
+    psi_old : ndarray (I, N, order+1)
+        Previous-step angular flux coefficients.
+    reflect_left, reflect_right : bool
+        Enable reflecting boundary condition on each side.
+    N : int
+        Number of angles.
+    order : int
+        Bernstein order.
+    """
+    nop1 = order + 1
+    MU, _ = _get_quadrature(N)
+
+    # Gauss-Legendre nodes are symmetric, so opposite directions are paired.
+    for n in range(N):
+        n_reflect = N - 1 - n
+        if reflect_left and MU[n] > 0.0:
+            # Incoming (+mu) at left uses outgoing (-mu) value at x_left.
+            val = psi_old[0, n_reflect, 0]
+            bcs[n, nop1 - 1] = val
+        elif reflect_right and MU[n] < 0.0:
+            # Incoming (-mu) at right uses outgoing (+mu) value at x_right.
+            val = psi_old[-1, n_reflect, nop1 - 1]
+            bcs[n, 0] = val
+
+    return bcs
+
+
 # ---------------------------------------------------------------------------
 # Optimised core sweep (precomputed M_diag / K, base-LHS hoisted)
 # ---------------------------------------------------------------------------

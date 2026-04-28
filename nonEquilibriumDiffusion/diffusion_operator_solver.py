@@ -173,6 +173,12 @@ class DiffusionOperatorSolver1D:
             self.right_bc_func = lambda phi, r: (0.0, 1.0, 0.0)
         else:
             self.right_bc_func = right_bc_func
+
+        # Optional callbacks for evaluating the effective diffusion coefficient
+        # used in Robin boundary closures. Signature:
+        #   f(T_cell, phi_cell, r_boundary) -> D_boundary
+        self.left_boundary_diffusion_func = None
+        self.right_boundary_diffusion_func = None
     
     def apply_operator(self, phi, T):
         """
@@ -375,9 +381,17 @@ class DiffusionOperatorSolver1D:
             
         else:
             # Robin/Neumann BC: A·φ + B·(∂φ/∂n) = C
-            # Use actual diffusion coefficient from matrix assembly
-            # For Marshak BC: A = 1/2, B = D, C = acT^4/2
+            # Default to the boundary-face coefficient from matrix assembly, but
+            # allow problem setups to override it so the Robin closure and the
+            # effective face coefficient are evaluated consistently.
             D_boundary = D_faces[0]
+            if self.left_boundary_diffusion_func is not None:
+                try:
+                    D_candidate = self.left_boundary_diffusion_func(temperature[0], phi[0], self.r_faces[0])
+                    if np.isfinite(D_candidate) and D_candidate > 0.0:
+                        D_boundary = D_candidate
+                except Exception:
+                    pass
             
             flux_coeff = (self.A_faces[0] * D_boundary * A_bc) / (B_bc * self.V_cells[0])
             rhs_contribution = (self.A_faces[0] * D_boundary * C_bc) / (B_bc * self.V_cells[0])
@@ -409,8 +423,14 @@ class DiffusionOperatorSolver1D:
             
         else:
             # Robin/Neumann BC: A·φ + B·(∂φ/∂n) = C
-            # Use actual diffusion coefficient from matrix assembly
             D_boundary = D_faces[-1]
+            if self.right_boundary_diffusion_func is not None:
+                try:
+                    D_candidate = self.right_boundary_diffusion_func(temperature[-1], phi[-1], self.r_faces[-1])
+                    if np.isfinite(D_candidate) and D_candidate > 0.0:
+                        D_boundary = D_candidate
+                except Exception:
+                    pass
             flux_coeff = (self.A_faces[-1] * D_boundary * A_bc) / (B_bc * self.V_cells[-1])
             rhs_contribution = (self.A_faces[-1] * D_boundary * C_bc) / (B_bc * self.V_cells[-1])
             

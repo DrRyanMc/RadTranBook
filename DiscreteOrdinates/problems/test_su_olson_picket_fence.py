@@ -102,6 +102,109 @@ transport_V = np.array([
 _ref_taus = [0.1, 0.3, 1.0, 3.0]
 
 
+def _domain_energy(phi_g, T, hx):
+    """Total material + radiation energy in domain (per unit area)."""
+    e_mat = A_RAD * np.maximum(T, 0.0)**4
+    E_mat = hx * np.sum(np.mean(e_mat, axis=1))
+    E_rad = 0.0
+    for g in range(len(phi_g)):
+        E_rad += hx * np.sum(np.mean(phi_g[g], axis=1) / C_LIGHT)
+    return E_mat + E_rad, E_mat, E_rad
+
+
+def _source_power(q_ext, W, hx):
+    """Domain-integrated source power (energy per unit area per ns)."""
+    power = 0.0
+    for qg in q_ext:
+        # Angular quadrature gives scalar source per Bernstein node.
+        q_scalar = np.tensordot(qg, W, axes=(1, 0))  # (I, order+1)
+        power += hx * np.sum(np.mean(q_scalar, axis=1))
+    return float(power)
+
+
+def _append_conservation_history(history, ts, phis, Ts, source_power, t_offset=0.0):
+    """Append step-by-step conservation bookkeeping for one solve phase."""
+    if len(ts) < 2:
+        return
+
+    for k in range(1, len(ts)):
+        t0 = t_offset + float(ts[k - 1])
+        t1 = t_offset + float(ts[k])
+        dt = t1 - t0
+
+        E0, Em0, Er0 = _domain_energy(phis[k - 1], Ts[k - 1], history['hx'])
+        E1, Em1, Er1 = _domain_energy(phis[k], Ts[k], history['hx'])
+        Einj = dt * source_power
+
+        history['time'].append(t1)
+        history['dt'].append(dt)
+        history['E_mat'].append(Em1)
+        history['E_rad'].append(Er1)
+        history['E_total'].append(E1)
+        history['dE_step'].append(E1 - E0)
+        history['E_src_step'].append(Einj)
+        history['res_step'].append((E1 - E0) - Einj)
+
+
+def _finalize_conservation_history(history):
+    """Compute cumulative source and global conservation residuals."""
+    if len(history['E_total']) == 0:
+        return
+
+    E0 = history['E0']
+    E_src_cum = np.cumsum(np.asarray(history['E_src_step']))
+    E_total = np.asarray(history['E_total'])
+    E_expected = E0 + E_src_cum
+    drift = E_total - E_expected
+
+    history['E_src_cum'] = E_src_cum.tolist()
+    history['E_expected'] = E_expected.tolist()
+    history['drift'] = drift.tolist()
+
+
+def print_conservation_diagnostics(conservation):
+    """Print a concise energy conservation summary with source accounting."""
+    if len(conservation['E_total']) == 0:
+        print("\nNo conservation diagnostics available.")
+        return
+
+    t = np.asarray(conservation['time'])
+    E_mat = np.asarray(conservation['E_mat'])
+    E_rad = np.asarray(conservation['E_rad'])
+    E_tot = np.asarray(conservation['E_total'])
+    E_src = np.asarray(conservation['E_src_step'])
+    E_src_cum = np.asarray(conservation['E_src_cum'])
+    drift = np.asarray(conservation['drift'])
+
+    E0 = conservation['E0']
+    scale_E0 = max(abs(E0), 1e-300)
+    scale_src = max(abs(E_src_cum[-1]), 1e-300)
+    rel_final_E0 = drift[-1] / scale_E0
+    rel_final_src = drift[-1] / scale_src
+    rel_max_E0 = np.max(np.abs(drift)) / scale_E0
+    rel_max_src = np.max(np.abs(drift)) / scale_src
+
+    print("\n" + "=" * 78)
+    print("Energy conservation with explicit source accounting")
+    print("=" * 78)
+    print(f"  Initial total energy: {E0:.8e}")
+    print(f"  Final total energy:   {E_tot[-1]:.8e}")
+    print(f"  Cumulative source:    {E_src_cum[-1]:.8e}")
+    print(f"  Final drift:          {drift[-1]:+.8e}")
+    print(f"  Final drift / E0:     {rel_final_E0:+.3e}")
+    print(f"  Final drift / Einj:   {rel_final_src:+.3e}")
+    print(f"  Max |drift| / E0:     {rel_max_E0:.3e}")
+    print(f"  Max |drift| / Einj:   {rel_max_src:.3e}")
+
+    print("\n  Sample timestep ledger:")
+    print("  t(ns)      E_mat        E_rad        E_tot        E_src_step   drift")
+    n = len(t)
+    sample_ids = sorted(set([0, min(1, n - 1), min(2, n - 1), n - 1]))
+    for idx in sample_ids:
+        print(f"  {t[idx]:8.3e}  {E_mat[idx]:11.4e}  {E_rad[idx]:11.4e}  "
+              f"{E_tot[idx]:11.4e}  {E_src[idx]:11.4e}  {drift[idx]:+11.4e}")
+
+
 # ---------------------------------------------------------------------------
 # Problem setup & run
 # ---------------------------------------------------------------------------
@@ -220,6 +323,29 @@ def setup_and_run(I=400, order=2, N=8, K=800, maxits=2000, LOUD=0,
         q_on.append(q)
     q_off = [np.zeros((I_full, N, nop1)) for _ in range(G)]
 
+    MU, W = np.polynomial.legendre.leggauss(N)
+    W = W / np.sum(W)
+
+    # --- conservation bookkeeping ---
+    E0, E0_mat, E0_rad = _domain_energy(phi_g, T, hx)
+    conservation = {
+        'hx': hx,
+        'E0': float(E0),
+        'E0_mat': float(E0_mat),
+        'E0_rad': float(E0_rad),
+        'time': [],
+        'dt': [],
+        'E_mat': [],
+        'E_rad': [],
+        'E_total': [],
+        'dE_step': [],
+        'E_src_step': [],
+        'res_step': [],
+        'E_src_cum': [],
+        'E_expected': [],
+        'drift': [],
+    }
+
     # --- time parameters ---
     dt_min = 0.001 * tau_mft
     dt_max = 0.5 * tau_mft
@@ -252,6 +378,10 @@ def setup_and_run(I=400, order=2, N=8, K=800, maxits=2000, LOUD=0,
         order=order, LOUD=LOUD, maxits=maxits, fix=1, K=K, R=3,
         time_outputs=early_outputs if early_outputs.size > 0 else None,
         chi=chi)
+    _append_conservation_history(
+        conservation, ts1, phis1, Ts1,
+        source_power=_source_power(q_on, W, hx),
+        t_offset=0.0)
     total_iterations += its1
     print(f"Phase 1 sweeps: {its1}")
 
@@ -291,6 +421,10 @@ def setup_and_run(I=400, order=2, N=8, K=800, maxits=2000, LOUD=0,
             order=order, LOUD=LOUD, maxits=maxits, fix=1, K=K, R=3,
             time_outputs=late_outs_rel,
             chi=chi)
+        _append_conservation_history(
+            conservation, ts2, phis2, Ts2,
+            source_power=_source_power(q_off, W, hx),
+            t_offset=source_duration)
         total_iterations += its2
         print(f"Phase 2 sweeps: {its2}")
 
@@ -309,10 +443,14 @@ def setup_and_run(I=400, order=2, N=8, K=800, maxits=2000, LOUD=0,
             }
             print(f"  Saved τ = {tau_val:.4f}  (t = {solutions[tau_val]['t_ns']:.6e} ns)")
 
+    _finalize_conservation_history(conservation)
+    print_conservation_diagnostics(conservation)
+
     print(f"\nTotal transport sweeps: {total_iterations}")
     return {
         'solutions': solutions, 'x': x_phys, 'hx': hx, 'Lx': Lx_half,
-        'order': order, 'iterations': total_iterations, 'tau_mft': tau_mft
+        'order': order, 'iterations': total_iterations, 'tau_mft': tau_mft,
+        'conservation': conservation,
     }
 
 

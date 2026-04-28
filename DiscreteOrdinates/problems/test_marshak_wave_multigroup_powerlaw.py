@@ -108,12 +108,179 @@ def _make_dBdT(El, Eh):
     return dBdT
 
 
+def _domain_energy(phi_g, T, hx):
+    """Total material + radiation energy in domain (per unit area)."""
+    e_mat = CV_VOL * T
+    E_mat = hx * np.sum(np.mean(e_mat, axis=1))
+    E_rad = 0.0
+    for g in range(len(phi_g)):
+        E_rad += hx * np.sum(np.mean(phi_g[g], axis=1) / C_LIGHT)
+    return E_mat + E_rad, E_mat, E_rad
+
+
+def _boundary_incoming_power(BCs, t, MU, W, order):
+    """Incoming boundary power into the domain (per unit area per ns)."""
+    nop1 = order + 1
+    p_in = 0.0
+    for bc_g in BCs:
+        bc = bc_g(t)
+
+        # Left boundary: incoming directions have mu > 0.
+        # In the sweep, that uses boundary coefficient at index nop1-1.
+        mask_left = MU > 0.0
+        if np.any(mask_left):
+            p_in += np.sum(W[mask_left] * MU[mask_left] * bc[mask_left, nop1 - 1])
+
+        # Right boundary: incoming directions have mu < 0.
+        # In the sweep, that uses boundary coefficient at index 0.
+        mask_right = MU < 0.0
+        if np.any(mask_right):
+            p_in += np.sum(W[mask_right] * (-MU[mask_right]) * bc[mask_right, 0])
+
+    return float(p_in)
+
+
+def _build_conservation_history(ts, phi_g_hist, T_hist, hx, BCs, MU, W, order,
+                                diagnostics_store=None):
+    """Build per-step conservation diagnostics using boundary inflow accounting."""
+    if len(ts) < 2:
+        return {
+            'E0': None,
+            'time': [], 'dt': [],
+            'E_mat': [], 'E_rad': [], 'E_total': [],
+            'E_in_step': [], 'E_in_cum': [],
+            'E_out_step': [], 'E_out_cum': [],
+            'E_net_step': [], 'E_net_cum': [],
+            'E_expected': [], 'drift': [],
+        }
+
+    E0, E0_mat, E0_rad = _domain_energy(phi_g_hist[0], T_hist[0], hx)
+
+    hist = {
+        'E0': float(E0),
+        'E0_mat': float(E0_mat),
+        'E0_rad': float(E0_rad),
+        'time': [], 'dt': [],
+        'E_mat': [], 'E_rad': [], 'E_total': [],
+        'E_in_step': [],
+        'E_in_cum': [],
+        'E_out_step': [],
+        'E_out_cum': [],
+        'E_net_step': [],
+        'E_net_cum': [],
+        'E_expected': [],
+        'drift': [],
+    }
+
+    Ein_cum = 0.0
+    Eout_cum = 0.0
+    Enet_cum = 0.0
+    for k in range(1, len(ts)):
+        t0 = float(ts[k - 1])
+        t1 = float(ts[k])
+        dt = t1 - t0
+
+        if diagnostics_store is not None and (k - 1) < len(diagnostics_store):
+            diag = diagnostics_store[k - 1]
+            Etot = float(diag['E_total'])
+            Emat = float(diag['E_mat'])
+            Erad = float(diag['E_rad'])
+            Ein = float(diag['boundary_in'])
+            Eout = float(diag['boundary_out'])
+            Enet = float(diag['net_boundary'])
+        else:
+            tmid = 0.5 * (t0 + t1)
+            Etot, Emat, Erad = _domain_energy(phi_g_hist[k], T_hist[k], hx)
+            p_in = _boundary_incoming_power(BCs, tmid, MU, W, order)
+            Ein = dt * p_in
+            Eout = 0.0
+            Enet = Ein
+
+        Ein_cum += Ein
+        Eout_cum += Eout
+        Enet_cum += Enet
+
+        Eexp = E0 + Enet_cum
+        drift = Etot - Eexp
+
+        hist['time'].append(t1)
+        hist['dt'].append(dt)
+        hist['E_mat'].append(float(Emat))
+        hist['E_rad'].append(float(Erad))
+        hist['E_total'].append(float(Etot))
+        hist['E_in_step'].append(float(Ein))
+        hist['E_in_cum'].append(float(Ein_cum))
+        hist['E_out_step'].append(float(Eout))
+        hist['E_out_cum'].append(float(Eout_cum))
+        hist['E_net_step'].append(float(Enet))
+        hist['E_net_cum'].append(float(Enet_cum))
+        hist['E_expected'].append(float(Eexp))
+        hist['drift'].append(float(drift))
+
+    return hist
+
+
+def print_conservation_diagnostics(conservation):
+    """Print open-boundary conservation diagnostics with boundary inflow."""
+    if len(conservation['time']) == 0:
+        print("\nNo conservation diagnostics available.")
+        return
+
+    E0 = conservation['E0']
+    E_tot = np.asarray(conservation['E_total'])
+    E_in_cum = np.asarray(conservation['E_in_cum'])
+    E_out_cum = np.asarray(conservation['E_out_cum'])
+    E_net_cum = np.asarray(conservation['E_net_cum'])
+    drift = np.asarray(conservation['drift'])
+
+    scale_E0 = max(abs(E0), 1e-300)
+    scale_gain = max(abs(E_tot[-1] - E0), 1e-300)
+    scale_net = max(abs(E_net_cum[-1]), 1e-300)
+
+    print("\n" + "=" * 78)
+    print("Open-boundary energy ledger (accounts for prescribed incoming BC energy)")
+    print("=" * 78)
+    print(f"  Initial total energy:          {E0:.8e}")
+    print(f"  Final total energy:            {E_tot[-1]:.8e}")
+    print(f"  Cumulative boundary inflow:    {E_in_cum[-1]:.8e}")
+    print(f"  Cumulative boundary outflow:   {E_out_cum[-1]:.8e}")
+    print(f"  Cumulative net boundary:       {E_net_cum[-1]:.8e}")
+    print(f"  Final residual:                {drift[-1]:+.8e}")
+    print(f"  Final residual / (E_final-E0): {drift[-1] / scale_gain:+.3e}")
+    print(f"  Final residual / Enet:         {drift[-1] / scale_net:+.3e}")
+    print(f"  Final residual / E0:           {drift[-1] / scale_E0:+.3e}")
+    print(f"  Max |residual| / Enet:         {np.max(np.abs(drift)) / scale_net:.3e}")
+
+    # For this open system, residual lumps outgoing leakage + numerical error.
+    print("  Note: residual = E_tot - (E0 + cumulative net boundary energy).")
+
+    t = np.asarray(conservation['time'])
+    E_mat = np.asarray(conservation['E_mat'])
+    E_rad = np.asarray(conservation['E_rad'])
+    E_in_step = np.asarray(conservation['E_in_step'])
+    E_out_step = np.asarray(conservation['E_out_step'])
+    E_in_cum_step = np.asarray(conservation['E_in_cum'])
+    E_out_cum_step = np.asarray(conservation['E_out_cum'])
+    E_net_cum_step = np.asarray(conservation['E_net_cum'])
+    n = len(t)
+    sample_ids = sorted(set([0, min(1, n - 1), min(2, n - 1), n - 1]))
+    print("\n  Sample timestep ledger:")
+    print("  t(ns)      E_mat        E_rad        E_tot        E_in(step)  E_out(step) E_in(cum)   E_out(cum)  E_net(cum)  residual")
+    for i in sample_ids:
+        print(f"  {t[i]:8.3e}  {E_mat[i]:11.4e}  {E_rad[i]:11.4e}  "
+              f"{E_tot[i]:11.4e}  {E_in_step[i]:11.4e}  {E_out_step[i]:11.4e}  "
+              f"{E_in_cum_step[i]:11.4e}  {E_out_cum_step[i]:11.4e}  {E_net_cum_step[i]:11.4e}  {drift[i]:+11.4e}")
+
+
 # ── Setup & run ─────────────────────────────────────────────────────────
 
 def setup_and_run(I=140, order=3, N=8, n_groups=10,
+                  Lx=7.0,
                   tfinal=10.0, dt_min=1e-4, dt_max=0.01,
                   K=800, maxits=2000, LOUD=0,
-                  time_dependent_bc=True, output_times=None):
+                  time_dependent_bc=True, output_times=None,
+                  fix=0,
+                  fleck_mode='legacy'):
     r"""Run multigroup power-law Marshak wave with S_N transport.
 
     Parameters
@@ -126,6 +293,8 @@ def setup_and_run(I=140, order=3, N=8, n_groups=10,
         Number of discrete ordinates.
     n_groups : int
         Energy groups.
+    Lx : float
+        Domain length (cm).
     tfinal : float
         Final time (ns).
     dt_min, dt_max : float
@@ -138,6 +307,13 @@ def setup_and_run(I=140, order=3, N=8, n_groups=10,
         Ramp *T_bc* from 0.05 → 0.25 keV over 5 ns.
     output_times : array-like or None
         Specific output times (ns).  Default ``[1, 2, 5, 10]``.
+    fix : int
+        Positivity fix-up flag passed to S_N sweeps (0 is conservative).
+    fleck_mode : {"legacy", "imc"}
+        ``"legacy"`` uses the original dB/dT multigroup linearisation.
+        ``"imc"`` uses the IMC multigroup Fleck form with
+        :math:`\sigma_P = \sum_g \sigma_g b_g^\star` and effective-scatter
+        redistribution proportional to :math:`\sigma_g b_g^\star`.
 
     Returns
     -------
@@ -149,7 +325,6 @@ def setup_and_run(I=140, order=3, N=8, n_groups=10,
     output_times = output_times[output_times <= tfinal + 1e-12]
 
     G = n_groups
-    Lx = 7.0
     I_full = I
     hx = Lx / I_full
     x = np.linspace(hx / 2, Lx - hx / 2, I_full)
@@ -245,6 +420,7 @@ def setup_and_run(I=140, order=3, N=8, n_groups=10,
           f"({T_bc_start} → {T_bc_end} keV over {t_ramp} ns)")
     print(f"  ρ = {RHO} g/cm³,  c_v = {CV_MASS} GJ/(g·keV)")
     print(f"  dt ∈ [{dt_min:.1e}, {dt_max:.1e}] ns,  t_final = {tfinal} ns")
+    print(f"  Fleck mode: {fleck_mode}")
     print(f"  Output times : {output_times}")
     for g in range(G):
         El, Eh = energy_edges[g], energy_edges[g + 1]
@@ -254,15 +430,26 @@ def setup_and_run(I=140, order=3, N=8, n_groups=10,
               f"σ_a = {sig_test:.3e} cm⁻¹,  4πB_g = {Bg_test:.3e}")
 
     # Run solver ---------------------------------------------------------
+    diagnostics_store = []
     phi_g_hist, T_hist, iterations, ts = mg_sn_solver.mg_temp_solve_dmd_inc(
         I_full, hx,
         G, sigma_a_funcs, scat_funcs, Bg_funcs, dBdT_funcs,
         q_ext, N, BCs, eos, invEOS, Cv_func,
         phi_g, psi_g, T,
         dt_min=dt_min, dt_max=dt_max, tfinal=tfinal,
-        order=order, LOUD=LOUD, maxits=maxits, fix=1, K=K, R=3,
+        order=order, LOUD=LOUD, maxits=maxits, fix=fix, K=K, R=3,
         time_outputs=output_times,
+        energy_diagnostics=True,
+        diagnostics_stride=10,
+        diagnostics_store=diagnostics_store,
+        fleck_mode=fleck_mode,
     )
+
+    conservation = _build_conservation_history(
+        ts, phi_g_hist, T_hist, hx, BCs, MU, _W / np.sum(_W), order,
+        diagnostics_store=diagnostics_store)
+    print_conservation_diagnostics(conservation)
+
     print(f"\nDone.  Total transport sweeps: {iterations}")
 
     solutions = []
@@ -287,6 +474,8 @@ def setup_and_run(I=140, order=3, N=8, n_groups=10,
         'order': order, 'iterations': iterations, 'ts': ts,
         'energy_edges': energy_edges, 'n_groups': G,
         'phi_g_hist': phi_g_hist, 'T_hist': T_hist,
+        'conservation': conservation,
+        'diagnostics_store': diagnostics_store,
     }
 
 
@@ -378,6 +567,8 @@ def main():
                         help='Number of discrete ordinates (default: 8)')
     parser.add_argument('--groups', type=int, default=10,
                         help='Number of energy groups (default: 10)')
+    parser.add_argument('--Lx', type=float, default=7.0,
+                        help='Domain length in cm (default: 7.0)')
     parser.add_argument('--tfinal', type=float, default=10.0,
                         help='Final time in ns (default: 10)')
     parser.add_argument('--dt-min', type=float, default=1e-4,
@@ -390,6 +581,10 @@ def main():
                         help='Max iterations per step (default: 2000)')
     parser.add_argument('--loud', type=int, default=0,
                         help='Verbosity level (default: 0)')
+    parser.add_argument('--fix', type=int, default=0,
+                        help='Positivity fix-up (0=off, 1=on; default: 0)')
+    parser.add_argument('--fleck-mode', choices=['legacy', 'imc'], default='legacy',
+                        help='Multigroup Fleck coupling mode (default: legacy)')
     parser.add_argument('--no-time-bc', action='store_true',
                         help='Use constant T_bc instead of ramp')
     parser.add_argument('--output-times', type=float, nargs='+',
@@ -407,10 +602,13 @@ def main():
 
     results = setup_and_run(
         I=args.zones, order=args.order, N=args.N, n_groups=args.groups,
+        Lx=args.Lx,
         tfinal=args.tfinal, dt_min=args.dt_min, dt_max=args.dt_max,
         K=args.K, maxits=args.maxits, LOUD=args.loud,
         time_dependent_bc=not args.no_time_bc,
         output_times=np.array(args.output_times),
+        fix=args.fix,
+        fleck_mode=args.fleck_mode,
     )
 
     # Save results

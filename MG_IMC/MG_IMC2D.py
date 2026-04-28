@@ -30,6 +30,7 @@ Units consistent with IMC2D:
 """
 
 from dataclasses import dataclass
+from typing import Optional
 import numpy as np
 import random
 import time as _time
@@ -135,6 +136,7 @@ class SimulationState2DMG:
     time: float
     previous_total_energy: float
     count: int = 0
+    radiation_energy_by_group_postcomb: Optional[np.ndarray] = None
 
 
 def _shape_from_edges(edges1, edges2):
@@ -720,6 +722,8 @@ def _transport_particles_2d_mg(
     n_event_cap = 0
 
     boundary_loss = 0.0
+    boundary_loss_by_group = np.zeros(n_groups)
+    boundary_loss_by_side = np.zeros(4)
 
     reflect_l, reflect_r, reflect_b, reflect_t = reflect
 
@@ -740,6 +744,15 @@ def _transport_particles_2d_mg(
         for evt_count in range(max_events_per_particle):
             if i < 0 or i >= nx or j < 0 or j >= ny:
                 boundary_loss += w
+                boundary_loss_by_group[g] += w
+                if i < 0:
+                    boundary_loss_by_side[0] += w
+                elif i >= nx:
+                    boundary_loss_by_side[1] += w
+                elif j < 0:
+                    boundary_loss_by_side[2] += w
+                else:
+                    boundary_loss_by_side[3] += w
                 n_boundary_cross += 1
                 break
 
@@ -816,6 +829,8 @@ def _transport_particles_2d_mg(
                         n_reflect += 1
                     else:
                         boundary_loss += w
+                        boundary_loss_by_group[g] += w
+                        boundary_loss_by_side[0] += w
                         w = 0.0
                         break
                 elif i >= nx:
@@ -825,6 +840,8 @@ def _transport_particles_2d_mg(
                         n_reflect += 1
                     else:
                         boundary_loss += w
+                        boundary_loss_by_group[g] += w
+                        boundary_loss_by_side[1] += w
                         w = 0.0
                         break
                 elif j < 0:
@@ -834,6 +851,8 @@ def _transport_particles_2d_mg(
                         n_reflect += 1
                     else:
                         boundary_loss += w
+                        boundary_loss_by_group[g] += w
+                        boundary_loss_by_side[2] += w
                         w = 0.0
                         break
                 elif j >= ny:
@@ -843,6 +862,8 @@ def _transport_particles_2d_mg(
                         n_reflect += 1
                     else:
                         boundary_loss += w
+                        boundary_loss_by_group[g] += w
+                        boundary_loss_by_side[3] += w
                         w = 0.0
                         break
 
@@ -870,7 +891,7 @@ def _transport_particles_2d_mg(
         float(n_event_cap),
     ])
 
-    return dep_cell, si_cell, boundary_loss, stats
+    return dep_cell, si_cell, boundary_loss, boundary_loss_by_group, boundary_loss_by_side, stats
 
 
 def _equilibrium_sample_xy_mg(N, Tr, x_edges, y_edges, energy_edges):
@@ -1332,18 +1353,22 @@ def init_simulation(
         "Total Internal Energy",
         "Total Radiation Energy",
         "Boundary Emission",
-        "Lost Energy",
+        "Boundary Outgoing",
+        "Source Emission",
+        "Residual",
         sep="\t",
     )
-    print("=" * 111)
+    print("=" * 158)
     print(
-        "{:.6f}".format(0.0),
+        "{:.6e}".format(0.0),
         len(weights),
-        "{:.6f}".format(previous_total),
-        "{:.6f}".format(total_internal),
-        "{:.6f}".format(total_rad),
-        "{:.6f}".format(0.0),
-        "{:.6f}".format(0.0),
+        "{:.6e}".format(previous_total),
+        "{:.6e}".format(total_internal),
+        "{:.6e}".format(total_rad),
+        "{:.6e}".format(0.0),
+        "{:.6e}".format(0.0),
+        "{:.6e}".format(0.0),
+        "{:.6e}".format(0.0),
         sep="\t",
     )
 
@@ -1456,6 +1481,8 @@ def step(
     b_top = _boundary_temperature_value(T_boundary[3], state.time)
 
     boundary_emission = 0.0
+    boundary_emission_by_group = np.zeros(n_groups)
+    boundary_emission_by_side = np.zeros(4)
 
     if Nboundary > 0:
         if geometry == "xy":
@@ -1465,6 +1492,14 @@ def step(
                 ("bottom", b_bottom),
                 ("top", b_top),
             ):
+                if side == "left":
+                    side_idx = 0
+                elif side == "right":
+                    side_idx = 1
+                elif side == "bottom":
+                    side_idx = 2
+                else:
+                    side_idx = 3
                 s = _sample_boundary_xy(Nboundary, side, Tb, dt, edges1, edges2, energy_edges, boundary_source_func)
                 if s is None:
                     continue
@@ -1480,6 +1515,9 @@ def step(
                 cell_j = np.concatenate((cell_j, cj))
                 groups = np.concatenate((groups, g))
                 boundary_emission += float(np.sum(w))
+                boundary_emission_by_side[side_idx] += float(np.sum(w))
+                if len(g) > 0:
+                    boundary_emission_by_group += np.bincount(g, weights=w, minlength=n_groups)
         else:
             for side, Tb in (
                 ("rmin", b_left),
@@ -1487,6 +1525,14 @@ def step(
                 ("zmin", b_bottom),
                 ("zmax", b_top),
             ):
+                if side == "rmin":
+                    side_idx = 0
+                elif side == "rmax":
+                    side_idx = 1
+                elif side == "zmin":
+                    side_idx = 2
+                else:
+                    side_idx = 3
                 s = _sample_boundary_rz(Nboundary, side, Tb, dt, edges1, edges2, energy_edges, boundary_source_func)
                 if s is None:
                     continue
@@ -1504,6 +1550,9 @@ def step(
                     cell_j = np.concatenate((cell_j, cj[valid]))
                     groups = np.concatenate((groups, g[valid]))
                     boundary_emission += float(np.sum(w[valid]))
+                    boundary_emission_by_side[side_idx] += float(np.sum(w[valid]))
+                    if np.any(valid):
+                        boundary_emission_by_group += np.bincount(g[valid], weights=w[valid], minlength=n_groups)
 
     # Fixed source
     source_emission = 0.0
@@ -1602,7 +1651,7 @@ def step(
     if state.count == 0:
         print(f"[MG_IMC2D] Using {get_num_threads()} threads for transport")
     
-    dep_cell, si_cell, boundary_loss, stats = _transport_particles_2d_mg(
+    dep_cell, si_cell, boundary_loss, boundary_loss_by_group, boundary_loss_by_side, stats = _transport_particles_2d_mg(
         weights,
         dir1,
         dir2,
@@ -1632,13 +1681,14 @@ def step(
     internal_energy = internal_energy + total_deposited - total_emitted
     temperature = inv_eos(internal_energy)
 
-    # Update radiation energy by group
-    radiation_energy_by_group = np.zeros((n_groups, nx, ny))
+    # Pre-comb radiation energy by group for diagnostics/output.
+    # With use_scalar_intensity_Tr=True this is a per-group path-length estimate.
+    radiation_energy_by_group_precomb = np.zeros((n_groups, nx, ny))
     for g in range(n_groups):
         if use_scalar_intensity_Tr:
             # si_cell stores scalar intensity by group. Convert to group energy
             # density via E_g = I_g / c, then Tr from sum_g(E_g).
-            radiation_energy_by_group[g, :, :] = si_cell[g, :, :] / __c
+            radiation_energy_by_group_precomb[g, :, :] = si_cell[g, :, :] / __c
         else:
             mask = (
                 (groups == g)
@@ -1651,7 +1701,7 @@ def step(
             if np.any(mask):
                 flat = _flatten_index(cell_i[mask], cell_j[mask], nx)
                 rad_cell_g = np.bincount(flat, weights=weights[mask], minlength=nx * ny).reshape(nx, ny)
-                radiation_energy_by_group[g, :, :] = rad_cell_g / volumes
+                radiation_energy_by_group_precomb[g, :, :] = rad_cell_g / volumes
 
     # Combing
     (
@@ -1674,7 +1724,7 @@ def step(
 
     # Rebuild radiation group energies from post-comb particle weights so
     # state and diagnostics are consistent with the final particle population.
-    radiation_energy_by_group = np.zeros((n_groups, nx, ny))
+    radiation_energy_by_group_postcomb = np.zeros((n_groups, nx, ny))
     for g in range(n_groups):
         mask = (
             (groups == g)
@@ -1687,9 +1737,10 @@ def step(
         if np.any(mask):
             flat = _flatten_index(cell_i[mask], cell_j[mask], nx)
             rad_cell_g = np.bincount(flat, weights=weights[mask], minlength=nx * ny).reshape(nx, ny)
-            radiation_energy_by_group[g, :, :] = rad_cell_g / volumes
+            radiation_energy_by_group_postcomb[g, :, :] = rad_cell_g / volumes
 
-    total_rad_energy = np.sum(radiation_energy_by_group, axis=0)
+    # Use the pre-comb diagnostic tally for reported radiation temperature.
+    total_rad_energy = np.sum(radiation_energy_by_group_precomb, axis=0)
     radiation_temperature = (total_rad_energy / __a) ** 0.25
 
     times = np.zeros_like(times)
@@ -1697,13 +1748,14 @@ def step(
     total_internal = float(np.sum(internal_energy * volumes))
     total_rad = float(np.sum(weights))
     total_energy = total_internal + total_rad
-    energy_loss = (
-        total_energy
-        - state.previous_total_energy
+    dE_system = total_energy - state.previous_total_energy
+    energy_residual = (
+        dE_system
         - boundary_emission
         + boundary_loss
         - source_emission
     )
+    energy_loss = energy_residual
 
     state.weights = weights
     state.dir1 = dir1
@@ -1717,7 +1769,8 @@ def step(
     state.internal_energy = internal_energy
     state.temperature = temperature
     state.radiation_temperature = radiation_temperature
-    state.radiation_energy_by_group = radiation_energy_by_group
+    state.radiation_energy_by_group = radiation_energy_by_group_precomb
+    state.radiation_energy_by_group_postcomb = radiation_energy_by_group_postcomb
     state.time += dt
     state.previous_total_energy = total_energy
     state.count += 1
@@ -1730,14 +1783,25 @@ def step(
         "time": state.time,
         "temperature": temperature,
         "radiation_temperature": radiation_temperature,
-        "radiation_energy_by_group": radiation_energy_by_group,
+        "radiation_energy_by_group": radiation_energy_by_group_precomb,
+        "radiation_energy_by_group_postcomb": radiation_energy_by_group_postcomb,
         "N_particles": len(weights),
         "total_energy": total_energy,
         "total_internal_energy": total_internal,
         "total_radiation_energy": total_rad,
         "boundary_emission": boundary_emission,
+        "boundary_emission_by_group": boundary_emission_by_group.copy(),
+        "boundary_emission_by_side": boundary_emission_by_side.copy(),
         "boundary_loss": boundary_loss,
+        "boundary_outgoing": boundary_loss,
+        "boundary_outgoing_by_group": boundary_loss_by_group.copy(),
+        "boundary_outgoing_by_side": boundary_loss_by_side.copy(),
         "source_emission": source_emission,
+        "incoming_energy_total": boundary_emission + source_emission,
+        "outgoing_energy_total": boundary_loss,
+        "dE_system": dE_system,
+        "energy_expected_dE": boundary_emission + source_emission - boundary_loss,
+        "energy_residual": energy_residual,
         "energy_loss": energy_loss,
         "profiling": {
             "phase_times_s": {
@@ -1828,6 +1892,7 @@ def run_simulation(
     history = []
     t = 0.0
     step_count = 0
+    cumulative_residual = 0.0
 
     time_tol = max(1e-15, 1e-12 * max(final_time, 1.0))
     while t < final_time - time_tol:
@@ -1861,17 +1926,32 @@ def run_simulation(
 
         t = state.time
         step_count += 1
+        cumulative_residual += info["energy_residual"]
+
+        if step_count % 10 == 0:
+            net_boundary = info["boundary_emission"] - info["boundary_outgoing"]
+            print(
+                "[diag]",
+                f"step={step_count}",
+                f"t={t:.6e}",
+                f"net_boundary={net_boundary:.6e}",
+                f"cum_residual={cumulative_residual:.6e}",
+            )
 
         if step_count % output_freq == 0 or (final_time - t) < time_tol:
+            info["cumulative_energy_residual"] = cumulative_residual
+            info["net_boundary_energy"] = info["boundary_emission"] - info["boundary_outgoing"]
             history.append(info)
             print(
-                "{:.6f}".format(t),
+                "{:.6e}".format(t),
                 info["N_particles"],
-                "{:.6f}".format(info["total_energy"]),
-                "{:.6f}".format(info["total_internal_energy"]),
-                "{:.6f}".format(info["total_radiation_energy"]),
-                "{:.6f}".format(info["boundary_emission"]),
-                "{:.6f}".format(info["energy_loss"]),
+                "{:.6e}".format(info["total_energy"]),
+                "{:.6e}".format(info["total_internal_energy"]),
+                "{:.6e}".format(info["total_radiation_energy"]),
+                "{:.6e}".format(info["boundary_emission"]),
+                "{:.6e}".format(info["boundary_outgoing"]),
+                "{:.6e}".format(info["source_emission"]),
+                "{:.6e}".format(info["energy_residual"]),
                 sep="\t",
             )
 
