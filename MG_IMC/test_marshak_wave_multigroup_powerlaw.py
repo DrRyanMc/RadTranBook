@@ -14,6 +14,8 @@ Problem setup:
 
 import argparse
 import os
+import pickle
+import random
 import sys
 
 import matplotlib.pyplot as plt
@@ -24,11 +26,87 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from MG_IMC import A_RAD, C_LIGHT, run_simulation
+from MG_IMC import A_RAD, C_LIGHT, SimulationState2DMG, init_simulation, step
 
 from utils.plotfuncs import font, show
 
 RHO = 0.01  # g/cm^3
+CHECKPOINT_VERSION = 1
+
+
+def _serialize_state(state):
+    """Convert SimulationState2DMG to a pickle-safe payload."""
+    payload = {
+        "weights": state.weights,
+        "dir1": state.dir1,
+        "dir2": state.dir2,
+        "times": state.times,
+        "pos1": state.pos1,
+        "pos2": state.pos2,
+        "cell_i": state.cell_i,
+        "cell_j": state.cell_j,
+        "groups": state.groups,
+        "internal_energy": state.internal_energy,
+        "temperature": state.temperature,
+        "radiation_temperature": state.radiation_temperature,
+        "radiation_energy_by_group": state.radiation_energy_by_group,
+        "time": float(state.time),
+        "previous_total_energy": float(state.previous_total_energy),
+        "count": int(state.count),
+    }
+    payload["radiation_energy_by_group_postcomb"] = state.radiation_energy_by_group_postcomb
+    return payload
+
+
+def _deserialize_state(data):
+    """Rebuild SimulationState2DMG from checkpoint payload."""
+    return SimulationState2DMG(
+        weights=data["weights"],
+        dir1=data["dir1"],
+        dir2=data["dir2"],
+        times=data["times"],
+        pos1=data["pos1"],
+        pos2=data["pos2"],
+        cell_i=data["cell_i"],
+        cell_j=data["cell_j"],
+        groups=data["groups"],
+        internal_energy=data["internal_energy"],
+        temperature=data["temperature"],
+        radiation_temperature=data["radiation_temperature"],
+        radiation_energy_by_group=data["radiation_energy_by_group"],
+        time=float(data["time"]),
+        previous_total_energy=float(data["previous_total_energy"]),
+        count=int(data["count"]),
+        radiation_energy_by_group_postcomb=data.get("radiation_energy_by_group_postcomb", None),
+    )
+
+
+def save_checkpoint(path, state, step_count, cumulative_residual, history, metadata):
+    """Persist simulation state and run progress so the run can resume."""
+    payload = {
+        "checkpoint_version": CHECKPOINT_VERSION,
+        "state": _serialize_state(state),
+        "step_count": int(step_count),
+        "cumulative_residual": float(cumulative_residual),
+        "history": history,
+        "metadata": metadata,
+        "np_random_state": np.random.get_state(),
+        "py_random_state": random.getstate(),
+    }
+    with open(path, "wb") as f:
+        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def load_checkpoint(path):
+    """Load and validate checkpoint payload."""
+    with open(path, "rb") as f:
+        payload = pickle.load(f)
+    version = payload.get("checkpoint_version", None)
+    if version != CHECKPOINT_VERSION:
+        raise ValueError(
+            f"Unsupported checkpoint version: {version} (expected {CHECKPOINT_VERSION})"
+        )
+    return payload
 
 
 def _planck_group_integral(E_low, E_high, T):
@@ -38,6 +116,9 @@ def _planck_group_integral(E_low, E_high, T):
     nquad = 80
     E = np.linspace(E_low, E_high, nquad)
     B_E = (2.0 * E**3 / C_LIGHT**2) / (np.exp(E / T) - 1.0 + 1e-300)
+    # NumPy compatibility: newer builds may only expose trapezoid.
+    if hasattr(np, "trapezoid"):
+        return np.trapezoid(B_E, E)
     return np.trapz(B_E, E)
 
 
@@ -113,6 +194,9 @@ def run_marshak_wave_multigroup_powerlaw_imc(
     dt=0.01,
     final_time=10.0,
     grid_beta=0.0,
+    checkpoint_every=10,
+    checkpoint_file=None,
+    restart_from=None,
 ):
     print("=" * 80)
     print(f"Marshak Wave Problem - Multigroup IMC ({n_groups} Groups) with Power-Law Opacity")
@@ -226,6 +310,10 @@ def run_marshak_wave_multigroup_powerlaw_imc(
     else:
         print("  Grid: uniform")
     print(f"  Particles: Ntarget={ntarget}, Nboundary={nboundary}, Nmax={nmax}")
+    if checkpoint_every > 0:
+        print(f"  Checkpoint cadence: every {checkpoint_every} steps")
+    else:
+        print("  Checkpoint cadence: disabled")
 
     # Boundary emission scale diagnostic (per step, left boundary only).
     # This helps interpret the solver table, which prints fixed-point values.
@@ -236,33 +324,152 @@ def run_marshak_wave_multigroup_powerlaw_imc(
         E_probe = A_RAD * C_LIGHT * Tb_probe**4 / 4.0 * left_area * dt
         print(f"    t={t_probe:4.2f} ns: T_bc={Tb_probe:.4f} keV -> E_step={E_probe:.6e} GJ")
 
-    history, final_state = run_simulation(
-        Ntarget=ntarget,
-        Nboundary=nboundary,
-        Nsource=0,
-        Nmax=nmax,
-        Tinit=Tinit,
-        Tr_init=Tr_init,
-        T_boundary=T_boundary,
-        dt=dt,
-        edges1=x_edges,
-        edges2=y_edges,
-        energy_edges=energy_edges,
-        sigma_a_funcs=sigma_a_funcs,
-        eos=eos,
-        inv_eos=inv_eos,
-        cv=cv_func,
-        source=source,
-        final_time=final_time,
-        reflect=reflect,
-        output_freq=max(1, int(np.ceil(max(target_times) / dt)) // 200),
-        theta=1.0,
-        use_scalar_intensity_Tr=use_scalar_intensity_Tr,
-        Ntarget_ic=ntarget,
-        conserve_comb_energy=False,
-        geometry="xy",
-        max_events_per_particle=1_000_000,
-    )
+    output_freq = max(1, int(np.ceil(max(target_times) / dt)) // 200)
+    metadata = {
+        "n_groups": int(n_groups),
+        "nx": int(nx),
+        "dt": float(dt),
+        "final_time": float(final_time),
+        "time_dependent_bc": bool(time_dependent_bc),
+        "grid_beta": float(grid_beta),
+        "use_scalar_intensity_Tr": bool(use_scalar_intensity_Tr),
+        "x_edges": x_edges,
+        "y_edges": y_edges,
+        "energy_edges": energy_edges,
+    }
+
+    if checkpoint_file is None:
+        checkpoint_file = f"marshak_wave_multigroup_powerlaw_imc_{n_groups}g_checkpoint.pkl"
+
+    if restart_from is not None:
+        print(f"Restarting from checkpoint: {restart_from}")
+        payload = load_checkpoint(restart_from)
+        saved_meta = payload.get("metadata", {})
+        if int(saved_meta.get("n_groups", n_groups)) != int(n_groups):
+            raise ValueError("Checkpoint group count does not match current --groups.")
+        if int(saved_meta.get("nx", nx)) != int(nx):
+            raise ValueError("Checkpoint nx does not match current --nx.")
+        if abs(float(saved_meta.get("dt", dt)) - float(dt)) > 1e-14:
+            raise ValueError("Checkpoint dt does not match current --dt.")
+        if abs(float(saved_meta.get("grid_beta", grid_beta)) - float(grid_beta)) > 1e-14:
+            raise ValueError("Checkpoint grid_beta does not match current --grid-beta.")
+        if bool(saved_meta.get("time_dependent_bc", time_dependent_bc)) != bool(time_dependent_bc):
+            raise ValueError("Checkpoint boundary mode does not match current --no-time-bc setting.")
+        state = _deserialize_state(payload["state"])
+        step_count = int(payload.get("step_count", 0))
+        cumulative_residual = float(payload.get("cumulative_residual", 0.0))
+        history = payload.get("history", [])
+        np_state = payload.get("np_random_state", None)
+        if np_state is not None:
+            np.random.set_state(np_state)
+        py_state = payload.get("py_random_state", None)
+        if py_state is not None:
+            random.setstate(py_state)
+        print(
+            f"Restart state: t={state.time:.6f} ns, step={step_count}, "
+            f"history_entries={len(history)}"
+        )
+    else:
+        state = init_simulation(
+            Ntarget=ntarget,
+            Tinit=Tinit,
+            Tr_init=Tr_init,
+            edges1=x_edges,
+            edges2=y_edges,
+            energy_edges=energy_edges,
+            eos=eos,
+            inv_eos=inv_eos,
+            Ntarget_ic=ntarget,
+            geometry="xy",
+        )
+        step_count = 0
+        cumulative_residual = 0.0
+        history = []
+
+    t = float(state.time)
+    time_tol = max(1e-15, 1e-12 * max(final_time, 1.0))
+    while t < final_time - time_tol:
+        dt_step = min(dt, final_time - t)
+        if dt_step <= time_tol:
+            break
+
+        state, info = step(
+            state,
+            Ntarget=ntarget,
+            Nboundary=nboundary,
+            Nsource=0,
+            Nmax=nmax,
+            T_boundary=T_boundary,
+            dt=dt_step,
+            edges1=x_edges,
+            edges2=y_edges,
+            energy_edges=energy_edges,
+            sigma_a_funcs=sigma_a_funcs,
+            inv_eos=inv_eos,
+            cv=cv_func,
+            source=source,
+            reflect=reflect,
+            theta=1.0,
+            use_scalar_intensity_Tr=use_scalar_intensity_Tr,
+            conserve_comb_energy=False,
+            geometry="xy",
+            max_events_per_particle=1_000_000,
+        )
+
+        t = float(state.time)
+        step_count += 1
+        cumulative_residual += float(info.get("energy_residual", 0.0))
+
+        if step_count % 10 == 0:
+            net_boundary = info["boundary_emission"] - info["boundary_outgoing"]
+            print(
+                "[diag]",
+                f"step={step_count}",
+                f"t={t:.6e}",
+                f"net_boundary={net_boundary:.6e}",
+                f"cum_residual={cumulative_residual:.6e}",
+            )
+
+        if step_count % output_freq == 0 or (final_time - t) < time_tol:
+            info["cumulative_energy_residual"] = cumulative_residual
+            info["net_boundary_energy"] = info["boundary_emission"] - info["boundary_outgoing"]
+            history.append(info)
+            print(
+                "{:.6e}".format(t),
+                info["N_particles"],
+                "{:.6e}".format(info["total_energy"]),
+                "{:.6e}".format(info["total_internal_energy"]),
+                "{:.6e}".format(info["total_radiation_energy"]),
+                "{:.6e}".format(info["boundary_emission"]),
+                "{:.6e}".format(info["boundary_outgoing"]),
+                "{:.6e}".format(info["source_emission"]),
+                "{:.6e}".format(info["energy_residual"]),
+                sep="\t",
+            )
+
+        if checkpoint_every > 0 and (step_count % checkpoint_every == 0):
+            save_checkpoint(
+                checkpoint_file,
+                state,
+                step_count,
+                cumulative_residual,
+                history,
+                metadata,
+            )
+            print(f"Saved checkpoint: {checkpoint_file} (step={step_count}, t={t:.6f} ns)")
+
+    if checkpoint_every > 0:
+        save_checkpoint(
+            checkpoint_file,
+            state,
+            step_count,
+            cumulative_residual,
+            history,
+            metadata,
+        )
+        print(f"Saved final checkpoint: {checkpoint_file}")
+
+    final_state = state
 
     # Print early-time diagnostics with scientific notation so tiny-but-nonzero
     # values are visible (fixed-point table rounds many of these to 0.000000).
@@ -484,6 +691,24 @@ def main():
         action="store_true",
         help="Use particle binning instead of scalar-intensity estimator for Tr",
     )
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=10,
+        help="Save checkpoint every N timesteps (default: 10, <=0 disables)",
+    )
+    parser.add_argument(
+        "--checkpoint-file",
+        type=str,
+        default=None,
+        help="Path to checkpoint file (default: auto-generated from group count)",
+    )
+    parser.add_argument(
+        "--restart-from",
+        type=str,
+        default=None,
+        help="Checkpoint file to restart from",
+    )
     args = parser.parse_args()
 
     run_marshak_wave_multigroup_powerlaw_imc(
@@ -497,6 +722,9 @@ def main():
         dt=args.dt,
         final_time=args.final_time,
         grid_beta=args.grid_beta,
+        checkpoint_every=args.checkpoint_every,
+        checkpoint_file=args.checkpoint_file,
+        restart_from=args.restart_from,
     )
 
 

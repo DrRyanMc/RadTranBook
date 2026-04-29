@@ -621,11 +621,19 @@ def main():
 
     edges = np.linspace(0, results['Lx'], len(results['x']) + 1)
     x_centers = results['x']
+    G = results['n_groups']
     times_out = np.array([s['time'] for s in results['solutions']])
     T_mat  = np.array([BPoly(s['T'].T, edges)(x_centers)
                        for s in results['solutions']])
     T_rad  = np.array([BPoly(s['T_rad'].T, edges)(x_centers)
                        for s in results['solutions']])
+    # phi_groups: (n_times, n_groups, n_cells); E_r_groups = phi/c
+    phi_groups = np.array([
+        [BPoly(s['phi_g'][g].T, edges)(x_centers) for g in range(G)]
+        for s in results['solutions']
+    ])
+    E_r_groups = phi_groups / C_LIGHT
+    E_r = E_r_groups.sum(axis=1)
 
     np.savez_compressed(
         npz_name,
@@ -634,6 +642,9 @@ def main():
         energy_edges=results['energy_edges'],
         T_mat=T_mat,
         T_rad=T_rad,
+        phi_groups=phi_groups,
+        E_r_groups=E_r_groups,
+        E_r=E_r,
     )
     print(f"Results saved to {npz_name}")
 
