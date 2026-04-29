@@ -342,7 +342,7 @@ def bc_right_open(phi, pos, t, boundary='right', geometry='cylindrical'):
     T_avg = 0.1  # Estimate for diffusion coefficient
     sigma_R = rosseland_opacity(T_avg, r, z)
     D = 1.0 / (3.0 * sigma_R)
-    return 0.5, D, 0.0
+    return 0.5, 2.0, 0.0
 
 
 def bc_bottom_source(phi, pos, t, boundary='bottom', geometry='cylindrical'):
@@ -364,7 +364,7 @@ def bc_bottom_source(phi, pos, t, boundary='bottom', geometry='cylindrical'):
         T_avg = 0.1  # Estimate for diffusion coefficient
         sigma_R = rosseland_opacity(T_avg, r_loc, z_loc)
         D = 1.0 / (3.0 * sigma_R)
-        return 0.5, D, phi_source / 2
+        return 0.5, 2.0, phi_source / 2
     else:
         # Vacuum elsewhere
         r_loc = r
@@ -372,7 +372,7 @@ def bc_bottom_source(phi, pos, t, boundary='bottom', geometry='cylindrical'):
         T_avg = 0.1  # Estimate for diffusion coefficient
         sigma_R = rosseland_opacity(T_avg, r_loc, z_loc)
         D = 1.0 / (3.0 * sigma_R)
-        return 0.5, D, 0.0
+        return 0.5, 2.0, 0.0
 
 
 def bc_top_open(phi, pos, t, boundary='top', geometry='cylindrical'):
@@ -383,7 +383,7 @@ def bc_top_open(phi, pos, t, boundary='top', geometry='cylindrical'):
     T_avg = 0.1  # Estimate for diffusion coefficient
     sigma_R = rosseland_opacity(T_avg, r, z)
     D = 1.0 / (3.0 * sigma_R)
-    return 0.5, D, 0.0
+    return 0.5, 2.0, 0.0
 
 
 # =============================================================================
@@ -803,15 +803,15 @@ def main(
                 chi = B_groups / np.sum(B_groups)
                 F_total = (A_RAD * C_LIGHT * T_bc**4) / 2.0
                 C_group = chi[group_idx] * F_total
-                return 0.5, D, C_group
-            return 0.5, D, 0.0
+                return 0.5, 2.0, C_group
+            return 0.5, 2.0, 0.0
         return bottom_bc
 
     def make_open_bc(group_idx):
         def open_bc(phi, pos, t, boundary='right', geometry='cylindrical'):
             r, z = pos
             D = group_diffusion_funcs[group_idx](0.1, r, z)
-            return 0.5, D, 0.0
+            return 0.5, 2.0, 0.0
         return open_bc
 
     left_bcs = [bc_left_axis] * n_groups

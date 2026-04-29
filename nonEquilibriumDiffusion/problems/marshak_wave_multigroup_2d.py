@@ -219,11 +219,9 @@ def run_marshak_wave_2d(use_preconditioner=False, n_cells_x=200, n_cells_y=20, g
     F_g_values = [chi[g] * F_total for g in range(n_groups)]
     
     # Robin BC parameters
-    # Keep A and C fixed by the Marshak condition. Use a dynamic B in the
-    # boundary callback so it stays consistent with the local diffusion scale.
-    sigma_bc = marshak_opacity(T_bc, 0.0, 0.0)
+    # Keep B dimensionless so boundary D from the operator remains active.
     BC_A = 0.5
-    BC_B_ref = 1.0 / (3.0 * sigma_bc)
+    BC_B_ref = 2.0
     
     print(f"\nBoundary condition (Robin type - Marshak):")
     print(f"  A = {BC_A}, B_ref(T_b) = {BC_B_ref:.6e} cm")
@@ -235,15 +233,7 @@ def run_marshak_wave_2d(use_preconditioner=False, n_cells_x=200, n_cells_y=20, g
     def make_marshak_bc_func(C_val):
         """Robin BC for incoming radiation (Marshak)"""
         def marshak_bc(phi, pos, t):
-            # Match B to the current local radiation state so D/B remains
-            # well-scaled in the operator BC treatment.
-            if phi > 0.0:
-                T_local = max((phi / (A_RAD * C_LIGHT))**0.25, 0.01)
-            else:
-                T_local = 0.01
-            sigma_local = marshak_opacity(T_local, pos[0], pos[1])
-            B_local = 1.0 / (3.0 * sigma_local)
-            return BC_A, B_local, C_val
+            return BC_A, BC_B_ref, C_val
         return marshak_bc
     
     def zero_flux_bc(phi, pos, t):

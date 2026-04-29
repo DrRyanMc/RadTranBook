@@ -147,15 +147,15 @@ def run_marshak_wave_multigroup(use_preconditioner=False):
     F_g_values = [chi[g] * F_total for g in range(n_groups)]
     
     # Robin BC parameters: A*phi + B*dphi/dr = C
-    # For Marshak BC at r=0: phi/2 + D*dphi/dr = F_in
-    # A = 0.5, B = D = 1/(3*sigma), C = F_g = chi_g * (a*c*T^4)/4
+    # Use dimensionless B so D is supplied by the diffusion operator and
+    # not canceled in the boundary flux coefficient.
     sigma_const = 300.0  # cm⁻¹
     BC_A = 0.5
-    BC_B = 1.0 / (3.0 * sigma_const)
+    BC_B = 2.0
     BC_C_values = F_g_values  # Incoming flux for each group
     
     print(f"\nBoundary condition (Robin type - Marshak):")
-    print(f"  A = {BC_A}, B = {BC_B:.6e} cm")
+    print(f"  A = {BC_A}, B = {BC_B:.6e} (dimensionless)")
     print(f"  F_total(T_b) = {F_total:.6e} GJ/(cm²·ns)")
     print(f"  Expected steady-state: phi_boundary ~ {2.0*F_total:.6e} GJ/(cm²·ns)")
     for g in range(n_groups):

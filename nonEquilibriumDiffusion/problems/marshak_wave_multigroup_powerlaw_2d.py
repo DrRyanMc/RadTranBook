@@ -83,21 +83,18 @@ def make_marshak_bc_func(T_bc, E_low, E_high, rho=1.0):
     where F_in = c * B_g(T_bc) is the incoming radiation flux for this group
     
     Robin BC form: A·φ + B·∇φ = C
-    So: A = 0.5, B = 2D_g(T_bc), C = c * B_g(T_bc)
+    Use dimensionless B so boundary diffusion remains in the operator term.
+    So: A = 0.5, B = 2.0, C = c * B_g(T_bc)
     """
     D_func = make_powerlaw_diffusion_func(E_low, E_high, rho)
     
     def marshak_bc(phi, pos, t):
         """Marshak BC at T_bc"""
-        # Diffusion coefficient at boundary
-        x, y = pos
-        D = D_func(T_bc, x, y)
-        
         # Incoming group flux from Planck spectrum
         B_g = Bg_multigroup(np.array([E_low, E_high]), T_bc)[0]
         F_in = C_LIGHT * B_g
         
-        return 0.5, 2.0 * D, F_in
+        return 0.5, 2.0, F_in
     
     return marshak_bc
 
