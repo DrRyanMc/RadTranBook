@@ -187,7 +187,7 @@ def compare_spectra(npz_paths, target_time, target_r, plot_phi=False, outbase=No
 
     # --- format E_r panel ---
     ax_Er.set_xlabel('photon energy (keV)', fontsize=12)
-    ax_Er.set_ylabel(r'$E_{r,g}$ (GJ$/$cm$^{3}/$keV)', fontsize=12)
+    ax_Er.set_ylabel(r'$\widehat{E}_{r,g}$ (GJ$/$cm$^{3}/$keV)', fontsize=12)
     #ax_Er.set_title(f'{t_str},  {r_str}', fontsize=11)
     ax_Er.set_xscale('log')
     ax_Er.set_yscale('log')

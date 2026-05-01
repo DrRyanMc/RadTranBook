@@ -467,6 +467,80 @@ def _sample_boundary_rz(n, side, T, dt, r_edges, z_edges, energy_edges, boundary
     else:
         area = np.pi * (r1**2 - r0**2)
 
+    # Position-dependent boundary emission via boundary_source_func
+    if boundary_source_func is not None:
+        if side in ("rmin", "rmax"):
+            R = r0 if side == "rmin" else r1
+            z_centers = 0.5 * (z_edges[:-1] + z_edges[1:])
+            cell_temps = np.array([boundary_source_func(R, z_c, side) for z_c in z_centers])
+            emit_mask = cell_temps > 0.0
+            if not np.any(emit_mask):
+                return None
+            dz_arr = np.diff(z_edges)
+            cell_areas = 2.0 * np.pi * R * dz_arr[emit_mask]
+            cell_temps_emit = cell_temps[emit_mask]
+            cell_emissions = __a * __c * cell_temps_emit**4 / 4.0 * cell_areas * dt
+            total_emission_bsf = float(np.sum(cell_emissions))
+            cell_fractions = cell_emissions / total_emission_bsf
+            n_per_cell = np.random.multinomial(n, cell_fractions)
+            emit_indices = np.where(emit_mask)[0]
+            r_all, z_all, groups_all = [], [], []
+            for list_idx, (grid_idx, n_cell) in enumerate(zip(emit_indices, n_per_cell)):
+                if n_cell > 0:
+                    offset = 1e-12 if side == "rmin" else -1e-12
+                    r_all.append(np.full(n_cell, R + offset))
+                    z_all.append(np.random.uniform(z_edges[grid_idx], z_edges[grid_idx + 1], n_cell))
+                    _, cg = _sample_planck_spectrum_mixture_of_gammas(n_cell, float(cell_temps_emit[list_idx]), energy_edges)
+                    groups_all.append(cg)
+        else:  # zmin or zmax
+            Z = z0 if side == "zmin" else z1
+            r_centers_bsf = 0.5 * (r_edges[:-1] + r_edges[1:])
+            cell_temps = np.array([boundary_source_func(r_c, Z, side) for r_c in r_centers_bsf])
+            emit_mask = cell_temps > 0.0
+            if not np.any(emit_mask):
+                return None
+            r_inner = r_edges[:-1][emit_mask]
+            r_outer = r_edges[1:][emit_mask]
+            cell_areas = np.pi * (r_outer**2 - r_inner**2)
+            cell_temps_emit = cell_temps[emit_mask]
+            cell_emissions = __a * __c * cell_temps_emit**4 / 4.0 * cell_areas * dt
+            total_emission_bsf = float(np.sum(cell_emissions))
+            cell_fractions = cell_emissions / total_emission_bsf
+            n_per_cell = np.random.multinomial(n, cell_fractions)
+            emit_indices = np.where(emit_mask)[0]
+            r_all, z_all, groups_all = [], [], []
+            for list_idx, (grid_idx, n_cell) in enumerate(zip(emit_indices, n_per_cell)):
+                if n_cell > 0:
+                    r_in = r_edges[grid_idx]
+                    r_out = r_edges[grid_idx + 1]
+                    xi = np.random.uniform(0.0, 1.0, n_cell)
+                    r_all.append(np.sqrt(r_in**2 + xi * (r_out**2 - r_in**2)))
+                    offset = 1e-12 if side == "zmin" else -1e-12
+                    z_all.append(np.full(n_cell, Z + offset))
+                    _, cg = _sample_planck_spectrum_mixture_of_gammas(n_cell, float(cell_temps_emit[list_idx]), energy_edges)
+                    groups_all.append(cg)
+        if not r_all:
+            return None
+        r_bsf = np.concatenate(r_all)
+        z_bsf = np.concatenate(z_all)
+        groups_bsf = np.concatenate(groups_all)
+        n_bsf = len(r_bsf)
+        w_bsf = np.full(n_bsf, total_emission_bsf / n_bsf)
+        t_bsf = np.random.uniform(0.0, dt, n_bsf)
+        eta_bsf = np.random.uniform(-1.0, 1.0, n_bsf)
+        mu_abs_bsf = np.sqrt(np.random.uniform(0.0, 1.0, n_bsf))
+        if side == "rmin":
+            mu_perp_bsf = mu_abs_bsf
+        elif side == "rmax":
+            mu_perp_bsf = -mu_abs_bsf
+        elif side == "zmin":
+            mu_perp_bsf = np.cos(2.0 * np.pi * np.random.uniform(0.0, 1.0, n_bsf))
+            eta_bsf = mu_abs_bsf
+        else:  # zmax
+            mu_perp_bsf = np.cos(2.0 * np.pi * np.random.uniform(0.0, 1.0, n_bsf))
+            eta_bsf = -mu_abs_bsf
+        return w_bsf, mu_perp_bsf, eta_bsf, t_bsf, r_bsf, z_bsf, groups_bsf
+
     total_emission = __a * __c * T**4 / 4.0 * area * dt
     weights = np.full(n, total_emission / n)
     times = np.random.uniform(0.0, dt, n)

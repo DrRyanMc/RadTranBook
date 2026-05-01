@@ -10,9 +10,15 @@ import matplotlib.pyplot as plt
 from scipy.special import erf
 import scipy.optimize as opt
 from scipy.optimize import curve_fit
+import os
 
 # Updated function to include the threshold energy condition
-font = fm.FontProperties(family = 'Gill Sans', fname = '/Library/Fonts/GillSans.ttc', size = 12)
+_GILL_SANS_PATH = '/Library/Fonts/GillSans.ttc'
+if os.path.exists(_GILL_SANS_PATH):
+    font = fm.FontProperties(family='Gill Sans', fname=_GILL_SANS_PATH, size=12)
+else:
+    # Fall back to the default sans-serif font on systems without Gill Sans.
+    font = fm.FontProperties(family='sans-serif', size=12)
 def hide_spines(intx=False,inty=False,cbar_ax=None):
     """Hides the top and rightmost axis spines from view for all active
     figures and their respective axes."""

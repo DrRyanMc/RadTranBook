@@ -1,7 +1,7 @@
 """
 Compare temperature-update schemes for the simple Marshak wave.
 
-Four runs: {Richardson, DMD} × {W=0 (fixed T*), W=5 (iterated T*)}.
+Four runs: {Source Iteration, DMD} × {W=0 (fixed T*), W=5 (iterated T*)}.
 Fixed time step 0.025 ns by default.
 
 Produces two figures:
@@ -18,9 +18,15 @@ import os
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 import simple_marshak_wave_ld as smw
+from utils.plotfuncs import show, font, hide_spines
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -52,7 +58,7 @@ def main():
     parser.add_argument('--K',        type=int,   default=10,
                         help='DMD snapshot count (default: 10)')
     parser.add_argument('--R',        type=int,   default=3,
-                        help='Richardson steps between DMD updates (default: 3)')
+                        help='Source Iteration steps between DMD updates (default: 3)')
     parser.add_argument('--tolerance', type=float, default=1e-8,
                         help='Inner convergence tolerance (default: 1e-8)')
     parser.add_argument('--maxits',   type=int,   default=10000,
@@ -79,8 +85,8 @@ def main():
     )
 
     runs = [
-        ('Richardson  W=0',  dict(use_dmd=False, W=0)),
-        (f'Richardson  W={W}', dict(use_dmd=False, W=W)),
+        ('Source Iteration  W=0',  dict(use_dmd=False, W=0)),
+        (f'Source Iteration  W={W}', dict(use_dmd=False, W=W)),
         ('DMD  W=0',         dict(use_dmd=True,  W=0)),
         (f'DMD  W={W}',      dict(use_dmd=True,  W=W)),
     ]
@@ -95,19 +101,19 @@ def main():
 
     print()
     print('Total sweep counts:')
-    ref = results['Richardson  W=0']['iterations']
+    ref = results['Source Iteration  W=0']['iterations']
     for label, _ in runs:
         tot = results[label]['iterations']
-        print(f'  {label:25s}  {tot:8,}   ({ref/tot:.2f}× vs Richardson W=0)')
+        print(f'  {label:25s}  {tot:8,}   ({ref/tot:.2f}× vs Source Iteration W=0)')
 
-    x = results['Richardson  W=0']['x']
+    x = results['Source Iteration  W=0']['x']
 
     # ── line styles per run ───────────────────────────────────────────────────
     styles = {
-        'Richardson  W=0':       dict(color='C1', ls='-',  lw=1.2),
-        f'Richardson  W={W}':    dict(color='C1', ls='--', lw=1.2),
-        'DMD  W=0':              dict(color='C0', ls='-',  lw=1.2),
-        f'DMD  W={W}':           dict(color='C0', ls='--', lw=1.2),
+        'Source Iteration  W=0':    dict(color='C1', ls='-',  lw=1.2, marker='^', ms=6),
+        f'Source Iteration  W={W}': dict(color='C1', ls='--', lw=1.2, marker='v', ms=6),
+        'DMD  W=0':           dict(color='C0', ls='-',  lw=1.2, marker='o',   ms=4),
+        f'DMD  W={W}':        dict(color='C0', ls='--', lw=1.2, marker='s',   ms=4),
     }
 
     # ── Figure 1: iterations per step ────────────────────────────────────────
@@ -117,21 +123,22 @@ def main():
         ts  = np.asarray(r['ts'])
         its = np.asarray(r['its_per_step'])
         st  = styles[label]
+        me = max(1, len(its) // 20) if st['marker'] else None
         ax1.semilogy(ts[1:], its,
                      color=st['color'], ls=st['ls'], lw=st['lw'],
+                     marker=st['marker'], markersize=st['ms'], markevery=me,
                      label=f'{label}  (total {r["iterations"]:,})')
-    ax1.set_xlabel('Time (ns)')
-    ax1.set_ylabel('Source iterations per time step')
-    ax1.set_title('Iterations per time step — T* scheme comparison\n'
-                  f'Simple Marshak wave  (I={args.zones}, N={args.N}, '
-                  f'dt={dt} ns)')
-    ax1.legend(fontsize=8)
+    ax1.set_xlabel('Time (ns)', fontsize=12)
+    ax1.set_ylabel('Source iterations per time step', fontsize=12)
+    ax1.grid(True, which='both', alpha=0.3, linestyle='--')
+    ax1.legend(prop=font, fontsize=8, facecolor='white', edgecolor='none')
     plt.tight_layout()
     if args.save_fig:
         name = f'{args.save_fig}_iterations.pdf'
-        fig1.savefig(name, dpi=300, bbox_inches='tight')
+        show(name, close_after=True)
         print(f'Saved {name}')
     else:
+        hide_spines()
         plt.show()
 
     # ── Figure 2: temperature profiles ───────────────────────────────────────
@@ -141,10 +148,9 @@ def main():
     fig2, ax2 = plt.subplots(figsize=(8, 5))
     for i, tval in enumerate(plot_times):
         tc = time_colors[i]
-        # self-similar reference (use Richardson W=0 result for metadata)
-        r_ss, T_ss = smw.self_similar_solution(tval, results['Richardson  W=0'])
-        ax2.plot(r_ss, T_ss, ':', color=tc, lw=2.0,
-                 label=f'Self-similar  $t={tval:.0f}$ ns')
+        # self-similar reference (use Source Iteration W=0 result for metadata)
+        r_ss, T_ss = smw.self_similar_solution(tval, results['Source Iteration  W=0'])
+        ax2.plot(r_ss, T_ss, ':', color=tc, lw=2.0)
 
         for label, _ in runs:
             r  = results[label]
@@ -152,23 +158,33 @@ def main():
             step = _find_step(ts, tval)
             T    = _centres(r['Ts'][step], x)
             st   = styles[label]
+            me = max(1, len(x) // 10) if st['marker'] else None
             ax2.plot(x, T,
                      color=tc, ls=st['ls'], lw=1.4, alpha=0.85,
-                     label=f'{label}  $t={float(ts[step]):.1f}$ ns')
+                     marker=st['marker'], markersize=st['ms'], markevery=me)
+
+    # One proxy handle per line type; colours are described in the figure caption
+    _proxy_h = [mlines.Line2D([0], [0], color='k', ls='-', lw=2.0)]
+    _proxy_l = ['Self-similar']
+    for _lbl, _ in runs:
+        _st = styles[_lbl]
+        _proxy_h.append(mlines.Line2D([0], [0],
+                                      color='k', ls=_st['ls'], lw=1.4,
+                                      marker=_st['marker'], markersize=_st['ms']))
+        _proxy_l.append(_lbl)
 
     ax2.set_xlim(0, args.L)
-    ax2.set_xlabel('Position (cm)')
-    ax2.set_ylabel('Material temperature (keV)')
-    ax2.set_title('Temperature profiles — T* scheme comparison\n'
-                  f'Simple Marshak wave  (I={args.zones}, N={args.N}, '
-                  f'dt={dt} ns)')
-    ax2.legend(fontsize=6, ncol=3)
+    ax2.set_xlabel('Position (cm)', fontsize=12)
+    ax2.set_ylabel('Material temperature (keV)', fontsize=12)
+    ax2.grid(True, which='both', alpha=0.3, linestyle='--')
+    ax2.legend(_proxy_h, _proxy_l, prop=font, fontsize=8, facecolor='white', edgecolor='none')
     plt.tight_layout()
     if args.save_fig:
         name = f'{args.save_fig}_profiles.pdf'
-        fig2.savefig(name, dpi=300, bbox_inches='tight')
+        show(name, close_after=True)
         print(f'Saved {name}')
     else:
+        hide_spines()
         plt.show()
 
 
