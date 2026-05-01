@@ -614,7 +614,14 @@ def one_incSVD(u, W, sigma, V, r, k, eps=1e-18, eps_sv=1e-12):
 
 def DMD_prec_inc(matvec, b, K=10, steady=0, x=np.zeros(1),
                  step_size=10, GM=0, res=1):
-    """DMD preconditioner with incremental SVD."""
+    """DMD preconditioner with incremental SVD.
+
+    Collects up to 2*K snapshots.  The early-return (which fires as soon as
+    rank is established, i.e. k > r+1) is suppressed while any DMD eigenvalue
+    lies outside the unit circle; gathering more snapshots usually stabilises
+    the operator.  The warning is only printed if instability persists through
+    all 2*K steps.
+    """
     res = np.min([1.0e-6, res])
     res = np.max([res, 1e-11])
     N = b.size
@@ -623,8 +630,9 @@ def DMD_prec_inc(matvec, b, K=10, steady=0, x=np.zeros(1),
     assert len(b.shape) == 1
     x_new = x * 0
     x_0 = x.copy()
-    Yplus = np.zeros((N, K - 1))
-    Yminus = np.zeros((N, K - 1))
+    K_max = 2 * K   # extend up to 2K snapshots when eigenvalues are unstable
+    Yplus = np.zeros((N, K_max - 1))
+    Yminus = np.zeros((N, K_max - 1))
     r = 0
     k_val = 0
 
@@ -634,17 +642,18 @@ def DMD_prec_inc(matvec, b, K=10, steady=0, x=np.zeros(1),
     s = []
     v = [0]
     linf = 0
-    change = np.empty(K)
-    change_linf = np.empty(K)
+    change = np.empty(K_max)
+    change_linf = np.empty(K_max)
     n_filled = 0
-    for k in range(K):
+    eigs_ok = False   # True once all DMD eigenvalues are inside the unit circle
+    for k in range(K_max):
         x_new = matvec(x) + b
-        L2err = np.sum((x / x_new - 1)**2 / math.sqrt(N))
-        Linferr = np.max(np.abs(x / x_new - 1))
+        L2err = np.sqrt(np.mean(((x - x_new) / (np.abs(x_new) + 1e-14))**2))
+        Linferr = np.max(np.abs(x - x_new) / (np.max(np.abs(x_new)) + 1e-14))
         change[k] = L2err
         change_linf[k] = Linferr
         n_filled = k + 1
-        if k < K - 1:
+        if k < K_max - 1:
             Yminus[:, k] = x_new - x
             x_0 = x_new.copy()
         if k > 0:
@@ -660,7 +669,7 @@ def DMD_prec_inc(matvec, b, K=10, steady=0, x=np.zeros(1),
                 spos = s[(1 - np.cumsum(s) / np.sum(s)) >= (1.e-6) * res].copy()
             else:
                 spos = s[s > 0].copy()
-            mat_size = np.min([K, len(spos)])
+            mat_size = np.min([K_max, len(spos)])
             S = np.zeros((mat_size, mat_size))
             unew = 1.0 * u[:, 0:mat_size]
             vnew = 1.0 * vT[0:mat_size, 0:k]
@@ -672,9 +681,11 @@ def DMD_prec_inc(matvec, b, K=10, steady=0, x=np.zeros(1),
             if Atilde.shape[0] > 0:
                 try:
                     [eigsN, vsN] = np.linalg.eig(Atilde)
-                    if np.max(np.abs(eigsN)) > 1:
-                        print("*****Warning*****  The number of steps may be too small")
+                    eigs_ok = bool(np.max(np.abs(eigsN)) <= 1)
+                    if not eigs_ok:
                         eigsN[np.abs(eigsN) > 1] = 0
+                        if k == K_max - 1:
+                            print("*****Warning*****  The number of steps may be too small")
                     eigsN = np.real(eigsN)
                     Atilde = np.real(np.dot(np.dot(vsN, np.diag(eigsN)),
                                             np.linalg.inv(vsN)))
@@ -691,7 +702,8 @@ def DMD_prec_inc(matvec, b, K=10, steady=0, x=np.zeros(1),
                     print("There is an unexpected problem", e)
                     print(spos)
                     return x, change[:n_filled], change_linf[:n_filled], Atilde, Yplus, Yminus
-            if k > r + 1:
+            # Only return early once eigenvalues are stable inside unit circle
+            if k > r + 1 and eigs_ok:
                 return steady_update, change[:n_filled], change_linf[:n_filled], Atilde, Yplus, Yminus
 
     return steady_update, change[:n_filled], change_linf[:n_filled], Atilde, Yplus, Yminus
@@ -704,7 +716,7 @@ def solver_with_dmd(matvec, b, K=10, Rits=2, steady=1, x=np.zeros(1),
                     step_size=10, L2_tol=1e-8, Linf_tol=1e-3,
                     max_its=10, LOUD=0, order=4):
     """Solve via Richardson iteration + DMD acceleration (batch SVD)."""
-    N = b.size
+    N = b.size  # noqa: F841 (kept for reference)
     if x.size != b.size:
         x = b.copy()
     assert len(b.shape) == 1
@@ -719,8 +731,8 @@ def solver_with_dmd(matvec, b, K=10, Rits=2, steady=1, x=np.zeros(1),
     while (not converged) and (iteration < max_its):
         for r in range(Rits):
             x_new = matvec(x) + b
-            L2err = np.sum(((x - x_new) / (x_new + 1e-14))**2 / math.sqrt(N))
-            Linferr = np.max(np.abs(x - x_new) / np.max(np.abs(x_new) + 1e-14))
+            L2err = np.sqrt(np.mean(((x - x_new) / (np.abs(x_new) + 1e-14))**2))
+            Linferr = np.max(np.abs(x - x_new) / (np.max(np.abs(x_new)) + 1e-14))
             if (L2err < L2_tol) and (Linferr < Linf_tol):
                 converged = 1
             change_list.append(L2err)
@@ -754,6 +766,7 @@ def solver_with_dmd_inc(matvec, b, K=10, Rits=2, steady=1, x=np.zeros(1),
                         step_size=10, L2_tol=1e-8, Linf_tol=1e-3,
                         max_its=10, LOUD=0, order=4):
     """Solve via Richardson iteration + DMD acceleration (incremental SVD)."""
+    # NOTE: N kept below only for the size assertion; L2 norm uses np.mean.
     N = b.size
     if x.size != b.size:
         x = b.copy()
@@ -769,8 +782,8 @@ def solver_with_dmd_inc(matvec, b, K=10, Rits=2, steady=1, x=np.zeros(1),
     while (not converged) and (iteration < max_its):
         for r in range(Rits):
             x_new = matvec(x) + b
-            L2err = np.sum(((x - x_new) / (x_new + 1e-14))**2 / math.sqrt(N))
-            Linferr = np.max(np.abs(x - x_new) / np.max(np.abs(x_new) + 1e-14))
+            L2err = np.sqrt(np.mean(((x - x_new) / (np.abs(x_new) + 1e-14))**2))
+            Linferr = np.max(np.abs(x - x_new) / (np.max(np.abs(x_new)) + 1e-14))
             if (L2err < L2_tol) and (Linferr < Linf_tol):
                 converged = 1
             change_list.append(L2err)

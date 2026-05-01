@@ -1288,7 +1288,13 @@ class DiffusionOperatorSolver2D:
                 elif self.top_bc == 'neumann':
                     pass
 
-        return A.tocsr()
+        if skip_matrix:
+            # A was never converted to LIL and was never modified; the return
+            # value is discarded by all skip_matrix=True callers.
+            return None
+        result = A.tocsr()
+        del A  # free the LIL matrix immediately, before returning to the caller
+        return result
     
     def solve(self,
              rhs: np.ndarray,
@@ -1376,7 +1382,7 @@ class DiffusionOperatorSolver2D:
                     D_y_faces = self._cached_D_y_faces
                     rhs_bc = rhs_1d.copy()
                     self.apply_boundary_conditions(
-                        self._cached_A, rhs_bc, phi_1d, T_1d,
+                        None, rhs_bc, phi_1d, T_1d,
                         D_x_faces, D_y_faces, bc_time=bc_time,
                         skip_matrix=True
                     )
@@ -1395,9 +1401,10 @@ class DiffusionOperatorSolver2D:
                 )
 
                 lu = splu(A_full.tocsc())
+                del A_full  # free post-BC matrix; LU factorization is all we need
                 if not use_iterative:
                     self._cached_T = T_1d.copy()
-                    self._cached_A = A.copy()
+                    self._cached_A = A  # reference only — no copy needed; A goes out of scope after this block
                     self._cached_D_x_faces = D_x_faces
                     self._cached_D_y_faces = D_y_faces
                     self._cached_LU = lu

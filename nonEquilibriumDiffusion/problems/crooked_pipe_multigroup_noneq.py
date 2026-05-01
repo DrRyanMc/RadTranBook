@@ -488,9 +488,8 @@ def plot_solution(solver, time_value, save_prefix='crooked_pipe_noneq', show_mes
     R, Z = np.meshgrid(r_centers, z_centers, indexing='ij')
     first_one = True  # need colorbar every time because scale changes across time steps, so can't reuse previous one
     # PLOT 1: Material temperature
-    fig1, ax1 = plt.subplots(1, 1, figsize=(8, 3))
-    if first_one:
-        fig1, ax1 = plt.subplots(1, 1, figsize=(8, 3*1.275))
+    # Always use the taller figure (colorbar included every time)
+    fig1, ax1 = plt.subplots(1, 1, figsize=(8, 3*1.275))
     
     #make max color equal to current max rounded to nearest 0.01 keV for better comparison across time steps
     max_T = np.max(T_2d)
@@ -527,9 +526,8 @@ def plot_solution(solver, time_value, save_prefix='crooked_pipe_noneq', show_mes
     print(f"Saved: {filename1}")
     
     # PLOT 2: Radiation temperature
-    fig2, ax2 = plt.subplots(1, 1, figsize=(8, 3))
-    if first_one:
-        fig2, ax2 = plt.subplots(1, 1, figsize=(8, 3*1.275))
+    # Always use the taller figure (colorbar included every time)
+    fig2, ax2 = plt.subplots(1, 1, figsize=(8, 3*1.275))
     
     #make max color equal to current max rounded to nearest 0.01 keV for better comparison across time steps
     max_T_rad = np.max(T_rad_2d)

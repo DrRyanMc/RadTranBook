@@ -22,12 +22,12 @@ from utils.plotfuncs import font, hide_spines, show  # noqa: E402
 # NPZ files live in the RadTranBook root (same dir as project_root)
 NPZ_DIR = project_root
 
-GROUP_COUNTS = [2, 10, 50]#, 100]
+GROUP_COUNTS = [2, 10, 50, 100]
 FILE_PATTERN = (
     "marshak_wave_multigroup_powerlaw_{G}g_no_precond_timeBC.npz"
 )
 
-COLORS     = {1.0: "blue", 2.0: "red", 5.0: "green", 10.0: "orange"}
+COLORS     = {1.0: "blue", 2.0: "red", 5.0: "green"}#, 10.0: "orange"}
 LINESTYLES = {2: ":", 10: "-.", 50: "--", 100: "-"}
 TIMES_NS   = list(COLORS.keys())   # [1.0, 2.0, 5.0, 10.0]
 

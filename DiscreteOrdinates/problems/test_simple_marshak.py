@@ -48,7 +48,7 @@ CV_VOL = 0.3            # GJ/(cm^3 keV)
 # ---------------------------------------------------------------------------
 # Setup & run
 # ---------------------------------------------------------------------------
-def setup_and_run(I=200, order=3, N=8, tfinal=20.0,
+def setup_and_run(I=200, order=3, N=8, tfinal=10.0,
                   dt_min=1e-5, dt_max=0.05, K=800, maxits=2000,
                   LOUD=0):
     """Set up and run the simple Marshak wave.
@@ -173,7 +173,7 @@ def self_similar_T(x, t_ns):
 # ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
-def plot_results(results, plot_times_ns=(1.0, 10.0, 20.0), savefile=''):
+def plot_results(results, plot_times_ns=(1.0, 5.0, 10.0), savefile=''):
     """Plot T and T_r profiles and compare with the diffusion self-similar solution.
 
     Parameters
@@ -244,8 +244,8 @@ def main():
                         help='Bernstein polynomial order (default: 3)')
     parser.add_argument('--N', type=int, default=8,
                         help='Number of discrete ordinates (default: 8)')
-    parser.add_argument('--tfinal', type=float, default=20.0,
-                        help='Final time in ns (default: 20.0)')
+    parser.add_argument('--tfinal', type=float, default=10.0,
+                        help='Final time in ns (default: 10.0)')
     parser.add_argument('--dt-min', type=float, default=1e-5,
                         help='Minimum time step in ns (default: 1e-5)')
     parser.add_argument('--dt-max', type=float, default=0.05,
@@ -264,8 +264,8 @@ def main():
     parser.add_argument('--save-fig', type=str, default='',
                         help='Save figure to file (e.g. simple_marshak.pdf)')
     parser.add_argument('--plot-times', type=float, nargs='+',
-                        default=[1.0, 10.0, 20.0],
-                        help='Times to plot in ns (default: 1 10 20)')
+                        default=[1.0, 5.0, 10.0],
+                        help='Times to plot in ns (default: 1 5 10)')
     args = parser.parse_args()
 
     results = setup_and_run(
