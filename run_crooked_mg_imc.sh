@@ -51,12 +51,12 @@ BASE_ARGS="--n-groups ${N_GROUPS} \
            --Ntotal ${Ntotal} \
            --Nmax ${NMax} \
            --dt-initial 1e-4 \
-           --dt-max 10 \
+           --dt-max .01 \
            --dt-growth 1.1 \
            --bc-t-start 0.05 \
            --bc-t-end 0.5 \
            --bc-ramp-time 20.0 \
-           --output-times 0.001,0.01,0.1,1,5,10,20,50,100,200,500,1000 \
+           --output-times 0.001,0.01,0.1,1,5,10,20,50,100 \
            --checkpoint-every 10 \
            --max-events 10000000"
 
