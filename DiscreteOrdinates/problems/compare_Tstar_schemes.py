@@ -110,9 +110,9 @@ def main():
 
     # ── line styles per run ───────────────────────────────────────────────────
     styles = {
-        'Source Iteration  W=0':    dict(color='C1', ls='-',  lw=1.2, marker='^', ms=6),
+        'Source Iteration  W=0':    dict(color='C1', ls='-.',  lw=1.2, marker='^', ms=6),
         f'Source Iteration  W={W}': dict(color='C1', ls='--', lw=1.2, marker='v', ms=6),
-        'DMD  W=0':           dict(color='C0', ls='-',  lw=1.2, marker='o',   ms=4),
+        'DMD  W=0':           dict(color='C0', ls='-.',  lw=1.2, marker='o',   ms=4),
         f'DMD  W={W}':        dict(color='C0', ls='--', lw=1.2, marker='s',   ms=4),
     }
 
@@ -150,7 +150,7 @@ def main():
         tc = time_colors[i]
         # self-similar reference (use Source Iteration W=0 result for metadata)
         r_ss, T_ss = smw.self_similar_solution(tval, results['Source Iteration  W=0'])
-        ax2.plot(r_ss, T_ss, ':', color=tc, lw=2.0)
+        ax2.plot(r_ss, T_ss, '-', color=tc, lw=2.0)
 
         for label, _ in runs:
             r  = results[label]

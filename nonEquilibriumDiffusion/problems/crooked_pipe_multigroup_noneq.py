@@ -475,7 +475,7 @@ def plot_mesh(solver, n_groups=10):
     plt.close()
 
 
-def plot_solution(solver, time_value, save_prefix='crooked_pipe_noneq', show_mesh=False, first_one=False):
+def plot_solution(solver, time_value, save_prefix='crooked_pipe_noneq', show_mesh=False, first_one=False, T_bc=None):
     """Plot material temperature and radiation temperature as separate figures"""
     T_2d = solver.T.reshape(solver.nx_cells, solver.ny_cells)
     phi_2d = np.sum(solver.phi_g_stored, axis=0).reshape(solver.nx_cells, solver.ny_cells)
@@ -532,6 +532,8 @@ def plot_solution(solver, time_value, save_prefix='crooked_pipe_noneq', show_mes
     #make max color equal to current max rounded to nearest 0.01 keV for better comparison across time steps
     max_T_rad = np.max(T_rad_2d)
     vmax_T_rad = np.ceil(max_T_rad * 100) / 100.0
+    if T_bc is not None:
+        vmax_T_rad = min(vmax_T_rad, 1.1 * T_bc)
     im2 = ax2.pcolormesh(Z, R, T_rad_2d, shading='auto', cmap='plasma', vmin=T_init, vmax=vmax_T_rad)
     ax2.set_xlabel('z (cm)', fontsize=12)
     ax2.set_ylabel('r (cm)', fontsize=12)
@@ -1068,6 +1070,7 @@ def main(
                     save_prefix=f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}',
                     show_mesh=False,
                     first_one=first_one,
+                    T_bc=boundary_temperature(t),
                 )
                 output_times_saved.add(output_t)
                 last_save_t = t
@@ -1100,7 +1103,7 @@ def main(
 
     if t_final not in output_times_saved:
         print(f"  Saving colormap at final time t = {t_final:.3f} ns")
-        plot_solution(solver, t_final, save_prefix=f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}', show_mesh=False, first_one=first_one)
+        plot_solution(solver, t_final, save_prefix=f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}', show_mesh=False, first_one=first_one, T_bc=boundary_temperature(t_final))
 
     times = np.array(times)
     for label in fiducial_data:

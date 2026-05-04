@@ -509,7 +509,11 @@ def temp_solve_ld(
         else:
             dt = dt_min
         if (tfinal - t_current) < dt:
-            dt = tfinal - t_current
+            snap_to_final = tfinal - t_current
+            if snap_to_final > 1e-10 * dt_min:
+                dt = snap_to_final
+            else:
+                break  # floating-point residual; we are effectively at tfinal
         try:
             if (time_outputs is not None and
                     t_current + dt > time_outputs[t_output_index] and

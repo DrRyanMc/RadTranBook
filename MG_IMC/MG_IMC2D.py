@@ -646,38 +646,39 @@ def _move_particle_xy(weight, ux, uy, x, y, i, j, x_edges, y_edges, sigma_a, sig
 
 @jit(nopython=True, cache=True)
 def _distance_to_radial_boundary_rz(r, mu_perp, eta, R):
-    """Distance to cross radial boundary at radius R in cylindrical geometry."""
-    if abs(mu_perp) < 1e-12:
+    """Distance to cross radial boundary at radius R in cylindrical geometry.
+
+    Uses the correct transverse-path formulation: the transverse (off-axis)
+    displacement is l = s * sqrt(1 - eta^2), not s * sqrt(1 - mu_perp^2).
+    Matches the gray IMC _distance_to_radial_boundary_rz_jit.
+    """
+    one_minus_eta2 = 1.0 - eta * eta
+    if one_minus_eta2 < 1e-15:
+        # Particle moving purely axially — never crosses a radial boundary.
         return 1e30
-    
-    sin2 = 1.0 - mu_perp * mu_perp
-    if sin2 < 0.0:
-        sin2 = 0.0
-    
-    a = sin2
-    b = 2.0 * r * mu_perp
-    c = r * r - R * R
-    
-    if abs(a) < 1e-14:
-        if abs(b) > 1e-14:
-            s = -c / b
-            return s if s > 0.0 else 1e30
+
+    # Impact parameter squared: b^2 = r^2 * (1 - mu_perp^2)
+    b2 = r * r * (1.0 - mu_perp * mu_perp)
+    disc = R * R - b2
+    if disc <= 0.0:
         return 1e30
-    
-    disc = b * b - 4.0 * a * c
-    if disc < 0.0:
-        return 1e30
-    
-    sqrt_disc = np.sqrt(disc)
-    s1 = (-b + sqrt_disc) / (2.0 * a)
-    s2 = (-b - sqrt_disc) / (2.0 * a)
-    
+
+    root = np.sqrt(disc)
+    # Transverse distances to the two intersections: l = -r*mu_perp ± root
+    l_plus  = -r * mu_perp + root
+    l_minus = -r * mu_perp - root
+
+    # Convert transverse distance to path length: s = l / sqrt(1 - eta^2)
+    denom = np.sqrt(one_minus_eta2)
     s_min = 1e30
-    if s1 > 1e-14:
-        s_min = min(s_min, s1)
-    if s2 > 1e-14:
-        s_min = min(s_min, s2)
-    
+    if l_plus > 1e-15:
+        s = l_plus / denom
+        if s < s_min:
+            s_min = s
+    if l_minus > 1e-15:
+        s = l_minus / denom
+        if s < s_min:
+            s_min = s
     return s_min
 
 @jit(nopython=True, cache=True)
@@ -713,10 +714,26 @@ def _move_particle_rz(weight, mu_perp, eta, r, z, i, j, r_edges, z_edges, sigma_
     if s_min < 1e-14:
         s_min = max(s_min, sr, sz, distance_to_census)
 
-    # New position
-    sin_theta = np.sqrt(max(0.0, 1.0 - mu_perp * mu_perp))
-    r_new = np.sqrt(max(0.0, r * r + 2.0 * r * mu_perp * s_min + sin_theta * sin_theta * s_min * s_min))
+    # New position — use the correct transverse path length l = s * sqrt(1 - eta^2),
+    # matching the gray IMC formula (NOT sqrt(1 - mu_perp^2)).
+    one_minus_eta2 = max(0.0, 1.0 - eta * eta)
+    l = s_min * np.sqrt(one_minus_eta2)   # transverse (off-axis) displacement
+    r_new_sq = r * r + 2.0 * r * mu_perp * l + l * l
+    if r_new_sq < 0.0:
+        r_new_sq = 0.0
+    r_new = np.sqrt(r_new_sq)
     z_new = z + eta * s_min
+
+    # Geometric update of mu_perp (direction cosine w.r.t. local radial unit vector
+    # changes as the particle moves in cylindrical geometry).
+    if r_new > 1e-15 and l > 0.0:
+        mu_perp_new = (r * mu_perp + l) / r_new
+        if mu_perp_new > 1.0:
+            mu_perp_new = 1.0
+        elif mu_perp_new < -1.0:
+            mu_perp_new = -1.0
+    else:
+        mu_perp_new = mu_perp
 
     # Absorption
     if sigma_a > 1e-12:
@@ -747,7 +764,7 @@ def _move_particle_rz(weight, mu_perp, eta, r, z, i, j, r_edges, z_edges, sigma_
             crossing = _CROSS_J_MINUS
         evt = _EVT_BOUNDARY
 
-    return r_new, z_new, w_new, deposited, s_min, evt, crossing
+    return r_new, z_new, mu_perp_new, w_new, deposited, s_min, evt, crossing
 
 
 @jit(nopython=True, cache=True)
@@ -845,9 +862,10 @@ def _transport_particles_2d_mg(
                     w, d1, d2, x, y, i, j, edges1, edges2, sig_a, sig_s, distance_to_census
                 )
             else:
-                x_new, y_new, w_new, deposited, s_min, evt, crossing = _move_particle_rz(
+                x_new, y_new, d1_new, w_new, deposited, s_min, evt, crossing = _move_particle_rz(
                     w, d1, d2, x, y, i, j, edges1, edges2, sig_a, sig_s, distance_to_census
                 )
+                d1 = d1_new   # geometric update of mu_perp in cylindrical coordinates
 
             # Record deposition and scalar intensity
             dep_cell[g, i, j] += deposited / volumes[i, j]
@@ -987,8 +1005,8 @@ def _equilibrium_sample_xy_mg(N, Tr, x_edges, y_edges, energy_edges):
 
     weights = np.full(N, E_eq / N)
 
-    # Sample positions uniformly by volume
-    vol_flat = volumes.flatten()
+    # Sample positions uniformly by volume — F-order so flat=i+j*nx matches % nx, // nx
+    vol_flat = volumes.flatten(order='F')
     probs = vol_flat / np.sum(vol_flat)
     flat_indices = np.random.choice(len(vol_flat), size=N, p=probs)
     
@@ -1037,7 +1055,8 @@ def _equilibrium_sample_rz_mg(N, Tr, r_edges, z_edges, energy_edges):
 
     weights = np.full(N, E_eq / N)
 
-    vol_flat = volumes.flatten()
+    # F-order so flat=i+j*nr matches % nr, // nr
+    vol_flat = volumes.flatten(order='F')
     probs = vol_flat / np.sum(vol_flat)
     flat_indices = np.random.choice(len(vol_flat), size=N, p=probs)
     
@@ -1122,7 +1141,7 @@ def _sample_source_xy_mg(N, source, dt, x_edges, y_edges, energy_edges, temperat
         n_g = np.sum(mask)
         if n_g > 0:
             # Weight cells by source*volume, not just source
-            source_g_flat = (source_mg[g, :, :] * volumes).flatten()
+            source_g_flat = (source_mg[g, :, :] * volumes).flatten(order='F')
             if np.sum(source_g_flat) > 0:
                 probs_g = source_g_flat / np.sum(source_g_flat)
                 flat_idx = np.random.choice(len(source_g_flat), size=n_g, p=probs_g)
@@ -1183,7 +1202,7 @@ def _sample_source_rz_mg(N, source, dt, r_edges, z_edges, energy_edges, temperat
         n_g = np.sum(mask)
         if n_g > 0:
             # Weight cells by source*volume, not just source
-            source_g_flat = (source_mg[g, :, :] * volumes).flatten()
+            source_g_flat = (source_mg[g, :, :] * volumes).flatten(order='F')
             if np.sum(source_g_flat) > 0:
                 probs_g = source_g_flat / np.sum(source_g_flat)
                 flat_idx = np.random.choice(len(source_g_flat), size=n_g, p=probs_g)
@@ -1323,7 +1342,7 @@ def _comb_mg(weights, cell_i, cell_j, groups, dir1, dir2, times, pos1, pos2, Nma
         mask = (groups == g)
         if np.any(mask):
             flat_indices = cell_i[mask] + cell_j[mask] * nx
-            rad_by_cell = np.bincount(flat_indices, weights=weights[mask], minlength=nx * ny).reshape(nx, ny)
+            rad_by_cell = np.bincount(flat_indices, weights=weights[mask], minlength=nx * ny).reshape(nx, ny, order='F')
             rad_energy_before[g, :, :] = rad_by_cell
 
     rad_energy_after = np.zeros((n_groups, nx, ny))
@@ -1332,7 +1351,7 @@ def _comb_mg(weights, cell_i, cell_j, groups, dir1, dir2, times, pos1, pos2, Nma
             mask = (ng == g)
             if np.any(mask):
                 flat_indices = ni[mask] + nj[mask] * nx
-                rad_by_cell = np.bincount(flat_indices, weights=nw[mask], minlength=nx * ny).reshape(nx, ny)
+                rad_by_cell = np.bincount(flat_indices, weights=nw[mask], minlength=nx * ny).reshape(nx, ny, order='F')
                 rad_energy_after[g, :, :] = rad_by_cell
 
     comb_energy_discrepancy = rad_energy_before - rad_energy_after
@@ -1409,7 +1428,7 @@ def init_simulation(
         mask = (groups == g)
         if np.any(mask):
             flat = _flatten_index(cell_i[mask], cell_j[mask], nx)
-            rad_cell_g = np.bincount(flat, weights=weights[mask], minlength=nx * ny).reshape(nx, ny)
+            rad_cell_g = np.bincount(flat, weights=weights[mask], minlength=nx * ny).reshape(nx, ny, order='F')
             radiation_energy_by_group[g, :, :] = rad_cell_g / volumes
 
     # Overall radiation temperature
@@ -1466,6 +1485,95 @@ def init_simulation(
     )
 
 
+def _estimate_boundary_emission_energy(geometry, edges1, edges2, b_left, b_right, b_bottom, b_top, dt, boundary_source_func=None):
+    """Compute total boundary emission energy analytically (no particle sampling).
+
+    Mirrors the area-weighted integral in ``_sample_boundary_rz/xy`` so that
+    the result is exactly the weight sum that would be produced if we did sample.
+
+    Parameters
+    ----------
+    geometry : "xy" or "rz"
+    edges1, edges2 : boundary coordinate arrays
+    b_left, b_right, b_bottom, b_top : float
+        Uniform boundary temperatures already resolved by
+        ``_boundary_temperature_value``.
+    dt : float
+    boundary_source_func : callable(r, z, side) → T, optional
+
+    Returns
+    -------
+    E_bc : float
+        Total boundary emission energy this step.
+    """
+    E_bc = 0.0
+    r0, r1 = edges1[0], edges1[-1]
+    z0, z1 = edges2[0], edges2[-1]
+
+    if geometry == "xy":
+        uniform = {
+            "left":   (b_left,   lambda: 2.0 * (z1 - z0)),
+            "right":  (b_right,  lambda: 2.0 * (z1 - z0)),
+            "bottom": (b_bottom, lambda: (r1 - r0)),
+            "top":    (b_top,    lambda: (r1 - r0)),
+        }
+        for side, (Tb, area_fn) in uniform.items():
+            if boundary_source_func is not None:
+                if side in ("left", "right"):
+                    R = r0 if side == "left" else r1
+                    z_centers = 0.5 * (edges2[:-1] + edges2[1:])
+                    dz = np.diff(edges2)
+                    for kz, z_c in enumerate(z_centers):
+                        T_bc = boundary_source_func(R, z_c, side)
+                        if T_bc > 0.0:
+                            E_bc += __a * __c * T_bc**4 / 4.0 * 2.0 * dz[kz] * dt
+                else:
+                    Z = z0 if side == "bottom" else z1
+                    x_centers = 0.5 * (edges1[:-1] + edges1[1:])
+                    dx = np.diff(edges1)
+                    for kx, x_c in enumerate(x_centers):
+                        T_bc = boundary_source_func(x_c, Z, side)
+                        if T_bc > 0.0:
+                            E_bc += __a * __c * T_bc**4 / 4.0 * dx[kx] * dt
+            elif Tb > 0.0:
+                E_bc += __a * __c * Tb**4 / 4.0 * area_fn() * dt
+    else:  # rz
+        uniform = {
+            "rmin": b_left,
+            "rmax": b_right,
+            "zmin": b_bottom,
+            "zmax": b_top,
+        }
+        for side, Tb in uniform.items():
+            if boundary_source_func is not None:
+                if side in ("rmin", "rmax"):
+                    R = r0 if side == "rmin" else r1
+                    z_centers = 0.5 * (edges2[:-1] + edges2[1:])
+                    dz = np.diff(edges2)
+                    for kz, z_c in enumerate(z_centers):
+                        T_bc = boundary_source_func(R, z_c, side)
+                        if T_bc > 0.0:
+                            E_bc += __a * __c * T_bc**4 / 4.0 * 2.0 * np.pi * R * dz[kz] * dt
+                else:
+                    Z = z0 if side == "zmin" else z1
+                    r_centers = 0.5 * (edges1[:-1] + edges1[1:])
+                    for kr, r_c in enumerate(r_centers):
+                        T_bc = boundary_source_func(r_c, Z, side)
+                        if T_bc > 0.0:
+                            r_in  = edges1[kr]
+                            r_out = edges1[kr + 1]
+                            E_bc += __a * __c * T_bc**4 / 4.0 * np.pi * (r_out**2 - r_in**2) * dt
+            elif Tb > 0.0:
+                if side in ("rmin", "rmax"):
+                    R = r0 if side == "rmin" else r1
+                    area = 2.0 * np.pi * R * (z1 - z0)
+                else:
+                    area = np.pi * (r1**2 - r0**2)
+                E_bc += __a * __c * Tb**4 / 4.0 * area * dt
+
+    return E_bc
+
+
 def step(
     state,
     Ntarget,
@@ -1489,6 +1597,8 @@ def step(
     max_events_per_particle=1_000_000,
     boundary_source_func=None,
     emission_fractions=None,
+    Ntotal=0,
+    Ntotal_T_floor=0.0,
     _timing=False,
 ):
     """Advance one 2D multigroup IMC step.
@@ -1547,6 +1657,49 @@ def step(
     for g in range(n_groups):
         sigma_s[g, :, :] = sigma_a[g, :, :] * (1.0 - f)
         sigma_a[g, :, :] = sigma_a[g, :, :] * f
+
+    # ── Energy-proportional particle split ────────────────────────────────────
+    # When Ntotal > 0, ignore the caller-supplied Ntarget / Nboundary and instead
+    # split the total budget in proportion to the expected energy emitted from
+    # the boundary and from material absorption-re-emission this step.
+    E_bc_est  = float('nan')
+    E_mat_est = float('nan')
+    if Ntotal > 0:
+        b_left_pre   = _boundary_temperature_value(T_boundary[0], state.time)
+        b_right_pre  = _boundary_temperature_value(T_boundary[1], state.time)
+        b_bottom_pre = _boundary_temperature_value(T_boundary[2], state.time)
+        b_top_pre    = _boundary_temperature_value(T_boundary[3], state.time)
+
+        E_bc_est = _estimate_boundary_emission_energy(
+            geometry, edges1, edges2,
+            b_left_pre, b_right_pre, b_bottom_pre, b_top_pre,
+            dt, boundary_source_func,
+        )
+
+        # Material emission: sum_g sigma_a[g] * (B_g[g]/b_sum) * a*c*T^4*dt*V
+        # B_g and sigma_a are already Fleck-modified; this is exactly E_emit.
+        # Cells at or below Ntotal_T_floor are excluded so that a uniformly cold
+        # domain does not swamp the boundary in the split (only cells that have
+        # been heated above the floor count toward E_mat_est).
+        b_sum_pre  = np.sum(B_g, axis=0) + 1e-300
+        b_star_pre = B_g / b_sum_pre[None, :, :]
+        cell_emiss = np.sum(sigma_a * b_star_pre, axis=0) * __a * __c * temperature**4 * dt * volumes
+        if Ntotal_T_floor > 0.0:
+            cell_emiss = np.where(temperature > Ntotal_T_floor, cell_emiss, 0.0)
+        E_mat_est = float(np.sum(cell_emiss))
+
+        E_total_est = E_bc_est + E_mat_est
+        if E_total_est > 0.0:
+            frac_bc = E_bc_est / E_total_est
+        else:
+            frac_bc = 0.5
+
+        # Clamp split: each source gets at least 10 % of Ntotal so neither
+        # channel is starved when one energy strongly dominates.
+        frac_bc = float(np.clip(frac_bc, 0.1, 0.9))
+
+        Nboundary = int(round(Ntotal * frac_bc))
+        Ntarget   = Ntotal - Nboundary
 
     # Boundary injection
     b_left = _boundary_temperature_value(T_boundary[0], state.time)
@@ -1679,8 +1832,9 @@ def step(
         E_emit = float(np.sum(total_emission_per_cell))
         
         if E_emit > 0.0:
-            # Sample cell locations
-            emission_flat = total_emission_per_cell.flatten()
+            # Sample cell locations — use F-order flatten so flat_index = i + j*nx,
+            # consistent with ci = flat % nx, cj = flat // nx used throughout.
+            emission_flat = total_emission_per_cell.flatten(order='F')
             probs_cell = emission_flat / E_emit
             flat_indices = np.random.choice(len(emission_flat), size=Ntarget, p=probs_cell)
             
@@ -1774,7 +1928,7 @@ def step(
             )
             if np.any(mask):
                 flat = _flatten_index(cell_i[mask], cell_j[mask], nx)
-                rad_cell_g = np.bincount(flat, weights=weights[mask], minlength=nx * ny).reshape(nx, ny)
+                rad_cell_g = np.bincount(flat, weights=weights[mask], minlength=nx * ny).reshape(nx, ny, order='F')
                 radiation_energy_by_group_precomb[g, :, :] = rad_cell_g / volumes
 
     # Combing
@@ -1810,7 +1964,7 @@ def step(
         )
         if np.any(mask):
             flat = _flatten_index(cell_i[mask], cell_j[mask], nx)
-            rad_cell_g = np.bincount(flat, weights=weights[mask], minlength=nx * ny).reshape(nx, ny)
+            rad_cell_g = np.bincount(flat, weights=weights[mask], minlength=nx * ny).reshape(nx, ny, order='F')
             radiation_energy_by_group_postcomb[g, :, :] = rad_cell_g / volumes
 
     # Use the pre-comb diagnostic tally for reported radiation temperature.
@@ -1860,6 +2014,10 @@ def step(
         "radiation_energy_by_group": radiation_energy_by_group_precomb,
         "radiation_energy_by_group_postcomb": radiation_energy_by_group_postcomb,
         "N_particles": len(weights),
+        "N_boundary": Nboundary,
+        "N_target": Ntarget,
+        "E_boundary_est": E_bc_est,
+        "E_material_est": E_mat_est,
         "total_energy": total_energy,
         "total_internal_energy": total_internal,
         "total_radiation_energy": total_rad,

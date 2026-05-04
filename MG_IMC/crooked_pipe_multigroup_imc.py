@@ -219,37 +219,51 @@ def generate_refined_faces(coord_min, coord_max, interface_locations,
 # VISUALISATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def plot_solution(T_mat, T_rad, r_centers, z_centers, time_value, save_prefix):
-    """2-panel colourmap: material T and radiation T.  No figure leak."""
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-    extent = [z_centers[0], z_centers[-1], r_centers[0], r_centers[-1]]
+def plot_solution(T_mat, T_rad, r_centers, z_centers, time_value, save_prefix,
+                  r_edges=None, z_edges=None, T_bc=None):
+    """Separate colourmap figures for material T and radiation T.
 
-    vmin = min(T_mat.min(), T_rad.min(), T_INIT * 0.9)
-    vmax = max(T_mat.max(), T_rad.max())
+    Uses pcolormesh with actual mesh edges so non-uniform (refined) grids
+    render at the correct physical coordinates.  One PNG per field, matching
+    the style of the diffusion solver version.
+    """
+    # Build edge arrays if not supplied (uniform-mesh fall-back).
+    if r_edges is None:
+        dr = r_centers[1] - r_centers[0] if len(r_centers) > 1 else 1.0
+        r_edges = np.concatenate([[r_centers[0] - 0.5 * dr],
+                                   0.5 * (r_centers[:-1] + r_centers[1:]),
+                                   [r_centers[-1] + 0.5 * dr]])
+    if z_edges is None:
+        dz = z_centers[1] - z_centers[0] if len(z_centers) > 1 else 1.0
+        z_edges = np.concatenate([[z_centers[0] - 0.5 * dz],
+                                   0.5 * (z_centers[:-1] + z_centers[1:]),
+                                   [z_centers[-1] + 0.5 * dz]])
 
-    for ax, T_field, title in zip(
-        axes,
-        [T_mat, T_rad],
-        ['Material Temperature (keV)', 'Radiation Temperature (keV)'],
-    ):
-        im = ax.imshow(
-            T_field,
-            origin='lower',
-            aspect='auto',
-            extent=extent,
+    ZE, RE = np.meshgrid(z_edges, r_edges)  # both (nr+1, nz+1)
+
+    vmin = T_INIT
+
+    for T_field, tag in [(T_mat, 'material'), (T_rad, 'radiation')]:
+        vmax = np.ceil(T_field.max() * 100) / 100.0
+        if tag == 'radiation' and T_bc is not None:
+            vmax = min(vmax, 1.1 * T_bc)
+
+        fig, ax = plt.subplots(1, 1, figsize=(8, 3 * 1.275))
+        im = ax.pcolormesh(
+            ZE, RE, T_field,
             vmin=vmin, vmax=vmax,
-            cmap='inferno',
+            cmap='plasma',
+            shading='flat',
         )
         plt.colorbar(im, ax=ax)
         ax.set_xlabel('z (cm)')
         ax.set_ylabel('r (cm)')
-        ax.set_title(f'{title}\nt = {time_value:.4f} ns')
-
-    fig.tight_layout()
-    fname = f'{save_prefix}_t{time_value:.4f}ns.png'
-    fig.savefig(fname, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-    print(f'    Saved {fname}')
+        ax.set_aspect('equal')
+        plt.tight_layout()
+        fname = f'{save_prefix}_{tag}_t_{time_value:.5f}ns.png'
+        fig.savefig(fname, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        print(f'    Saved {fname}')
 
 
 def plot_fiducial_history(times, fiducial_data, fiducial_data_rad, mesh_tag):
@@ -278,17 +292,28 @@ def plot_fiducial_history(times, fiducial_data, fiducial_data_rad, mesh_tag):
     print(f'    Saved {fname}')
 
 
-def plot_material_layout(r_centers, z_centers, run_tag):
+def plot_material_layout(r_centers, z_centers, run_tag, r_edges=None, z_edges=None):
     """Quick sanity-check plot of the thick/thin material map."""
     R, Z = np.meshgrid(r_centers, z_centers, indexing='ij')
     rho = material_density(R, Z)
+
+    if r_edges is None:
+        dr = r_centers[1] - r_centers[0] if len(r_centers) > 1 else 1.0
+        r_edges = np.concatenate([[r_centers[0] - 0.5 * dr],
+                                   0.5 * (r_centers[:-1] + r_centers[1:]),
+                                   [r_centers[-1] + 0.5 * dr]])
+    if z_edges is None:
+        dz = z_centers[1] - z_centers[0] if len(z_centers) > 1 else 1.0
+        z_edges = np.concatenate([[z_centers[0] - 0.5 * dz],
+                                   0.5 * (z_centers[:-1] + z_centers[1:]),
+                                   [z_centers[-1] + 0.5 * dz]])
+
+    ZE, RE = np.meshgrid(z_edges, r_edges)
     fig, ax = plt.subplots(figsize=(4, 7))
-    im = ax.imshow(
-        rho,
-        origin='lower',
-        extent=[z_centers[0], z_centers[-1], r_centers[0], r_centers[-1]],
-        aspect='auto',
+    im = ax.pcolormesh(
+        ZE, RE, rho,
         cmap='RdBu_r',
+        shading='flat',
     )
     plt.colorbar(im, ax=ax, label='rho (g/cm^3)')
     ax.set_xlabel('z (cm)')
@@ -399,6 +424,8 @@ def main(
     dt_increase_factor=1.1,
     Ntarget=20000,
     Nboundary=20000,
+    Ntotal=0,
+    Ntotal_T_floor=0.0,
     Nmax=100000,
     bc_t_start=0.05,
     bc_t_end=0.5,
@@ -430,9 +457,19 @@ def main(
     dt_increase_factor : float
         Factor by which dt grows each step (no output hit).
     Ntarget : int
-        Target emission particles per step.
+        Target emission particles per step (used when Ntotal=0).
     Nboundary : int
-        Boundary source particles per step.
+        Boundary source particles per step (used when Ntotal=0).
+    Ntotal : int
+        If > 0, override Ntarget/Nboundary and split this total budget
+        between boundary and material emission proportional to the energy
+        emitted from each source every step.
+    Ntotal_T_floor : float
+        When using Ntotal mode, material cells at or below this temperature
+        (keV) are excluded from the material emission estimate so that a cold
+        bulk domain does not dilute the boundary share.  Set to
+        ``1.1 * T_INIT`` (or similar) to ignore unheated material.
+        Clamp is always applied: f_bc is restricted to [0.1, 0.9].
     Nmax : int
         Maximum census particles after combing.
     bc_t_start : float
@@ -532,19 +569,35 @@ def main(
     print('=' * 72)
     print(f'  n_groups  = {n_groups}')
     print(f'  mesh      = {nr_actual} x {nz_actual}  ({mesh_tag})')
-    print(f'  Ntarget   = {Ntarget},  Nboundary = {Nboundary},  Nmax = {Nmax}')
+    if Ntotal > 0:
+        floor_str = f', T_floor={Ntotal_T_floor:.4g} keV' if Ntotal_T_floor > 0 else ''
+        print(f'  Ntotal    = {Ntotal}  (energy-proportional split{floor_str}),  Nmax = {Nmax}')
+    else:
+        print(f'  Ntarget   = {Ntarget},  Nboundary = {Nboundary},  Nmax = {Nmax}')
     print(f'  dt_init   = {dt_initial} ns,  dt_max = {dt_max} ns,  growth = {dt_increase_factor}')
     print(f'  T_bc ramp : {bc_t_start} → {bc_t_end} keV over {bc_ramp_time} ns')
     print(f'  output_times: {output_times}  (t_final={t_final} ns)')
     print(f'  checkpoint: {checkpoint_file}')
+    print()
+    print('  Boundary condition type: SURFACE blackbody source (NOT volumetric)')
+    print(f'    Face: z=0 (zmin), r < 0.5 cm')
+    print(f'    Source area: pi*0.5^2 = {np.pi*0.5**2:.4f} cm^2')
+    print(f'    Emission weight per particle = (a*c/4) * T_bc^4 * A_cell * dt  (Planck half-flux)')
+    print(f'    All other boundary faces: vacuum (open)')
+    print(f'    Left (rmin): reflecting (cylindrical axis symmetry)')
+    T_bc_t0 = bc_t_start
+    E_bc_per_ns = A_RAD * C_LIGHT / 4.0 * T_bc_t0**4 * np.pi * 0.5**2
+    print(f'    Expected boundary power at t=0: {E_bc_per_ns:.4e} GJ/ns')
     print('=' * 72)
 
     # ── Material layout plot ──────────────────────────────────────────────────
-    plot_material_layout(r_centers, z_centers, run_tag)
+    plot_material_layout(r_centers, z_centers, run_tag, r_edges=r_edges, z_edges=z_edges)
 
     # ── Boundary temperature ramp ────────────────────────────────────────────
     def boundary_temperature(t):
         """Linearly ramp T_bc from bc_t_start to bc_t_end over bc_ramp_time."""
+        if bc_ramp_time <= 0.0:
+            return bc_t_end
         frac = float(np.clip(t / bc_ramp_time, 0.0, 1.0))
         return bc_t_start + (bc_t_end - bc_t_start) * frac
 
@@ -553,14 +606,20 @@ def main(
     _t_now = [0.0]
 
     def boundary_source_func(r, z, side):
-        """Position-dependent boundary emission.
+        """Position-dependent SURFACE blackbody source.
 
-        Returns the emission temperature (keV) at (r, z) on *side*.
-        Only the bottom face (z=0, 'zmin') within r < 0.5 cm emits.
+        Called by _sample_boundary_rz for each r-cell on the zmin face.
+        Returns the blackbody emission temperature (keV); 0.0 means no emission.
+        Emission weight = a*c/4 * T^4 * annular_area * dt  (surface flux, NOT volumetric).
+        Source region: z=0 face, r < 0.5 cm only.
         """
         if side == 'zmin' and r < 0.5:
             return boundary_temperature(_t_now[0])
         return 0.0
+
+    # Precompute expected boundary emission per ns for the source region.
+    # E_bc = (a*c/4) * T_bc^4 * pi * r_source^2 * dt
+    _r_source = 0.5  # cm
 
     # ── Fiducial monitor points ───────────────────────────────────────────────
     fiducial_points = {
@@ -645,6 +704,8 @@ def main(
         'mesh_tag':        mesh_tag,
         'Ntarget':         Ntarget,
         'Nboundary':       Nboundary,
+        'Ntotal':          Ntotal,
+        'Ntotal_T_floor':  Ntotal_T_floor,
         'Nmax':            Nmax,
         'bc_t_start':      bc_t_start,
         'bc_t_end':        bc_t_end,
@@ -680,6 +741,8 @@ def main(
             state=state,
             Ntarget=Ntarget,
             Nboundary=Nboundary,
+            Ntotal=Ntotal,
+            Ntotal_T_floor=Ntotal_T_floor,
             Nsource=0,
             Nmax=Nmax,
             T_boundary=T_boundary,
@@ -705,12 +768,27 @@ def main(
             fiducial_data[label].append(float(state.temperature[ii, jj]))
             fiducial_data_rad[label].append(float(state.radiation_temperature[ii, jj]))
 
-        # Console output every 10 steps
-        if step_count % 10 == 0:
-            e_mat = info.get('total_internal_energy', float('nan'))
-            e_rad = info.get('total_radiation_energy', float('nan'))
-            n_par = info.get('N_particles', len(state.weights))
-            print(f'{state.time:12.6f}  {n_par:8d}  {e_mat:14.6e}  {e_rad:14.6e}')
+        # ── Per-step diagnostic ────────────────────────────────────────────
+        e_mat = info.get('total_internal_energy', float('nan'))
+        e_rad = info.get('total_radiation_energy', float('nan'))
+        n_par = info.get('N_particles', len(state.weights))
+        actual_be   = info.get('boundary_emission', float('nan'))
+        T_bc_now    = boundary_temperature(_t_now[0])
+        expected_be = A_RAD * C_LIGHT / 4.0 * T_bc_now**4 * (np.pi * _r_source**2) * step_dt
+        ratio_be    = actual_be / expected_be if expected_be > 0 else float('nan')
+        split_str = ''
+        if Ntotal > 0:
+            nb_act = info.get('N_boundary', 0)
+            nt_act = info.get('N_target', 0)
+            ebc = info.get('E_boundary_est', float('nan'))
+            emt = info.get('E_material_est', float('nan'))
+            frac = ebc / (ebc + emt) if (ebc + emt) > 0 else float('nan')
+            split_str = f'  [split] Nbc={nb_act} Nmat={nt_act} f_bc={frac:.3f}'
+        print(f'{state.time:10.6f} ns  N={n_par:8d}  '
+              f'E_mat={e_mat:.4e}  E_rad={e_rad:.4e}  '
+              f'[BC] T_bc={T_bc_now:.4f}keV  '
+              f'expected={expected_be:.4e}  actual={actual_be:.4e}  '
+              f'ratio={ratio_be:.3f}{split_str}')
 
         # Output at requested times
         for tout in output_times:
@@ -722,6 +800,9 @@ def main(
                     r_centers, z_centers,
                     state.time,
                     save_prefix=f'crooked_pipe_mg_imc_{run_tag}',
+                    r_edges=r_edges,
+                    z_edges=z_edges,
+                    T_bc=T_bc_now,
                 )
                 output_times_saved.add(tout)
                 # Always checkpoint at output times
@@ -813,11 +894,20 @@ def parse_arguments():
                         help='Maximum time step (ns)')
     parser.add_argument('--dt-growth',  type=float, default=1.1,
                         help='Time-step growth factor per step')
-    parser.add_argument('--Ntarget',    type=int,   default=20000,
-                        help='Target emission particles per step')
-    parser.add_argument('--Nboundary',  type=int,   default=20000,
-                        help='Boundary source particles per step')
-    parser.add_argument('--Nmax',       type=int,   default=100000,
+    parser.add_argument('--Ntarget',    type=int,   default=200000,
+                        help='Target emission particles per step (ignored when --Ntotal > 0)')
+    parser.add_argument('--Nboundary',  type=int,   default=200000,
+                        help='Boundary source particles per step (ignored when --Ntotal > 0)')
+    parser.add_argument('--Ntotal',     type=int,   default=0,
+                        help='If > 0, total new particles per step split proportionally '
+                             'between boundary and material emission by energy. '
+                             'Overrides --Ntarget and --Nboundary.')
+    parser.add_argument('--Ntotal-T-floor', type=float, default=0.0,
+                        help='When using --Ntotal, exclude material cells at or below '
+                             'this temperature (keV) from the emission estimate. '
+                             'E.g. set to 1.1*T_init=0.011 to ignore cold material. '
+                             'Split is always clamped to [0.1, 0.9].')
+    parser.add_argument('--Nmax',       type=int,   default=1000000,
                         help='Maximum census particles after combing')
     parser.add_argument('--bc-t-start', type=float, default=0.05,
                         help='Boundary source T at t=0 (keV)')
@@ -838,7 +928,7 @@ def parse_arguments():
                         help='Coarse z cells before refinement (default: --nz)')
     parser.add_argument('--refine-width', type=float, default=0.05,
                         help='Half-width of refinement zone around interfaces (cm)')
-    parser.add_argument('--max-events', type=int,   default=10**6,
+    parser.add_argument('--max-events', type=int,   default=10**9,
                         help='Maximum collision events per particle per step')
     parser.add_argument('--restart-file', type=str, default=None,
                         help='Checkpoint (.pkl) to restart from')
@@ -855,7 +945,7 @@ if __name__ == '__main__':
     if args.output_times:
         output_times = [float(t) for t in args.output_times.split(',')]
     else:
-        output_times = [1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
+        output_times = [0.001, 0.01, 0.1, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
 
     main(
         n_groups=args.n_groups,
@@ -867,6 +957,8 @@ if __name__ == '__main__':
         dt_increase_factor=args.dt_growth,
         Ntarget=args.Ntarget,
         Nboundary=args.Nboundary,
+        Ntotal=args.Ntotal,
+        Ntotal_T_floor=args.Ntotal_T_floor,
         Nmax=args.Nmax,
         bc_t_start=args.bc_t_start,
         bc_t_end=args.bc_t_end,

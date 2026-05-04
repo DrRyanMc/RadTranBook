@@ -13,7 +13,7 @@ NZ=210
 # Checkpoint filename must match what the Python script auto-generates:
 #   crooked_pipe_mg_imc_checkpoint_<N_GROUPS>g_<mesh_tag>_<nr_actual>x<nz_actual>.pkl
 # For a uniform 60x210 mesh with N_GROUPS groups that is:
-CHECKPOINT="crooked_pipe_mg_imc_checkpoint_${N_GROUPS}g_uniform_${NR}x${NZ}.pkl"
+CHECKPOINT="crooked_pipe_mg_imc_checkpoint_${N_GROUPS}g_refined_${NR}x${NZ}.pkl"
 DONE_FLAG="${CHECKPOINT%.pkl}.done"
 
 SCRIPT="$( cd "$( dirname "$0" )" && pwd )/$( basename "$0" )"
@@ -43,6 +43,7 @@ cd ~/RadTranBook
 
 BASE_ARGS="--n-groups ${N_GROUPS} \
            --nr ${NR} --nz ${NZ} \
+           --use-refined-mesh \
            --Ntarget 20000 \
            --Nboundary 20000 \
            --Nmax 100000 \
