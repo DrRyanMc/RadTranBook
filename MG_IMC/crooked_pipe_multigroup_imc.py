@@ -855,6 +855,25 @@ def main(
     )
     print(f'Saved solution: {npz_file}')
 
+    # Save fiducial time-series in a dedicated file for post-run plotting.
+    # Arrays:
+    #   times        — 1-D, shape (n_steps,)
+    #   labels       — 1-D string array, shape (n_points,)
+    #   T_mat        — 2-D, shape (n_points, n_steps)
+    #   T_rad        — 2-D, shape (n_points, n_steps)
+    fiducial_labels_list = list(fiducial_data.keys())
+    fid_T_mat = np.array([fiducial_data[lbl]     for lbl in fiducial_labels_list])
+    fid_T_rad = np.array([fiducial_data_rad[lbl] for lbl in fiducial_labels_list])
+    fid_npz = f'crooked_pipe_mg_imc_fiducial_{run_tag}.npz'
+    np.savez(
+        fid_npz,
+        times=times_arr,
+        labels=np.array(fiducial_labels_list),
+        T_mat=fid_T_mat,
+        T_rad=fid_T_rad,
+    )
+    print(f'Saved fiducial history: {fid_npz}')
+
     # Save final radiation energy by group if available
     if hasattr(state, 'radiation_energy_by_group') and state.radiation_energy_by_group is not None:
         np.save(

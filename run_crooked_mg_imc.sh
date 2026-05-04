@@ -9,6 +9,9 @@
 N_GROUPS=10
 NR=60
 NZ=210
+NMax=1000000*$N_GROUPS  # keep number of particles per group constant as N_GROUPS changes
+#make Ntotal half NMax and make sure it is an integer.
+Ntotal=$(( (NMax * NR * NZ) / 2 ))
 
 # Checkpoint filename must match what the Python script auto-generates:
 #   crooked_pipe_mg_imc_checkpoint_<N_GROUPS>g_<mesh_tag>_<nr_actual>x<nz_actual>.pkl
@@ -42,20 +45,19 @@ module load python
 cd ~/RadTranBook
 
 BASE_ARGS="--n-groups ${N_GROUPS} \
-           --nr ${NR} --nz ${NZ} \
            --use-refined-mesh \
-           --Ntarget 20000 \
-           --Nboundary 20000 \
-           --Nmax 100000 \
+           --Ntotal-T-floor .015 \
+           --Ntotal ${Ntotal} \
+           --Nmax ${NMax} \
            --dt-initial 1e-4 \
            --dt-max 0.01 \
            --dt-growth 1.1 \
            --bc-t-start 0.05 \
            --bc-t-end 0.5 \
            --bc-ramp-time 20.0 \
-           --output-times 1,5,10,20,50,100,200,500,1000 \
-           --checkpoint-every 100 \
-           --max-events 1000000"
+           --output-times 0.001,0.01,0.1,1,5,10,20,50,100,200,500,1000 \
+           --checkpoint-every 10 \
+           --max-events 10000000"
 
 # ─── Run (restart if checkpoint exists) ────────────────────────────────────
 if [ -f "$CHECKPOINT" ]; then
