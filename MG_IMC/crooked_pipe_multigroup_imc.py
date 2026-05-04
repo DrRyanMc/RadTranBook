@@ -249,6 +249,7 @@ def plot_solution(T_mat, T_rad, r_centers, z_centers, time_value, save_prefix,
         vmax = np.ceil(T_field.max() * 100) / 100.0
         if tag == 'radiation' and T_bc is not None:
             vmax = min(vmax, 1.1 * T_bc)
+        vmax = max(vmax, vmin + 0.01)  # ensure vmax > vmin
 
         fig, ax = plt.subplots(1, 1, figsize=(8, 3 * 1.275))
         im = ax.pcolormesh(

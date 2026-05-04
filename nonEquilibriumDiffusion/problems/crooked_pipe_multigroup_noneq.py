@@ -494,6 +494,7 @@ def plot_solution(solver, time_value, save_prefix='crooked_pipe_noneq', show_mes
     #make max color equal to current max rounded to nearest 0.01 keV for better comparison across time steps
     max_T = np.max(T_2d)
     vmax_T = np.ceil(max_T * 100) / 100.0
+    vmax_T = max(vmax_T, T_init + 0.01)  # ensure vmax > vmin
     im1 = ax1.pcolormesh(Z, R, T_2d, shading='auto', cmap='plasma', vmin=T_init, vmax=vmax_T)
     ax1.set_xlabel('z (cm)', fontsize=12)
     ax1.set_ylabel('r (cm)', fontsize=12)
@@ -534,6 +535,7 @@ def plot_solution(solver, time_value, save_prefix='crooked_pipe_noneq', show_mes
     vmax_T_rad = np.ceil(max_T_rad * 100) / 100.0
     if T_bc is not None:
         vmax_T_rad = min(vmax_T_rad, 1.1 * T_bc)
+    vmax_T_rad = max(vmax_T_rad, T_init + 0.01)  # ensure vmax > vmin
     im2 = ax2.pcolormesh(Z, R, T_rad_2d, shading='auto', cmap='plasma', vmin=T_init, vmax=vmax_T_rad)
     ax2.set_xlabel('z (cm)', fontsize=12)
     ax2.set_ylabel('r (cm)', fontsize=12)
@@ -923,8 +925,8 @@ def main(
         fiducial_indices[label] = (i, j)
 
     # Default checkpoint filename
+    mesh_tag = "refined" if use_refined_mesh else "uniform"
     if checkpoint_file is None:
-        mesh_tag = "refined" if use_refined_mesh else "uniform"
         checkpoint_file = (
             f'crooked_pipe_checkpoint_{n_groups}g_{mesh_tag}'
             f'_{solver.nx_cells}x{solver.ny_cells}.npz'
