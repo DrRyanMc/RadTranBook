@@ -9,9 +9,10 @@
 N_GROUPS=10
 NR=60
 NZ=210
-NMax=1000000*$N_GROUPS  # keep number of particles per group constant as N_GROUPS changes
+#this next line needs to do that calculation and not just be a string so that it is an integer when passed to the Python script.
+NMax=1000000*${N_GROUPS}  # keep number of particles per group constant as N_GROUPS changes
 #make Ntotal half NMax and make sure it is an integer.
-Ntotal=$(( (NMax) / 2 ))
+Ntotal=${(( (NMax) / 2 ))}
 
 # Checkpoint filename must match what the Python script auto-generates:
 #   crooked_pipe_mg_imc_checkpoint_<N_GROUPS>g_<mesh_tag>_<nr_actual>x<nz_actual>.pkl
