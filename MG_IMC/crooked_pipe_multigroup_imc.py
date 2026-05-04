@@ -243,6 +243,8 @@ def plot_solution(T_mat, T_rad, r_centers, z_centers, time_value, save_prefix,
 
     vmin = T_INIT
 
+    cbar_labels = {'material': 'T (keV)', 'radiation': r'$T_\mathrm{r}$ (keV)'}
+
     for T_field, tag in [(T_mat, 'material'), (T_rad, 'radiation')]:
         vmax = np.ceil(T_field.max() * 100) / 100.0
         if tag == 'radiation' and T_bc is not None:
@@ -255,7 +257,8 @@ def plot_solution(T_mat, T_rad, r_centers, z_centers, time_value, save_prefix,
             cmap='plasma',
             shading='flat',
         )
-        plt.colorbar(im, ax=ax)
+        plt.colorbar(im, ax=ax, orientation='horizontal', location='top',
+                     pad=0.15, label=cbar_labels[tag])
         ax.set_xlabel('z (cm)')
         ax.set_ylabel('r (cm)')
         ax.set_aspect('equal')
