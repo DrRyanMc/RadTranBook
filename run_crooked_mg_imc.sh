@@ -51,7 +51,7 @@ BASE_ARGS="--n-groups ${N_GROUPS} \
            --Ntotal ${Ntotal} \
            --Nmax ${NMax} \
            --dt-initial 1e-4 \
-           --dt-max 0.01 \
+           --dt-max 10 \
            --dt-growth 1.1 \
            --bc-t-start 0.05 \
            --bc-t-end 0.5 \
