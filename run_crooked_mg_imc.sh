@@ -2,7 +2,7 @@
 #$ -M rmcclarr@nd.edu
 #$ -m abe
 #$ -q long@@mcclarren
-#$ -pe smp 10
+#$ -pe smp 64
 #$ -N crooked_mg_imc
 
 # ─── Configuration ─────────────────────────────────────────────────────────
