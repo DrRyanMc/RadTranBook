@@ -422,7 +422,7 @@ def run_marshak_wave_multigroup_powerlaw_imc(
             use_scalar_intensity_Tr=use_scalar_intensity_Tr,
             conserve_comb_energy=False,
             geometry="xy",
-            max_events_per_particle=1_000_000,
+            max_events_per_particle=100000,
         )
 
         t = float(state.time)

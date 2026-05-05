@@ -35,7 +35,7 @@ MIN_DT_ADJUST = 1e-10  # ns; floor for dt when clamping to output times
 # POWER-LAW OPACITY FUNCTIONS
 # =============================================================================
 
-def powerlaw_opacity_at_energy(T, E, rho=1.0):
+def powerlaw_opacity_at_energy(T, E, rho=RHO):
     """Power-law opacity at specific energy
     
     σ_a(T,E) = 10.0 cm⁻¹ * (ρ/(g/cm³)) * (T/keV)^{-1/2} * (E/keV)^{-3}
@@ -61,7 +61,7 @@ def powerlaw_opacity_at_energy(T, E, rho=1.0):
     #return 1e4*np.exp(-E/T_use)*(T_use)**(-3)
 
 
-def make_powerlaw_opacity_func(E_low, E_high, rho=1.0):
+def make_powerlaw_opacity_func(E_low, E_high, rho=RHO):
     """Create opacity function for a group using geometric mean at boundaries
     
     For group g with boundaries [E_low, E_high]:
@@ -89,7 +89,7 @@ def make_powerlaw_opacity_func(E_low, E_high, rho=1.0):
     return opacity_func
 
 
-def make_powerlaw_diffusion_func(E_low, E_high, rho=1.0):
+def make_powerlaw_diffusion_func(E_low, E_high, rho=RHO):
     """Create diffusion coefficient function for a group
     
     D_g(T) = 1/(3*σ_{a,g}(T))
@@ -113,7 +113,7 @@ def make_powerlaw_diffusion_func(E_low, E_high, rho=1.0):
     def diffusion_func(T, r):
         """Diffusion coefficient: D = 1/(3σ_R)"""
         sigma = opacity_func(T, r)
-        return C_LIGHT / (3.0 * sigma)
+        return 1.0 / (3.0 * sigma)
     
     return diffusion_func
 
