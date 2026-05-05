@@ -725,6 +725,9 @@ def main(
     print('-' * 56)
 
     wall_start = _time.perf_counter()
+    dE = energy_edges[1:] - energy_edges[:-1]          # group widths (keV)
+    fiducial_spectra_snapshots: list = []               # (n_points, n_groups) per snapshot
+    spectrum_output_times: list = []
 
     while state.time < t_final - 1e-12:
         step_dt = min(current_dt, t_final - state.time)
@@ -809,6 +812,14 @@ def main(
                     T_bc=T_bc_now,
                 )
                 output_times_saved.add(tout)
+                # Collect radiation spectrum at fiducial points (GJ/cm^3/keV).
+                if state.radiation_energy_by_group is not None:
+                    snap = np.array([
+                        state.radiation_energy_by_group[:, ii, jj] / dE
+                        for (ii, jj) in fiducial_indices.values()
+                    ])  # shape (n_points, n_groups)
+                    fiducial_spectra_snapshots.append(snap)
+                    spectrum_output_times.append(float(state.time))
                 # Always checkpoint at output times
                 print(f'  >> Checkpoint -> {checkpoint_file}')
                 save_checkpoint(
@@ -877,6 +888,20 @@ def main(
         T_rad=fid_T_rad,
     )
     print(f'Saved fiducial history: {fid_npz}')
+
+    # Save radiation spectrum at fiducial points for each output snapshot.
+    # Array layout:  spectra[snapshot, point, group]  units: GJ/cm^3/keV
+    if fiducial_spectra_snapshots:
+        spectra_npz = f'crooked_pipe_mg_imc_spectra_{run_tag}.npz'
+        np.savez(
+            spectra_npz,
+            output_times=np.array(spectrum_output_times),
+            labels=np.array(list(fiducial_indices.keys())),
+            spectra=np.array(fiducial_spectra_snapshots),
+            energy_edges=energy_edges,
+            energy_centers=0.5 * (energy_edges[:-1] + energy_edges[1:]),
+        )
+        print(f'Saved fiducial spectra: {spectra_npz}')
 
     # Save final radiation energy by group if available
     if hasattr(state, 'radiation_energy_by_group') and state.radiation_energy_by_group is not None:

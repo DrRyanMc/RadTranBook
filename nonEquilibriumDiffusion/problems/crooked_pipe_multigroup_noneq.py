@@ -992,6 +992,9 @@ def main(
     print()
 
     _t_run_start = _time.perf_counter()
+    dE = energy_edges[1:] - energy_edges[:-1]          # group widths (keV)
+    fiducial_spectra_snapshots: list = []               # (n_points, n_groups) per snapshot
+    spectrum_output_times: list = []
 
     while t < t_final:
         step += 1
@@ -1077,6 +1080,13 @@ def main(
                 output_times_saved.add(output_t)
                 last_save_t = t
                 first_one = False
+                # Collect radiation spectrum at fiducial points (GJ/cm^3/keV).
+                snap = np.array([
+                    solver.phi_g_stored[:, ri * solver.ny_cells + zi] / C_LIGHT / dE
+                    for (ri, zi) in fiducial_indices.values()
+                ])  # shape (n_points, n_groups)
+                fiducial_spectra_snapshots.append(snap)
+                spectrum_output_times.append(float(t))
                 print(
                     f"  >>> Checkpoint → {checkpoint_file}",
                     flush=True,
@@ -1133,6 +1143,20 @@ def main(
         fiducial_data=fiducial_data,
     )
     print(f"Saved: {npz_filename}")
+
+    # Save radiation spectrum at fiducial points for each output snapshot.
+    # Array layout:  spectra[snapshot, point, group]  units: GJ/cm^3/keV
+    if fiducial_spectra_snapshots:
+        spectra_npz = f'crooked_pipe_{n_groups}g_noneq_spectra_{mesh_tag}_{solver.nx_cells}x{solver.ny_cells}.npz'
+        np.savez(
+            spectra_npz,
+            output_times=np.array(spectrum_output_times),
+            labels=np.array(list(fiducial_indices.keys())),
+            spectra=np.array(fiducial_spectra_snapshots),
+            energy_edges=energy_edges,
+            energy_centers=0.5 * (energy_edges[:-1] + energy_edges[1:]),
+        )
+        print(f'Saved: {spectra_npz}')
 
     print("\nPlotting fiducial point temperature history...")
     plot_fiducial_history(times, fiducial_data, n_groups=n_groups)
