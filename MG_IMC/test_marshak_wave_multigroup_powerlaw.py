@@ -17,6 +17,7 @@ import os
 import pickle
 import random
 import sys
+import time as _time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -388,6 +389,14 @@ def run_marshak_wave_multigroup_powerlaw_imc(
 
     t = float(state.time)
     time_tol = max(1e-15, 1e-12 * max(final_time, 1.0))
+    n_steps_total = int(np.ceil((final_time - t) / dt))
+    _wall_start = _time.perf_counter()
+    _step_wall_start = _wall_start
+    print(
+        f"{'Step':>6}  {'t (ns)':>10}  {'dt (ns)':>9}  {'N_par':>8}  "
+        f"{'E_mat (GJ)':>12}  {'E_rad (GJ)':>12}  {'wall/step (s)':>14}  {'ETA (s)':>9}"
+    )
+    print("-" * 95)
     while t < final_time - time_tol:
         dt_step = min(dt, final_time - t)
         if dt_step <= time_tol:
@@ -420,15 +429,21 @@ def run_marshak_wave_multigroup_powerlaw_imc(
         step_count += 1
         cumulative_residual += float(info.get("energy_residual", 0.0))
 
-        if step_count % 10 == 0:
-            net_boundary = info["boundary_emission"] - info["boundary_outgoing"]
-            print(
-                "[diag]",
-                f"step={step_count}",
-                f"t={t:.6e}",
-                f"net_boundary={net_boundary:.6e}",
-                f"cum_residual={cumulative_residual:.6e}",
-            )
+        _now = _time.perf_counter()
+        wall_step = _now - _step_wall_start
+        _step_wall_start = _now
+        elapsed = _now - _wall_start
+        steps_done = step_count
+        steps_left = max(0, int(np.ceil((final_time - t) / dt)))
+        eta = (elapsed / steps_done) * steps_left if steps_done > 0 else 0.0
+        E_mat = float(info.get("total_internal_energy", 0.0))
+        E_rad = float(info.get("total_radiation_energy", 0.0))
+        N_par = int(info.get("N_particles", 0))
+        print(
+            f"{step_count:>6}  {t:>10.5f}  {dt_step:>9.5f}  {N_par:>8d}  "
+            f"{E_mat:>12.4e}  {E_rad:>12.4e}  {wall_step:>14.3f}  {eta:>9.1f}",
+            flush=True,
+        )
 
         if step_count % output_freq == 0 or (final_time - t) < time_tol:
             info["cumulative_energy_residual"] = cumulative_residual

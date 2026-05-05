@@ -1258,6 +1258,50 @@ def _sample_groups_for_emission_jit(Ntarget, cell_i, cell_j, emission_by_group):
     return g_sampled
 
 
+@jit(nopython=True, cache=True)
+def _comb_mg_jit(weights, cell_i, cell_j, groups, dir1, dir2, times, pos1, pos2, bin_id, ew, n_arr, r_vals):
+    # Pass 1: count
+    total_n = 0
+    N_in = len(weights)
+    for k in range(N_in):
+        b = int(bin_id[k])
+        w_target = ew[b]
+        if w_target > 0.0:
+            n = int(weights[k] / w_target + r_vals[k])
+            n_arr[k] = n
+            total_n += n
+            
+    # Pass 2: allocate and fill
+    nw = np.zeros(total_n, dtype=np.float64)
+    ni = np.zeros(total_n, dtype=np.int32)
+    nj = np.zeros(total_n, dtype=np.int32)
+    ng = np.zeros(total_n, dtype=np.int32)
+    nd1 = np.zeros(total_n, dtype=np.float64)
+    nd2 = np.zeros(total_n, dtype=np.float64)
+    nt = np.zeros(total_n, dtype=np.float64)
+    np1 = np.zeros(total_n, dtype=np.float64)
+    np2 = np.zeros(total_n, dtype=np.float64)
+    
+    idx = 0
+    for k in range(N_in):
+        n = n_arr[k]
+        if n > 0:
+            b = int(bin_id[k])
+            w_target = ew[b]
+            for _ in range(n):
+                nw[idx] = w_target
+                ni[idx] = cell_i[k]
+                nj[idx] = cell_j[k]
+                ng[idx] = groups[k]
+                nd1[idx] = dir1[k]
+                nd2[idx] = dir2[k]
+                nt[idx] = times[k]
+                np1[idx] = pos1[k]
+                np2[idx] = pos2[k]
+                idx += 1
+                
+    return nw, ni, nj, ng, nd1, nd2, nt, np1, np2
+
 def _comb_mg(weights, cell_i, cell_j, groups, dir1, dir2, times, pos1, pos2, Nmax, nx, ny, n_groups):
     """Per-cell-group stochastic comb to cap total particle count.
     
@@ -1298,61 +1342,27 @@ def _comb_mg(weights, cell_i, cell_j, groups, dir1, dir2, times, pos1, pos2, Nma
     nonzero_desired = desired > 0
     ew[nonzero_desired] = ecen[nonzero_desired] / desired[nonzero_desired]
     
-    nw = []
-    ni = []
-    nj = []
-    ng = []
-    nd1 = []
-    nd2 = []
-    nt = []
-    np1 = []
-    np2 = []
-    
-    for k in range(len(weights)):
-        b = int(bin_id[k])
-        w_target = ew[b]
-        if w_target <= 0.0:
-            continue
-        n = int(weights[k] / w_target + random.random())
-        for _ in range(n):
-            nw.append(w_target)
-            ni.append(cell_i[k])
-            nj.append(cell_j[k])
-            ng.append(groups[k])
-            nd1.append(dir1[k])
-            nd2.append(dir2[k])
-            nt.append(times[k])
-            np1.append(pos1[k])
-            np2.append(pos2[k])
-    
-    nw = np.array(nw)
-    ni = np.array(ni, dtype=np.int32)
-    nj = np.array(nj, dtype=np.int32)
-    ng = np.array(ng, dtype=np.int32)
-    nd1 = np.array(nd1)
-    nd2 = np.array(nd2)
-    nt = np.array(nt)
-    np1 = np.array(np1)
-    np2 = np.array(np2)
+    n_arr = np.zeros(len(weights), dtype=np.int32)
+    r_vals = np.random.random(len(weights))
+    nw, ni, nj, ng, nd1, nd2, nt, np1, np2 = _comb_mg_jit(
+        weights, cell_i, cell_j, groups, dir1, dir2, times, pos1, pos2, bin_id, ew, n_arr, r_vals
+    )
     
     # Compute pre- and post-comb radiation energy by group/cell.
     # The returned array is the comb-induced discrepancy: pre - post.
-    rad_energy_before = np.zeros((n_groups, nx, ny))
-    for g in range(n_groups):
-        mask = (groups == g)
-        if np.any(mask):
-            flat_indices = cell_i[mask] + cell_j[mask] * nx
-            rad_by_cell = np.bincount(flat_indices, weights=weights[mask], minlength=nx * ny).reshape(nx, ny, order='F')
-            rad_energy_before[g, :, :] = rad_by_cell
+    n_bins = nx * ny * n_groups
+    flat_indices = cell_i + cell_j * nx + groups * (nx * ny)
+    rad_energy_before = np.bincount(
+        flat_indices, weights=weights, minlength=n_bins
+    ).reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1)
 
-    rad_energy_after = np.zeros((n_groups, nx, ny))
     if len(nw) > 0:
-        for g in range(n_groups):
-            mask = (ng == g)
-            if np.any(mask):
-                flat_indices = ni[mask] + nj[mask] * nx
-                rad_by_cell = np.bincount(flat_indices, weights=nw[mask], minlength=nx * ny).reshape(nx, ny, order='F')
-                rad_energy_after[g, :, :] = rad_by_cell
+        flat_indices_new = ni + nj * nx + ng * (nx * ny)
+        rad_energy_after = np.bincount(
+            flat_indices_new, weights=nw, minlength=n_bins
+        ).reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1)
+    else:
+        rad_energy_after = np.zeros((n_groups, nx, ny))
 
     comb_energy_discrepancy = rad_energy_before - rad_energy_after
 
@@ -1423,13 +1433,13 @@ def init_simulation(
     cell_i, cell_j = _locate_indices(pos1, pos2, edges1, edges2)
 
     # Compute radiation energy by group
-    radiation_energy_by_group = np.zeros((n_groups, nx, ny))
-    for g in range(n_groups):
-        mask = (groups == g)
-        if np.any(mask):
-            flat = _flatten_index(cell_i[mask], cell_j[mask], nx)
-            rad_cell_g = np.bincount(flat, weights=weights[mask], minlength=nx * ny).reshape(nx, ny, order='F')
-            radiation_energy_by_group[g, :, :] = rad_cell_g / volumes
+    valid_mask = (weights > 0.0) & (cell_i >= 0) & (cell_i < nx) & (cell_j >= 0) & (cell_j < ny)
+    if np.any(valid_mask):
+        flat_indices = cell_i[valid_mask] + cell_j[valid_mask] * nx + groups[valid_mask] * (nx * ny)
+        rad_energy_flat = np.bincount(flat_indices, weights=weights[valid_mask], minlength=nx * ny * n_groups)
+        radiation_energy_by_group = rad_energy_flat.reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1) / volumes
+    else:
+        radiation_energy_by_group = np.zeros((n_groups, nx, ny))
 
     # Overall radiation temperature
     total_rad = np.sum(radiation_energy_by_group, axis=0)
@@ -1653,10 +1663,8 @@ def step(
     f = np.clip(f, 0.0, 1.0)
 
     # Effective scattering and absorption by group
-    sigma_s = np.zeros((n_groups, nx, ny))
-    for g in range(n_groups):
-        sigma_s[g, :, :] = sigma_a[g, :, :] * (1.0 - f)
-        sigma_a[g, :, :] = sigma_a[g, :, :] * f
+    sigma_s = sigma_a * (1.0 - f)
+    sigma_a = sigma_a * f
 
     # ── Energy-proportional particle split ────────────────────────────────────
     # When Ntotal > 0, ignore the caller-supplied Ntarget / Nboundary and instead
@@ -1819,8 +1827,9 @@ def step(
             
             # Normalize b_star so it sums to 1 across groups
             # This ensures we emit the full acT^4 energy even when groups don't cover full spectrum
+            # Guard against zero b_sum (cold cells where all B_g ≈ 0) to prevent NaN propagation.
             b_sum = np.sum(b_star, axis=0)  # Sum over groups
-            b_star = b_star / b_sum[None, :, :]  # Normalize
+            b_star = b_star / (b_sum[None, :, :] + 1e-300)  # Normalize
 
         # Emission rate by group: σ_a,g f b_g★ c a T^4 Δt V
         # Note: sigma_a has already been modified by Fleck factor (f) at line 1280
@@ -1836,6 +1845,12 @@ def step(
             # consistent with ci = flat % nx, cj = flat // nx used throughout.
             emission_flat = total_emission_per_cell.flatten(order='F')
             probs_cell = emission_flat / E_emit
+            # Clip and renormalize to guard against floating-point noise that
+            # could leave tiny negative values or NaNs in the probability array.
+            probs_cell = np.clip(probs_cell, 0.0, None)
+            p_sum = probs_cell.sum()
+            if p_sum > 0.0:
+                probs_cell /= p_sum
             flat_indices = np.random.choice(len(emission_flat), size=Ntarget, p=probs_cell)
             
             ci = flat_indices % nx
@@ -1912,24 +1927,16 @@ def step(
     # Pre-comb radiation energy by group for diagnostics/output.
     # With use_scalar_intensity_Tr=True this is a per-group path-length estimate.
     radiation_energy_by_group_precomb = np.zeros((n_groups, nx, ny))
-    for g in range(n_groups):
-        if use_scalar_intensity_Tr:
-            # si_cell stores scalar intensity by group. Convert to group energy
-            # density via E_g = I_g / c, then Tr from sum_g(E_g).
-            radiation_energy_by_group_precomb[g, :, :] = si_cell[g, :, :] / __c
-        else:
-            mask = (
-                (groups == g)
-                & (weights > 0.0)
-                & (cell_i >= 0)
-                & (cell_i < nx)
-                & (cell_j >= 0)
-                & (cell_j < ny)
-            )
-            if np.any(mask):
-                flat = _flatten_index(cell_i[mask], cell_j[mask], nx)
-                rad_cell_g = np.bincount(flat, weights=weights[mask], minlength=nx * ny).reshape(nx, ny, order='F')
-                radiation_energy_by_group_precomb[g, :, :] = rad_cell_g / volumes
+    if use_scalar_intensity_Tr:
+        # si_cell stores scalar intensity by group. Convert to group energy
+        # density via E_g = I_g / c, then Tr from sum_g(E_g).
+        radiation_energy_by_group_precomb = si_cell / __c
+    else:
+        valid_mask = (weights > 0.0) & (cell_i >= 0) & (cell_i < nx) & (cell_j >= 0) & (cell_j < ny)
+        if np.any(valid_mask):
+            flat_indices = cell_i[valid_mask] + cell_j[valid_mask] * nx + groups[valid_mask] * (nx * ny)
+            rad_energy_flat = np.bincount(flat_indices, weights=weights[valid_mask], minlength=nx * ny * n_groups)
+            radiation_energy_by_group_precomb = rad_energy_flat.reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1) / volumes
 
     # Combing
     (
@@ -1952,20 +1959,13 @@ def step(
 
     # Rebuild radiation group energies from post-comb particle weights so
     # state and diagnostics are consistent with the final particle population.
-    radiation_energy_by_group_postcomb = np.zeros((n_groups, nx, ny))
-    for g in range(n_groups):
-        mask = (
-            (groups == g)
-            & (weights > 0.0)
-            & (cell_i >= 0)
-            & (cell_i < nx)
-            & (cell_j >= 0)
-            & (cell_j < ny)
-        )
-        if np.any(mask):
-            flat = _flatten_index(cell_i[mask], cell_j[mask], nx)
-            rad_cell_g = np.bincount(flat, weights=weights[mask], minlength=nx * ny).reshape(nx, ny, order='F')
-            radiation_energy_by_group_postcomb[g, :, :] = rad_cell_g / volumes
+    valid_mask = (weights > 0.0) & (cell_i >= 0) & (cell_i < nx) & (cell_j >= 0) & (cell_j < ny)
+    if np.any(valid_mask):
+        flat_indices = cell_i[valid_mask] + cell_j[valid_mask] * nx + groups[valid_mask] * (nx * ny)
+        rad_energy_flat = np.bincount(flat_indices, weights=weights[valid_mask], minlength=nx * ny * n_groups)
+        radiation_energy_by_group_postcomb = rad_energy_flat.reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1) / volumes
+    else:
+        radiation_energy_by_group_postcomb = np.zeros((n_groups, nx, ny))
 
     # Use the pre-comb diagnostic tally for reported radiation temperature.
     total_rad_energy = np.sum(radiation_energy_by_group_precomb, axis=0)

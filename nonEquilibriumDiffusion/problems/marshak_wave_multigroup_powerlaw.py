@@ -250,11 +250,11 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     BC_B_values = []
     BC_B_right_values = []
     for g in range(n_groups):
-        # Robin BC parameter B is dimensionless (B·D·∇φ form)
-        # Setting B = 2.0 (geometric factor) allows D_boundary to appear in flux coefficient
-        # instead of canceling out as it did when B was set to D_g
-        BC_B_values.append(2.0)
-        BC_B_right_values.append(2.0)
+        # Per Table 7.2: B_g = D_g for Vacuum/Blackbody BCs.
+        # With B_bc = D_g the face-D in the numerator and D_g in the denominator
+        # cancel: flux_coeff = A_face * D_face * (1/2) / (D_g * V) ≈ A_face / (2V)  ✓
+        BC_B_values.append(diff_funcs[g](T_bc, 0.0))
+        BC_B_right_values.append(diff_funcs[g](0.005, r_max))  # cold estimate at right face
     BC_C_values = F_g_values.copy()
     BC_C_right_values = F_g_right.copy()
     
@@ -264,10 +264,6 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         'B_values': BC_B_values.copy(),
         'C_values': BC_C_values.copy()
     }
-    bc_temperature = {
-        'left': T_bc,
-        'right': 0.0,
-    }
     bc_right_params = {
         'B_values': BC_B_right_values.copy(),
         'C_values': BC_C_right_values.copy()  # No incoming flux on right boundary
@@ -275,7 +271,7 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
     
     print(f"\nBoundary condition (Marshak):")
     print(f"  A = {BC_A}")
-    print(f"  B_g = D_g(T_bc): group-dependent diffusion coefficients")
+    print(f"  B_g = D_g (per Table 7.2): D cancels in flux_coeff = A_face*D_face*A_bc/(D_g*V)")
     print(f"  F_total(T_b) = {F_total:.6e} GJ/(cm²·ns)")
     if time_dependent_bc:
         print(f"  Time-dependent BC: T_bc will ramp from 0.05 keV to 0.5 keV over 20 ns")
@@ -320,22 +316,6 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
         cv=cv
     )
 
-    for g in range(n_groups):
-        def make_left_boundary_diffusion(group_idx):
-            def left_boundary_diffusion(T_cell, phi_cell, r):
-                T_face = 0.5 * (bc_temperature['left'] + T_cell)
-                return diff_funcs[group_idx](T_face, r)
-            return left_boundary_diffusion
-
-        def make_right_boundary_diffusion(group_idx):
-            def right_boundary_diffusion(T_cell, phi_cell, r):
-                T_face = 0.5 * (bc_temperature['right'] + T_cell)
-                return diff_funcs[group_idx](T_face, r)
-            return right_boundary_diffusion
-
-        solver.solvers[g].left_boundary_diffusion_func = make_left_boundary_diffusion(g)
-        solver.solvers[g].right_boundary_diffusion_func = make_right_boundary_diffusion(g)
-    
     # Initial condition: cold everywhere
     r_centers = solver.r_centers
     T_init = 0.005 * np.ones(n_cells)  # Cold initial state
@@ -403,31 +383,24 @@ def run_marshak_wave_multigroup_powerlaw(use_preconditioner=False, n_groups=10,
             B_g_current = Bg_multigroup(energy_edges, T_bc_current)
             chi_current = B_g_current / B_g_current.sum()
 
-            bc_temperature['left'] = T_bc_current
-            bc_temperature['right'] = 0.0
-            
             # Recompute group-dependent BC parameters
             F_total_current = (A_RAD * C_LIGHT * T_bc_current**4) / 2.0
-            
-            # Robin BC B parameter: dimensionless geometric factor (2.0)
-            # The actual diffusion coefficient is evaluated via boundary_diffusion_func callbacks
-            # to ensure consistency with how the flux coefficient is assembled in apply_boundary_conditions
             
             for g in range(n_groups):
                 # Update incoming flux (temperature AND spectrum-dependent)
                 C_g = chi_current[g] * F_total_current
-                
-                # CRITICAL: Directly update the BC function in the solver object!
-                # The solver's internal DiffusionOperatorSolver1D objects need the new BC
-                # B = 2.0 is dimensionless; actual D comes from boundary_diffusion_func callback
+
+                # Per Table 7.2: B_g = D_g evaluated at current boundary temperature
+                D_g_left  = diff_funcs[g](T_bc_current, 0.0)
+                D_g_right = diff_funcs[g](solver.T[-1],  r_max)
+
                 def make_updated_bc(B_val, C_val):
                     def left_bc(phi, r):
                         return BC_A, B_val, C_val
                     return left_bc
-                
-                # Use fixed dimensionless B parameter; D_boundary comes from callback
-                solver.solvers[g].left_bc_func = make_updated_bc(2.0, C_g)
-                solver.solvers[g].right_bc_func = make_updated_bc(2.0, 0.0)
+
+                solver.solvers[g].left_bc_func  = make_updated_bc(D_g_left,  C_g)
+                solver.solvers[g].right_bc_func = make_updated_bc(D_g_right, 0.0)
             
             # Debug: print BC update occasionally
             if step_count % 10 == 0:  # Print every 10 steps instead of 100

@@ -974,7 +974,7 @@ def parse_arguments():
                         help='Coarse r cells before refinement (default: --nr)')
     parser.add_argument('--n-coarse-z', type=int,   default=None,
                         help='Coarse z cells before refinement (default: --nz)')
-    parser.add_argument('--refine-width', type=float, default=0.05,
+    parser.add_argument('--refine-width', type=float, default=0.01,
                         help='Half-width of refinement zone around interfaces (cm)')
     parser.add_argument('--max-events', type=int,   default=10**9,
                         help='Maximum collision events per particle per step')

@@ -342,7 +342,7 @@ def bc_right_open(phi, pos, t, boundary='right', geometry='cylindrical'):
     T_avg = 0.1  # Estimate for diffusion coefficient
     sigma_R = rosseland_opacity(T_avg, r, z)
     D = 1.0 / (3.0 * sigma_R)
-    return 0.5, 2.0, 0.0
+    return 0.5, D, 0.0
 
 
 def bc_bottom_source(phi, pos, t, boundary='bottom', geometry='cylindrical'):
@@ -364,7 +364,7 @@ def bc_bottom_source(phi, pos, t, boundary='bottom', geometry='cylindrical'):
         T_avg = 0.1  # Estimate for diffusion coefficient
         sigma_R = rosseland_opacity(T_avg, r_loc, z_loc)
         D = 1.0 / (3.0 * sigma_R)
-        return 0.5, 2.0, phi_source / 2
+        return 0.5, D, phi_source / 2
     else:
         # Vacuum elsewhere
         r_loc = r
@@ -372,7 +372,7 @@ def bc_bottom_source(phi, pos, t, boundary='bottom', geometry='cylindrical'):
         T_avg = 0.1  # Estimate for diffusion coefficient
         sigma_R = rosseland_opacity(T_avg, r_loc, z_loc)
         D = 1.0 / (3.0 * sigma_R)
-        return 0.5, 2.0, 0.0
+        return 0.5, D, 0.0
 
 
 def bc_top_open(phi, pos, t, boundary='top', geometry='cylindrical'):
@@ -383,7 +383,7 @@ def bc_top_open(phi, pos, t, boundary='top', geometry='cylindrical'):
     T_avg = 0.1  # Estimate for diffusion coefficient
     sigma_R = rosseland_opacity(T_avg, r, z)
     D = 1.0 / (3.0 * sigma_R)
-    return 0.5, 2.0, 0.0
+    return 0.5, D, 0.0
 
 
 # =============================================================================
@@ -802,18 +802,27 @@ def main(
             D = group_diffusion_funcs[group_idx](T_bc, r, 0.0)
             if r < 0.5:
                 B_groups = Bg_multigroup(energy_edges, T_bc)
-                chi = B_groups / np.sum(B_groups)
+                # Guard against Wien-tail numerical artefacts (negative B values)
+                B_groups = np.maximum(B_groups, 0.0)
+                B_sum = np.sum(B_groups)
+                if B_sum > 0.0:
+                    chi = B_groups / B_sum
+                else:
+                    chi = np.ones(len(B_groups)) / len(B_groups)
                 F_total = (A_RAD * C_LIGHT * T_bc**4) / 2.0
                 C_group = chi[group_idx] * F_total
-                return 0.5, 2.0, C_group
-            return 0.5, 2.0, 0.0
+                # B_bc = D_g per Table 7.2 (B_g = D_g); D_face ≈ D_g cancels in
+                #   flux_coeff = D_face * A_bc / (D_g * V) → A_face / (2V) ✓
+                return 0.5, D, C_group
+            return 0.5, D, 0.0
         return bottom_bc
 
     def make_open_bc(group_idx):
         def open_bc(phi, pos, t, boundary='right', geometry='cylindrical'):
             r, z = pos
             D = group_diffusion_funcs[group_idx](0.1, r, z)
-            return 0.5, 2.0, 0.0
+            # B_bc = D_g per Table 7.2
+            return 0.5, D, 0.0
         return open_bc
 
     left_bcs = [bc_left_axis] * n_groups
@@ -950,7 +959,16 @@ def main(
         T_cold = 0.01
         E_r_cold = A_RAD * T_cold**4
         B_groups_cold = Bg_multigroup(energy_edges, T_cold)
-        chi_cold = B_groups_cold / np.sum(B_groups_cold)
+        # Guard against numerical underflow / cancellation in Wien tail:
+        # the rational approximation can produce small negative values when
+        # E >> T (x = E/T >> 1), which would give unphysical negative chi.
+        B_groups_cold = np.maximum(B_groups_cold, 0.0)
+        B_sum_cold = np.sum(B_groups_cold)
+        if B_sum_cold > 0.0:
+            chi_cold = B_groups_cold / B_sum_cold
+        else:
+            # All groups deep in Wien tail: use uniform distribution
+            chi_cold = np.ones(n_groups) / n_groups
         solver.T[:] = T_cold
         solver.T_old[:] = T_cold
         solver.E_r[:] = E_r_cold
@@ -1265,7 +1283,7 @@ def parse_arguments():
     parser.add_argument(
         "--refine-width",
         type=float,
-        default=0.05,
+        default=0.01,
         help="Width (in cm) around each interface to apply refinement",
     )
     parser.add_argument(
