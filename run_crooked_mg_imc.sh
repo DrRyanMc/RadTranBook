@@ -56,7 +56,7 @@ BASE_ARGS="--n-groups ${N_GROUPS} \
            --bc-t-start 0.05 \
            --bc-t-end 0.5 \
            --bc-ramp-time 20.0 \
-           --output-times 0.001,0.01,0.1,1,5,10,20,50,100 \
+           --output-times 0.001,0.01,0.1,1,5,10,20,50,100,200 \
            --checkpoint-every 10 \
            --max-events 10000000"
 
