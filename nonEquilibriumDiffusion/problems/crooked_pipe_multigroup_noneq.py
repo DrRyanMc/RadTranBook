@@ -776,7 +776,7 @@ def main(
     x_min, x_max = 0.0, 2.0
     y_min, y_max = 0.0, 7.0
     nx_cells, ny_cells = n_coarse_r, n_coarse_z
-    energy_edges = np.logspace(1e-4, np.log10(10.0), n_groups + 1)
+    energy_edges = np.logspace(-4, np.log10(10.0), n_groups + 1)
 
     def boundary_temperature(time_ns):
         """Linear ramp in boundary temperature from bc_t_start to bc_t_end."""
@@ -1013,20 +1013,67 @@ def main(
     dE = energy_edges[1:] - energy_edges[:-1]          # group widths (keV)
     fiducial_spectra_snapshots: list = []               # (n_points, n_groups) per snapshot
     spectrum_output_times: list = []
+    # Minimum meaningful dt for snapping to output times.  When floating-point
+    # accumulation leaves t within this tolerance of an output time we save
+    # immediately (before the next step) instead of trying to take a near-zero
+    # or negative step.
+    dt_min_snap = max(1e-10 * dt_initial, 1e-14)
 
     while t < t_final:
         step += 1
         dt_current = solver.dt
 
-        # Snap dt to next requested output time or t_final
+        # Early save: floating-point accumulation can leave t within dt_min_snap
+        # of an output time so that the remaining gap is too small to step.
+        # Save the output NOW (solver fields are at time t) and mark as saved so
+        # the snap logic and post-step check both skip this output time.
+        for output_t in output_times_in_window:
+            if output_t not in output_times_saved and abs(t - output_t) < dt_min_snap:
+                print(
+                    f"  >>> Early save at t = {t:.6e} ns"
+                    f" (within {dt_min_snap:.1e} ns of target {output_t} ns)",
+                    flush=True,
+                )
+                plot_solution(
+                    solver, t,
+                    save_prefix=f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}',
+                    show_mesh=False,
+                    first_one=first_one,
+                    T_bc=boundary_temperature(t),
+                )
+                output_times_saved.add(output_t)
+                last_save_t = t
+                first_one = False
+                snap = np.array([
+                    solver.phi_g_stored[:, ri * solver.ny_cells + zi] / C_LIGHT / dE
+                    for (ri, zi) in fiducial_indices.values()
+                ])
+                fiducial_spectra_snapshots.append(snap)
+                spectrum_output_times.append(float(t))
+                print(f"  >>> Checkpoint → {checkpoint_file}", flush=True)
+                save_checkpoint(
+                    solver, step, t, times,
+                    fiducial_labels, fiducial_data,
+                    output_times_saved, checkpoint_file,
+                )
+                break
+
+        # Snap dt to next requested output time or t_final.
+        # Guard: only snap when the remaining gap is at least dt_min_snap to
+        # avoid setting a near-zero or negative dt due to FP accumulation.
         hit_output_time = False
         for output_t in output_times_in_window:
-            if output_t > t and t + solver.dt > output_t:
-                solver.dt = output_t - t
-                hit_output_time = True
+            if output_t not in output_times_saved and output_t > t and t + solver.dt > output_t:
+                dt_snap = output_t - t
+                if dt_snap >= dt_min_snap:
+                    solver.dt = dt_snap
+                    hit_output_time = True
+                # else: gap is sub-threshold; early-save already handled or
+                # will handle on next iteration — leave dt unchanged.
                 break
-        if t + solver.dt > t_final:
-            solver.dt = t_final - t
+        dt_to_final = t_final - t
+        if 0 < dt_to_final < solver.dt and dt_to_final >= dt_min_snap:
+            solver.dt = dt_to_final
 
         t_new = t + solver.dt
 

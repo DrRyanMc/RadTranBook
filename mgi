@@ -1,0 +1,35 @@
+================================================================================
+Marshak Wave Problem - Multigroup IMC (2 Groups) with Power-Law Opacity
+================================================================================
+Material properties:
+  Opacity: sigma_a(T,E) = 10.0 * rho * T^(-1/2) * E^(-3)
+  Group opacity: geometric mean at group boundaries
+  Density: rho = 0.01 g/cm^3
+  Heat capacity: c_v = 0.05 GJ/(g keV)  (volumetric: 5.000000e-04 GJ/(cm^3 keV))
+  Left BC: blackbody source
+  Right BC: cold incoming at T_init (approximately vacuum)
+  Scalar-intensity Tr estimator: True
+
+Energy group edges (keV): [1.00000000e-04 3.16227766e-02 1.00000000e+01]
+Emission fractions at T = 0.050 keV:
+  Group  0 [  0.0001,   0.0316] keV: chi = 0.010996, sigma_a = 7.953e+07 cm^-1
+  Group  1 [  0.0316,  10.0000] keV: chi = 0.989004, sigma_a = 2.515e+00 cm^-1
+Saved: imc_opacity_vs_energy_Tb.png
+
+Running IMC simulation...
+  Domain: [0.0, 7.0] cm with 140 cells
+  dt: 0.01 ns, final_time: 10.0 ns
+  Grid: uniform
+  Particles: Ntarget=30000, Nboundary=30000, Nmax=100000
+  Checkpoint cadence: every 10 steps
+  Expected left-boundary emission per step (scientific notation):
+    t=0.00 ns: T_bc=0.0500 keV -> E_step=6.426963e-09 GJ
+    t=0.05 ns: T_bc=0.0520 keV -> E_step=7.518637e-09 GJ
+    t=0.10 ns: T_bc=0.0540 keV -> E_step=8.743812e-09 GJ
+    t=1.00 ns: T_bc=0.0900 keV -> E_step=6.746768e-08 GJ
+    t=5.00 ns: T_bc=0.2500 keV -> E_step=4.016852e-06 GJ
+Time	N	Total Energy	Total Internal Energy	Total Radiation Energy	Boundary Emission	Boundary Outgoing	Source Emission	Residual
+==============================================================================================================================================================
+0.000000e+00	30000	1.750006e-05	1.750000e-05	6.002500e-11	0.000000e+00	0.000000e+00	0.000000e+00	0.000000e+00
+  Step      t (ns)    dt (ns)     N_par    E_mat (GJ)    E_rad (GJ)   wall/step (s)    ETA (s)
+-----------------------------------------------------------------------------------------------

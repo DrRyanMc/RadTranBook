@@ -27,7 +27,7 @@ FILE_PATTERN = (
     "marshak_wave_multigroup_powerlaw_{G}g_no_precond_timeBC.npz"
 )
 
-COLORS     = {1.0: "blue", 2.0: "red", 5.0: "green"}#, 10.0: "orange"}
+COLORS     = {1.0: "blue", 2.0: "red", 5.0: "green", 10.0: "orange"}
 LINESTYLES = {2: ":", 10: "-.", 50: "--", 100: "-"}
 TIMES_NS   = list(COLORS.keys())   # [1.0, 2.0, 5.0, 10.0]
 
@@ -96,8 +96,10 @@ def make_plot(key: str, ylabel: str, outfile: str) -> None:
             label  = f"{G}g, t={t_ns:.0f} ns" if t_ns == TIMES_NS[0] else f"{G}g, t={int(t_ns)} ns"
             ax.plot(sol["r"], sol[key], ls=ls, color=color, lw=1.4, label=label)
             #text to label times
-            if count_group == 0:
+            if count_group == 0 and t_ns < TIMES_NS[-1]:  # Only label time for the first group count to avoid clutter
                 ax.text(sol["r"][0]*0.95, np.max(sol[key])*.95, f"{t_ns:.0f} ns", color=color,fontsize=8, ha='right', va='top')
+            elif count_group == 0 and t_ns >= TIMES_NS[-1]:  # Label the last time at the end of the line
+                ax.text(sol["r"][0]*0.95, np.max(sol[key])*1.15, f"{t_ns:.0f} ns", color=color, fontsize=8, ha='right', va='top')
         count_group += 1
 
     # Legend: group-count legend entries (linestyle) separate from time entries (color)

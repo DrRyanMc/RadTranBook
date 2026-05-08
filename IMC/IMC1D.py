@@ -425,24 +425,21 @@ def move_particle_spherical(weight, mu, r, r_inner, r_outer, sigma_a, sigma_s, d
             deposited_intensity, distance_to_census, event_code)
 
 
-@jit(nopython=True, parallel=True)
-def move_particles_spherical(weights, mus, times, positions, cell_indices,
-                              mesh, sigma_a, sigma_s, dt, refl, stats_accum,
-                              weight_floor=0.0):
-    """Transport all spherical particles for one time step (numba prange)."""
-    N = len(weights)
-    n_cells = len(sigma_a)
-    n_threads = get_num_threads()
-    dep_threads = np.zeros((n_threads, n_cells))
-    si_threads  = np.zeros((n_threads, n_cells))
-    stats_threads = np.zeros((n_threads, 6), dtype=np.int64)
+@jit(nopython=True)
+def _move_sph_slice(weights, mus, times, positions, cell_indices,
+                    mesh, sigma_a, sigma_s, dt, refl, weight_floor,
+                    dep, si, stats):
+    """Serial transport kernel for one contiguous slice of spherical particles.
 
-    for i in prange(N):
-        tid = get_thread_id()
+    Writes deposited energy/intensity and event counts directly into the
+    preallocated arrays *dep* (n_cells,), *si* (n_cells,), and *stats* (6,).
+    """
+    N = len(weights)
+    for i in range(N):
         distance_to_census = (dt - times[i]) * __c
         while distance_to_census > 0:
             loc = int(cell_indices[i])
-            stats_threads[tid, 0] += 1
+            stats[0] += 1
             output = move_particle_spherical(
                 weights[i], mus[i], positions[i],
                 mesh[loc][0], mesh[loc][1],
@@ -454,40 +451,69 @@ def move_particles_spherical(weights, mus, times, positions, cell_indices,
                 cell_indices[i] += 1
             elif output[3] == -1:
                 cell_indices[i] -= 1
-            dep_threads[tid, loc] += output[4]
-            si_threads[tid, loc]  += output[5] / dt
+            dep[loc] += output[4]
+            si[loc]  += output[5] / dt
             distance_to_census = output[6]
             if output[7] == 1:
-                stats_threads[tid, 1] += 1
+                stats[1] += 1
             elif output[7] == 2:
-                stats_threads[tid, 2] += 1
+                stats[2] += 1
             else:
-                stats_threads[tid, 3] += 1
+                stats[3] += 1
             if cell_indices[i] == len(mesh):
                 if refl[1]:
                     mus[i] = -mus[i]
                     cell_indices[i] -= 1
-                    stats_threads[tid, 5] += 1
+                    stats[5] += 1
                 else:
                     distance_to_census = 0.0
             elif cell_indices[i] == -1:
                 if refl[0]:
                     mus[i] = -mus[i]
                     cell_indices[i] += 1
-                    stats_threads[tid, 5] += 1
+                    stats[5] += 1
                 else:
                     distance_to_census = 0.0
             if weights[i] < weight_floor:
-                stats_threads[tid, 4] += 1
+                stats[4] += 1
                 loc = int(cell_indices[i])
                 if 0 < loc < len(sigma_a) - 1:
                     r0 = mesh[loc][0]; r1 = mesh[loc][1]
                     cell_vol = (4.0 / 3.0) * math.pi * (r1**3 - r0**3)
-                    dep_threads[tid, loc] += weights[i] / cell_vol
-                    si_threads[tid, loc]  += (weights[i] / dt
-                                              / sigma_a[loc] / cell_vol)
+                    dep[loc] += weights[i] / cell_vol
+                    si[loc]  += (weights[i] / dt / sigma_a[loc] / cell_vol)
                 weights[i] = 0.0
                 distance_to_census = 0.0
+
+
+@jit(nopython=True, parallel=True)
+def move_particles_spherical(weights, mus, times, positions, cell_indices,
+                              mesh, sigma_a, sigma_s, dt, refl, stats_accum,
+                              weight_floor=0.0):
+    """Transport all spherical particles for one time step (numba prange).
+
+    Parallelism is achieved by splitting particles into per-thread chunks and
+    calling the serial _move_sph_slice kernel from a simple prange loop.
+    This avoids the Numba CFG bug that arises when a prange loop contains a
+    nested while loop directly (Numba ≥ 0.59 parfor pass limitation).
+    """
+    N = len(weights)
+    n_cells = len(sigma_a)
+    n_threads = get_num_threads()
+    dep_threads   = np.zeros((n_threads, n_cells))
+    si_threads    = np.zeros((n_threads, n_cells))
+    stats_threads = np.zeros((n_threads, 6), dtype=np.int64)
+
+    chunk = (N + n_threads - 1) // n_threads
+    for t in prange(n_threads):
+        start = t * chunk
+        end = min(start + chunk, N)
+        if start < end:
+            _move_sph_slice(
+                weights[start:end], mus[start:end], times[start:end],
+                positions[start:end], cell_indices[start:end],
+                mesh, sigma_a, sigma_s, dt, refl, weight_floor,
+                dep_threads[t], si_threads[t], stats_threads[t])
 
     stats_sum = stats_threads.sum(axis=0)
     for j in range(len(stats_sum)):

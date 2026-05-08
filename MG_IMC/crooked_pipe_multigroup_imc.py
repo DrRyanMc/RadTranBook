@@ -505,8 +505,10 @@ def main(
     t_final = max(output_times)
 
     # ── Energy groups ────────────────────────────────────────────────────────
-    # Range [~1 keV, 10 keV] on a log scale — matches the diffusion reference.
-    energy_edges = np.logspace(1e-4, np.log10(10.0), n_groups + 1)
+    # Range [1e-4 keV, 10 keV] on a log scale — matches the diffusion reference.
+    # np.logspace takes base-10 exponents, so first arg must be log10(1e-4) = -4,
+    # NOT 1e-4 (which would give 10^(1e-4) ≈ 1.0 keV as the lower edge).
+    energy_edges = np.logspace(-4, 1, n_groups + 1)
 
     # ── Mesh construction ────────────────────────────────────────────────────
     mesh_tag = 'refined' if use_refined_mesh else 'uniform'

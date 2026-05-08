@@ -3,3 +3,5 @@
 *.npz
 *.pkl
 *.pyc
+*.nbc
+__pycache__/**/*
