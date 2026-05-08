@@ -622,6 +622,67 @@ def plot_fiducial_history(times, fiducial_data, n_groups=10):
     print(f"Saved: {filename2}")
 
 
+def _plot_intermediate_spectra(spectra_snapshots, spectrum_times, energy_edges,
+                                labels, out_prefix):
+    """Plot radiation spectra at all fiducial points for every snapshot so far.
+    Produces one PDF per fiducial point (overwritten at each output time).
+    Curves are coloured early→late using the plasma colormap.
+    """
+    if not spectra_snapshots:
+        return
+    n_snaps = len(spectra_snapshots)
+    energy_centers = 0.5 * (energy_edges[:-1] + energy_edges[1:])
+    cmap = plt.cm.plasma
+    snap_colors = [cmap(i / max(n_snaps - 1, 1)) for i in range(n_snaps)]
+    for pt_idx, pt_label in enumerate(labels):
+        fig, ax = plt.subplots(figsize=(6, 4.5))
+        for si, (col, t_s) in enumerate(zip(snap_colors, spectrum_times)):
+            spec = spectra_snapshots[si][pt_idx, :]
+            ax.stairs(spec, energy_edges, baseline=None,
+                      color=col, linewidth=1.8, label=f't = {t_s:.3g} ns')
+            mask = spec > 0
+            if np.any(mask):
+                ax.scatter(energy_centers[mask], spec[mask],
+                           color=col, s=18, zorder=5)
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xlabel(r'Photon energy $E$ (keV)', fontsize=12)
+        ax.set_ylabel(r'$dE_r/dE$ (GJ cm$^{-3}$ keV$^{-1}$)', fontsize=11)
+        raw = str(pt_label).strip()
+        try:
+            parts = raw.split()
+            r_part = next(p for p in parts if p.startswith('r='))
+            z_part = next(p for p in parts if p.startswith('z='))
+            rv = r_part.split('=')[1].strip(',')
+            zv = z_part.split('=')[1].strip(',')
+            title = fr'$(r,z)=({rv},{zv})$ cm'
+        except Exception:
+            title = raw
+        ax.set_title(title, fontsize=12)
+        all_vals = np.concatenate([spectra_snapshots[si][pt_idx, :]
+                                   for si in range(n_snaps)])
+        pos_vals = all_vals[all_vals > 0]
+        if pos_vals.size > 0:
+            ymax = float(np.max(pos_vals)) * 3.0
+            ymin = max(float(np.min(pos_vals)) / 100.0, ymax * 1e-12)
+            ax.set_ylim(ymin, ymax)
+        ax.set_xlim(energy_edges[0] * 0.9, energy_edges[-1] * 1.1)
+        ax.grid(True, which='both', alpha=0.25, linestyle='--')
+        ax.grid(True, which='minor', alpha=0.12, linestyle=':')
+        if n_snaps <= 12:
+            ax.legend(fontsize=8, loc='best')
+        else:
+            sm = plt.cm.ScalarMappable(
+                cmap=cmap,
+                norm=plt.Normalize(vmin=spectrum_times[0], vmax=spectrum_times[-1]))
+            sm.set_array([])
+            fig.colorbar(sm, ax=ax, label='time (ns)')
+        plt.tight_layout()
+        outname = f'{out_prefix}_spectra_intermediate_pt{pt_idx + 1}.pdf'
+        show(outname, close_after=True)
+        print(f'    Saved {outname}')
+
+
 # =============================================================================
 # MAIN EXECUTION
 # =============================================================================
@@ -1050,6 +1111,15 @@ def main(
                 ])
                 fiducial_spectra_snapshots.append(snap)
                 spectrum_output_times.append(float(t))
+                # Intermediate diagnostic plots (overwritten at each output time)
+                _plot_intermediate_spectra(
+                    fiducial_spectra_snapshots, spectrum_output_times,
+                    energy_edges, fiducial_labels,
+                    f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}',
+                )
+                plot_fiducial_history(
+                    np.array(times, dtype=float), fiducial_data, n_groups=n_groups,
+                )
                 print(f"  >>> Checkpoint → {checkpoint_file}", flush=True)
                 save_checkpoint(
                     solver, step, t, times,
@@ -1152,6 +1222,15 @@ def main(
                 ])  # shape (n_points, n_groups)
                 fiducial_spectra_snapshots.append(snap)
                 spectrum_output_times.append(float(t))
+                # Intermediate diagnostic plots (overwritten at each output time)
+                _plot_intermediate_spectra(
+                    fiducial_spectra_snapshots, spectrum_output_times,
+                    energy_edges, fiducial_labels,
+                    f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}',
+                )
+                plot_fiducial_history(
+                    np.array(times, dtype=float), fiducial_data, n_groups=n_groups,
+                )
                 print(
                     f"  >>> Checkpoint → {checkpoint_file}",
                     flush=True,

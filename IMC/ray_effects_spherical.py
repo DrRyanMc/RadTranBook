@@ -81,7 +81,7 @@ I_TOTAL     = I_INNER + I_OUTER   # 50 cells, dr = 0.1 cm
 
 # ── Material parameters ─────────────────────────────────────────────────────────
 RHO_INNER = 10.0   # g/cc
-RHO_OUTER = 0.1    # g/cc
+RHO_OUTER = 0.01    # g/cc
 
 SIGMA_COEF  = 100.0  # cm⁻¹ / (g/cc)  →  σ = SIGMA_COEF · ρ
 CV_VOL_COEF = 0.1    # GJ/(cc·keV) / (g/cc)  →  Cv_vol = CV_VOL_COEF · ρ
@@ -501,10 +501,10 @@ def parse_args():
         description='Ray effects in time: spherical IMC vs FLD comparison.')
     p.add_argument('--dt', type=float, default=0.01,
                    help='Time step [ns] (default: 0.01)')
-    p.add_argument('--Ntarget', type=int, default=20_000,
-                   help='Target IMC particle count (default: 20000)')
-    p.add_argument('--NMax', type=int, default=100_000,
-                   help='Max IMC particle count after combing (default: 100000)')
+    p.add_argument('--Ntarget', type=int, default=500_000,
+                   help='Target IMC particle count (default: 500000)')
+    p.add_argument('--NMax', type=int, default=1_000_000,
+                   help='Max IMC particle count after combing (default: 1000000)')
     p.add_argument('--output-times', type=str, default='0.01,0.05,0.10',
                    help='Comma-separated output times in ns (default: 0.01,0.05,0.10)')
     p.add_argument('--imc-only', action='store_true',
@@ -519,12 +519,12 @@ def parse_args():
                    help='Skip generating the plot')
     p.add_argument('--no-sn', action='store_true',
                    help='Skip S_N transport runs')
-    p.add_argument('--sn-orders', type=str, default='2,8',
+    p.add_argument('--sn-orders', type=str, default='2,64',
                    help='Comma-separated S_N angular orders (default: 2,8)')
     p.add_argument('--dt-max-sn', type=float, default=0.0,
                    help='dt_max for S_N solver in ns (default: same as --dt)')
-    p.add_argument('--maxits-sn', type=int, default=200,
-                   help='Max source iterations per S_N time step (default: 200)')
+    p.add_argument('--maxits-sn', type=int, default=2000,
+                   help='Max source iterations per S_N time step (default: 2000)')
     return p.parse_args()
 
 

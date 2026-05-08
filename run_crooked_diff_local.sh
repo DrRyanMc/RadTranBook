@@ -10,8 +10,8 @@
 #   bash run_crooked_diff_local.sh --clean  # delete checkpoint/done flag and start fresh
 
 # ─── Configuration ─────────────────────────────────────────────────────────
-N_GROUPS=50
-N_THREADS=8        # set to the number of physical cores you want to use
+N_GROUPS=10
+N_THREADS=3        # set to the number of physical cores you want to use
 
 # Checkpoint filename matches what the Python script auto-generates:
 #   crooked_pipe_checkpoint_<N_GROUPS>g_refined_<nx>x<ny>.npz
@@ -29,7 +29,7 @@ BASE_ARGS="--use-refined-mesh \
            --bc-t-start 0.05 \
            --bc-t-end 0.5 \
            --bc-ramp-time 20.0 \
-           --output-times 0.001,0.01,0.1,1,5,10,20,50,100 \
+           --output-times 0.001,0.01,0.1,1,5,10,20,50,100,200 \
            --checkpoint-every 5"
 
 # ─── Optional --clean flag ──────────────────────────────────────────────────
