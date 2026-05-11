@@ -24,7 +24,7 @@ BASE_ARGS="--use-refined-mesh \
            --n-groups ${N_GROUPS} \
            --n-threads ${N_THREADS} \
            --dt-initial 1e-4 \
-           --dt-max 0.1 \
+           --dt-max 0.01 \
            --dt-growth 1.02 \
            --bc-t-start 0.05 \
            --bc-t-end 0.5 \

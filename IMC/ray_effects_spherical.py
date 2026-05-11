@@ -73,25 +73,26 @@ C_LIGHT = 29.98    # cm/ns
 A_RAD   = 0.01372  # GJ/(cm³·keV⁴)
 
 # ── Problem geometry ────────────────────────────────────────────────────────────
-R_INTERFACE = 2.0   # cm  (inner thin / outer thick boundary)
+R_INTERFACE = 2.9   # cm  (inner thin / outer thick boundary)
 R_MAX       = 3.0   # cm  (outer domain boundary)
-I_INNER     = 40    # cells in inner thin region [0, 2]
-I_OUTER     = 10    # cells in outer thick shell [2, 3]
-I_TOTAL     = I_INNER + I_OUTER   # 50 cells, dr = 0.1 cm
+I_INNER     = 145    # cells in inner thin region [0, 2.9]
+I_OUTER     = 5    # cells in outer thick shell [2.9, 3.0]
+I_TOTAL     = I_INNER + I_OUTER   # 150 cells, dr = 0.02 cm
 
 # ── Material parameters ─────────────────────────────────────────────────────────
-RHO_INNER = 10.0   # g/cc
+RHO_INNER = 0.01   # g/cc
 RHO_OUTER = 0.01    # g/cc
 
 SIGMA_COEF  = 100.0  # cm⁻¹ / (g/cc)  →  σ = SIGMA_COEF · ρ
-CV_VOL_COEF = 0.1    # GJ/(cc·keV) / (g/cc)  →  Cv_vol = CV_VOL_COEF · ρ
+CV_VOL_COEF = 1e6 #0.1    # GJ/(cc·keV) / (g/cc)  →  Cv_vol = CV_VOL_COEF · ρ
 
 SIGMA_INNER  = SIGMA_COEF  * RHO_INNER   # 1000 cm⁻¹
 SIGMA_OUTER  = SIGMA_COEF  * RHO_OUTER   # 10   cm⁻¹
 CV_INNER_VOL = CV_VOL_COEF * RHO_INNER   # 1.0  GJ/(cc·keV)
 CV_OUTER_VOL = CV_VOL_COEF * RHO_OUTER   # 0.01 GJ/(cc·keV)
 
-T_HOT  = 1.0     # keV  initial temperature of outer shell
+T_HOT  = 1.0e-3     # keV  initial temperature of outer shell
+T_HOT_Rad = 1.0     # keV  initial radiation temperature of outer shell
 T_COLD = 1.0e-3  # keV  initial temperature of inner region
 
 # ── Shared uniform mesh, dr = 0.1 cm ───────────────────────────────────────────
@@ -102,7 +103,7 @@ IS_INNER   = R_CENTERS < R_INTERFACE               # True for inner (thin) cells
 SIGMA_CELL = np.where(IS_INNER, SIGMA_OUTER,  SIGMA_INNER)   # thin inside, thick outside
 CV_CELL    = np.where(IS_INNER, CV_OUTER_VOL, CV_INNER_VOL)
 T_INIT     = np.where(IS_INNER, T_COLD,       T_HOT)
-
+T_INIT_R   = np.where(IS_INNER, T_COLD,       T_HOT_Rad)
 
 # =============================================================================
 # IMC MATERIAL FUNCTIONS  (cell-array interface)
@@ -228,7 +229,7 @@ def run_imc(output_times, dt=0.01, Ntarget=20_000, NMax=100_000, verbose=True):
     print(f"  Mesh: {I_TOTAL} cells, dr={R_FACES[1]-R_FACES[0]:.2f} cm")
 
     # Initial radiation temperature = material temperature (thermal equilibrium IC)
-    Tr_init = T_INIT.copy()
+    Tr_init = T_INIT_R.copy()
 
     state = imc.init_simulation(
         Ntarget, T_INIT.copy(), Tr_init, IMC_MESH,
@@ -295,7 +296,7 @@ def run_fld(output_times, dt=0.01, verbose=False):
     )
 
     # Set initial conditions: equilibrium (φ = acT⁴) in each region
-    phi_init = A_RAD * C_LIGHT * T_INIT**4
+    phi_init = A_RAD * C_LIGHT * T_INIT_R**4
     solver.phi     = phi_init.copy()
     solver.T       = T_INIT.copy()
     solver.phi_old = phi_init.copy()
@@ -342,7 +343,8 @@ def run_sn(N, output_times, dt_max=0.01, dt_min=1.0e-4, maxits=200, K=30,
 
     # LD initial condition: both left/right edge dofs equal cell-constant value
     T_ic   = np.column_stack([T_INIT, T_INIT]).astype(np.float64)  # (I, 2)
-    phi_ic = AC_SN * T_ic**4                                        # (I, 2)
+    TR_ic   = np.column_stack([T_INIT_R, T_INIT_R]).astype(np.float64)  # (I, 2)
+    phi_ic = AC_SN * TR_ic**4                                        # (I, 2)
     psi_ic = np.broadcast_to(phi_ic[:, None, :] / 2,
                              (I_TOTAL, N, 2)).copy()               # (I, N, 2)
     g_ic   = phi_ic / 2.0                                          # (I, 2)
@@ -505,8 +507,8 @@ def parse_args():
                    help='Target IMC particle count (default: 500000)')
     p.add_argument('--NMax', type=int, default=1_000_000,
                    help='Max IMC particle count after combing (default: 1000000)')
-    p.add_argument('--output-times', type=str, default='0.01,0.05,0.10',
-                   help='Comma-separated output times in ns (default: 0.01,0.05,0.10)')
+    p.add_argument('--output-times', type=str, default='0.01,0.05,0.50',
+                   help='Comma-separated output times in ns (default: 0.01,0.05,0.50)')
     p.add_argument('--imc-only', action='store_true',
                    help='Run IMC only (skip FLD)')
     p.add_argument('--fld-only', action='store_true',
@@ -519,9 +521,9 @@ def parse_args():
                    help='Skip generating the plot')
     p.add_argument('--no-sn', action='store_true',
                    help='Skip S_N transport runs')
-    p.add_argument('--sn-orders', type=str, default='2,64',
+    p.add_argument('--sn-orders', type=str, default='2,8',
                    help='Comma-separated S_N angular orders (default: 2,8)')
-    p.add_argument('--dt-max-sn', type=float, default=0.0,
+    p.add_argument('--dt-max-sn', type=float, default=0.0001,
                    help='dt_max for S_N solver in ns (default: same as --dt)')
     p.add_argument('--maxits-sn', type=int, default=2000,
                    help='Max source iterations per S_N time step (default: 2000)')
