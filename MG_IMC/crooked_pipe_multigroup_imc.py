@@ -54,7 +54,7 @@ from plotfuncs import show
 T_INIT    = 0.01   # keV — cold initial condition
 RHO_THICK = 2.0    # g/cm^3 — optically thick regions
 RHO_THIN  = 0.01   # g/cm^3 — optically thin regions
-CV_MASS   = 0.05   # GJ/(g*keV) — mass-specific heat capacity
+CV_MASS   = 0.5   # GJ/(g*keV) — mass-specific heat capacity
 
 CHECKPOINT_VERSION = 1
 
