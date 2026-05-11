@@ -932,6 +932,19 @@ class DiffusionOperatorSolver2D:
         self._rows_diag = all_idx
         self._cols_diag = all_idx
 
+        # Pre-concatenated COO index arrays for assemble_matrix.
+        # rows/cols depend only on the grid (never change), so we pay the
+        # np.concatenate cost once here instead of once per assemble_matrix call.
+        # For the refined 168×354 mesh each array is ~1.2 MB; pre-computing
+        # avoids re-allocating ~2.4 MB of COO index data every time a matrix
+        # is assembled (once per Newton iter per group).
+        self._coo_rows = np.concatenate([self._rows_xl, self._rows_xr,
+                                         self._rows_yb, self._rows_yt,
+                                         self._rows_diag])
+        self._coo_cols = np.concatenate([self._cols_xl, self._cols_xr,
+                                         self._cols_yb, self._cols_yt,
+                                         self._cols_diag])
+
         # Precomputed 2-D meshes for face positions used when evaluating D(T,x,y)
         # X-face mesh: (nx+1, ny) — Xf_2d[i,j]=x_faces[i], Yc_xf[i,j]=y_centers[j]
         self._Xf_2d  = np.broadcast_to(self.x_faces[:, np.newaxis],
@@ -1099,10 +1112,8 @@ class DiffusionOperatorSolver2D:
         diag[:, :ny-1] += coeff_yt      # top-face   contribution to cell j (j≤ny-2)
 
         # Build COO using pre-allocated index arrays (constructed once at init)
-        rows = np.concatenate([self._rows_xl, self._rows_xr,
-                                self._rows_yb, self._rows_yt, self._rows_diag])
-        cols = np.concatenate([self._cols_xl, self._cols_xr,
-                                self._cols_yb, self._cols_yt, self._cols_diag])
+        rows = self._coo_rows
+        cols = self._coo_cols
         data = np.concatenate([-coeff_xl.ravel(), -coeff_xr.ravel(),
                                 -coeff_yb.ravel(), -coeff_yt.ravel(),
                                  diag.ravel()])

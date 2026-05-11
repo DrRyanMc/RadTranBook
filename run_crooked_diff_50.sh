@@ -31,7 +31,7 @@ trap resubmit SIGTERM
 module load python
 cd ~/RadTranBook
 
-BASE_ARGS="--use-refined-mesh --n-groups 50 --n-threads 50 --checkpoint-every 5"
+BASE_ARGS="--use-refined-mesh --n-groups 50 --n-threads 1 --checkpoint-every 5"
 
 if [ -f "$CHECKPOINT" ]; then
     echo "Restarting from checkpoint: $CHECKPOINT"

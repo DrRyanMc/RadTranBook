@@ -457,6 +457,28 @@ class MultigroupDiffusionSolver2D:
                     bottom_bc_value=self.bottom_bc_value, top_bc_value=self.top_bc_value
                 )
             self.solvers.append(solver)
+
+        # All group solvers share the same grid, so redirect their geometry
+        # arrays to solver[0]'s copies.  These arrays are read-only after
+        # construction, so sharing is safe and eliminates (G-1) duplicate
+        # copies of ~2.5 MB each.
+        s0 = self.solvers[0]
+        _shared_grid_attrs = (
+            'x_faces', 'y_faces', 'x_centers', 'y_centers',
+            'dx_cells', 'dy_cells', 'X_centers', 'Y_centers',
+            'Ax_faces', 'Ay_faces', 'V_cells',
+            '_geom_xl', '_geom_xr', '_geom_yb', '_geom_yt',
+            '_rows_xl', '_cols_xl', '_rows_xr', '_cols_xr',
+            '_rows_yb', '_cols_yb', '_rows_yt', '_cols_yt',
+            '_rows_diag', '_cols_diag',
+            '_coo_rows', '_coo_cols',
+            '_Xf_2d', '_Yc_xf', '_Xc_yf', '_Yf_2d',
+            '_Xc_flat', '_Yc_flat',
+        )
+        for g in range(1, n_groups):
+            for attr in _shared_grid_attrs:
+                if hasattr(s0, attr):
+                    setattr(self.solvers[g], attr, getattr(s0, attr))
         
         # Extract grid information from first solver (all solvers share the same grid)
         if not self._use_custom_faces:
@@ -762,7 +784,18 @@ class MultigroupDiffusionSolver2D:
         
         # Update time
         self.t += self.dt
-        
+
+        # Free per-group LU factorizations and assembled matrices now that the
+        # time step is complete.  They are rebuilt on the first GMRES call of
+        # the next step (T will have changed, so the cache would be invalidated
+        # anyway).  Clearing here frees G × ~15 MB = O(100 MB) between steps.
+        for g in range(self.n_groups):
+            self.solvers[g]._cached_T  = None
+            self.solvers[g]._cached_A  = None
+            self.solvers[g]._cached_D_x_faces = None
+            self.solvers[g]._cached_D_y_faces = None
+            self.solvers[g]._cached_LU = None
+
         return {
             'newton_iterations': newton_iter + 1,
             'gmres_info': gmres_info,

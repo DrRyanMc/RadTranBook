@@ -11,7 +11,7 @@
 
 # ─── Configuration ─────────────────────────────────────────────────────────
 N_GROUPS=10
-N_THREADS=3        # set to the number of physical cores you want to use
+N_THREADS=1        # set to the number of physical cores you want to use
 
 # Checkpoint filename matches what the Python script auto-generates:
 #   crooked_pipe_checkpoint_<N_GROUPS>g_refined_<nx>x<ny>.npz
