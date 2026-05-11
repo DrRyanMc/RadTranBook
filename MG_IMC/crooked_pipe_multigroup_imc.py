@@ -15,11 +15,19 @@ ramping from T_start to T_end over bc_ramp_time ns.
 
 Restart/checkpoint: pickle-based (consistent with existing MG_IMC conventions).
 
-Domain: r in [0.0, 2.0] cm, z in [0.0, 7.0] cm
+Domain: r in [0.0, 2.0] cm, z in [0.0, 3.5] cm
+
+Geometry — U-shaped (reversed) crooked pipe:
+  Inner leg  (r < 0.5):          thin channel up from z=0 (inlet)
+  Bend       (r < 1.5, z > 2.5): connects inner to outer leg at the top
+  Outer leg  (1.0 <= r < 1.5):   return channel back down to z=0
+  Thick wall (0.5 <= r < 1.0, z <= 2.5): separates the two legs
+  Outer wall (r >= 1.5):         always thick
+
 Initial condition: T = Tr = T_INIT = 0.01 keV everywhere
 Fiducial monitor points:
-    (r=0.0, z=0.25), (r=0.0, z=2.75), (r=1.25, z=3.5),
-    (r=0.0, z=4.25), (r=0.0, z=6.75)
+    (r=0.0,  z=0.25),  (r=0.0,  z=2.25), (r=1.25, z=3.25),
+    (r=1.25, z=1.75),  (r=1.25, z=0.25)
 """
 
 import argparse
@@ -54,7 +62,7 @@ from plotfuncs import show
 T_INIT    = 0.01   # keV — cold initial condition
 RHO_THICK = 2.0    # g/cm^3 — optically thick regions
 RHO_THIN  = 0.01   # g/cm^3 — optically thin regions
-CV_MASS   = 0.5   # GJ/(g*keV) — mass-specific heat capacity
+CV_MASS   = 0.05   # GJ/(g*keV) — mass-specific heat capacity
 
 CHECKPOINT_VERSION = 1
 
@@ -66,14 +74,13 @@ CHECKPOINT_VERSION = 1
 def is_optically_thick(r, z):
     """Return True where (r,z) is in an optically thick region.
 
-    Crooked-pipe thick/thin map (identical to the diffusion reference):
-      r in [0.0, 0.5]:
-        z in [0.0, 2.5)  — thin
-        z in [2.5, 7.0]  — thick   (with thin patches near r<1.5)
-      r in [0.5, 2.0]:
-        z in [0.0, 3.0)  — thick
-        z in [3.0, 4.5)  — thin
-        z in [4.5, 7.0]  — thick
+    U-shaped crooked-pipe thick/thin map (domain z in [0, 3.5]):
+      Inner leg  (r < 0.5):          thin — all z
+      Outer leg  (1.0 <= r < 1.5):   thin — all z
+      Bend       (r < 1.5, 2.5 < z < 3.0): thin — connects inner & outer at top
+      Top wall   (z >= 3.0):                THICK
+      Inner wall (0.5 <= r < 1.0, z <= 2.5): THICK — separates the two legs
+      Outer wall (r >= 1.5):          THICK — all z
 
     Vectorised over array inputs.
     """
@@ -83,15 +90,13 @@ def is_optically_thick(r, z):
 
     result = np.ones_like(r, dtype=bool)  # default: thick
 
-    lower_thin          = (r < 0.5)  & ((z < 3.0) | (z > 4.0))
-    ascending_left_thin = (r < 1.5)  & (z > 2.5) & (z < 3.0)
-    ascending_right_thin= (r < 1.5)  & (z > 4.0) & (z < 4.5)
-    top_thin            = (r >= 1.0) & (r < 1.5) & (z > 2.5) & (z < 4.5)
+    inner_leg = (r < 0.5)  & (z < 3.0)           # near-axis channel
+    outer_leg = (r >= 1.0) & (r < 1.5) & (z < 3.0)  # return channel
+    bend      = (r < 1.5)  & (z > 2.5) & (z < 3.0)  # top bend connecting legs
 
-    result[lower_thin]           = False
-    result[ascending_left_thin]  = False
-    result[ascending_right_thin] = False
-    result[top_thin]             = False
+    result[inner_leg] = False
+    result[outer_leg] = False
+    result[bend]      = False
 
     if scalar_input:
         return bool(result[0])
@@ -251,18 +256,23 @@ def plot_solution(T_mat, T_rad, r_centers, z_centers, time_value, save_prefix,
             vmax = min(vmax, 1.1 * T_bc)
         vmax = max(vmax, vmin + 0.01)  # ensure vmax > vmin
 
-        fig, ax = plt.subplots(1, 1, figsize=(8, 3 * 1.275))
+        fig, ax = plt.subplots(1, 1, figsize=(5.5, 3 * 1.275))
         im = ax.pcolormesh(
             ZE, RE, T_field,
             vmin=vmin, vmax=vmax,
             cmap='plasma',
             shading='flat',
         )
-        plt.colorbar(im, ax=ax, orientation='horizontal', location='top',
-                     pad=0.15, label=cbar_labels[tag])
         ax.set_xlabel('z (cm)')
         ax.set_ylabel('r (cm)')
         ax.set_aspect('equal')
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('top', size='5%', pad=0.3)
+        cbar = plt.colorbar(im, cax=cax, orientation='horizontal')
+        cax.xaxis.set_ticks_position('top')
+        cax.xaxis.set_label_position('top')
+        cax.set_xlabel(cbar_labels[tag])
         plt.tight_layout()
         fname = f'{save_prefix}_{tag}_t_{time_value:.5f}ns.png'
         fig.savefig(fname, dpi=150, bbox_inches='tight')
@@ -483,7 +493,7 @@ def main(
     n_groups=10,
     output_times=None,
     nr=60,
-    nz=210,
+    nz=105,
     dt_initial=1e-4,
     dt_max=0.01,
     dt_increase_factor=1.1,
@@ -586,8 +596,8 @@ def main(
             refine_width=refine_width,
         )
         z_edges = generate_refined_faces(
-            0.0, 7.0,
-            interface_locations=[2.5, 3.0, 4.0, 4.5],
+            0.0, 3.5,
+            interface_locations=[2.5, 3.0],
             n_refine=n_refine,
             n_coarse=n_coarse_z,
             refine_width=refine_width,
@@ -595,7 +605,7 @@ def main(
         print(f'  Refined mesh: {len(r_edges)-1} x {len(z_edges)-1} cells')
     else:
         r_edges = np.linspace(0.0, 2.0, nr + 1)
-        z_edges = np.linspace(0.0, 7.0, nz + 1)
+        z_edges = np.linspace(0.0, 3.5, nz + 1)
 
     r_centers = 0.5 * (r_edges[:-1] + r_edges[1:])
     z_centers = 0.5 * (z_edges[:-1] + z_edges[1:])
@@ -690,11 +700,11 @@ def main(
 
     # ── Fiducial monitor points ───────────────────────────────────────────────
     fiducial_points = {
-        'r=0.00 z=0.25': (0.00, 0.25),
-        'r=0.00 z=2.75': (0.00, 2.75),
-        'r=1.25 z=3.50': (1.25, 3.50),
-        'r=0.00 z=4.25': (0.00, 4.25),
-        'r=0.00 z=6.75': (0.00, 6.75),
+        'r=0.00 z=0.25': (0.00, 0.25),   # inner leg, near inlet
+        'r=0.00 z=2.25': (0.00, 2.25),   # inner leg, below bend
+        'r=1.25 z=3.25': (1.25, 3.25),   # outer leg, near top
+        'r=1.25 z=1.75': (1.25, 1.75),   # outer leg, mid-height
+        'r=1.25 z=0.25': (1.25, 0.25),   # outer leg, near exit
     }
     fiducial_indices = {}
     for label, (rv, zv) in fiducial_points.items():
@@ -1005,7 +1015,7 @@ def parse_arguments():
                         help='Number of energy groups')
     parser.add_argument('--nr',         type=int,   default=60,
                         help='Coarse r-direction cells')
-    parser.add_argument('--nz',         type=int,   default=210,
+    parser.add_argument('--nz',         type=int,   default=105,
                         help='Coarse z-direction cells')
     parser.add_argument('--dt-initial', type=float, default=1e-4,
                         help='Initial time step (ns)')

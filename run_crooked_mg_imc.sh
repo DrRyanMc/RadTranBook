@@ -10,7 +10,7 @@ N_GROUPS=10
 NR=60
 NZ=210
 #this next line needs to do that calculation and not just be a string so that it is an integer when passed to the Python script.
-NMax=$((1000000 * N_GROUPS))  # keep number of particles per group constant as N_GROUPS changes
+NMax=$((10000000 * N_GROUPS))  # keep number of particles per group constant as N_GROUPS changes
 # make Ntotal half NMax and ensure it is an integer
 Ntotal=$((NMax / 2))
 

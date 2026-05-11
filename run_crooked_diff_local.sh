@@ -25,7 +25,7 @@ BASE_ARGS="--use-refined-mesh \
            --n-threads ${N_THREADS} \
            --dt-initial 1e-4 \
            --dt-max 0.01 \
-           --dt-growth 1.02 \
+           --dt-growth 1.1 \
            --bc-t-start 0.05 \
            --bc-t-end 0.5 \
            --bc-ramp-time 20.0 \
