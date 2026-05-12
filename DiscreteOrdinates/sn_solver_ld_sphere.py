@@ -475,7 +475,7 @@ def _sweep_all_sph_ld(
 
 def single_sweep_phi_sph_ld(
     I, r_left, dr, source_n, source_g, sigma_hat, N,
-    bc_outer, bc_g_outer, bc_inner=None, fix=1,
+    bc_outer, bc_g_outer, bc_inner=None, fix=1, s_override=None,
 ):
     """One sequential spherical LD sweep; return scalar flux phi (I, 2).
 
@@ -505,6 +505,10 @@ def single_sweep_phi_sph_ld(
         applied automatically.  For a hollow shell pass the inflow array.
     fix : int
         Positivity fixup flag (default 1 = on).
+    s_override : (N,) float64 or None
+        If provided, replace the weighted-DD angular reconstruction weights
+        s_n with the supplied array.  Pass ``np.full(N, 0.5)`` for ordinary
+        diamond difference.  Default ``None`` uses weighted DD.
 
     Returns
     -------
@@ -512,6 +516,8 @@ def single_sweep_phi_sph_ld(
     """
     MU, W = _get_quadrature(N)
     mu_edges, alpha, s = _compute_sph_quad_data(N)
+    if s_override is not None:
+        s = np.ascontiguousarray(s_override, dtype=np.float64)
     M_l, M_r = _compute_geometric_moments(r_left, dr)
     r_left_c = np.ascontiguousarray(r_left, dtype=np.float64)
     full_sphere = 1 if r_left_c[0] < 1e-15 else 0
@@ -538,7 +544,7 @@ def single_sweep_phi_sph_ld(
 
 def single_sweep_psi_sph_ld(
     I, r_left, dr, source_n, source_g, sigma_hat, N,
-    bc_outer, bc_g_outer, bc_inner=None, fix=1,
+    bc_outer, bc_g_outer, bc_inner=None, fix=1, s_override=None,
 ):
     """One sequential spherical LD sweep; return (psi, phi, g).
 
@@ -552,6 +558,8 @@ def single_sweep_psi_sph_ld(
     """
     MU, W = _get_quadrature(N)
     mu_edges, alpha, s = _compute_sph_quad_data(N)
+    if s_override is not None:
+        s = np.ascontiguousarray(s_override, dtype=np.float64)
     M_l, M_r = _compute_geometric_moments(r_left, dr)
     r_left_c = np.ascontiguousarray(r_left, dtype=np.float64)
     full_sphere = 1 if r_left_c[0] < 1e-15 else 0

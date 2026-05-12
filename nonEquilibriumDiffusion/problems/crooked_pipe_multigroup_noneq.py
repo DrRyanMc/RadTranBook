@@ -46,7 +46,7 @@ from multigroup_diffusion_solver_2d import (
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'utils'))
 from plotfuncs import show
 
-T_init = 0.01  # keV
+T_init = 0.05  # keV
 RHO_THICK = 2.0  # g/cm^3
 RHO_THIN = 0.01   # g/cm^3
 CV_MASS = 0.05    # GJ/(g*keV)
@@ -56,47 +56,32 @@ CV_MASS = 0.05    # GJ/(g*keV)
 # =============================================================================
 
 def is_optically_thick(r, z):
+    """Return True where (r,z) is in an optically thick region.
+
+    U-shaped (reversed) crooked pipe thick/thin map (domain z in [0, 3.5]):
+      Inner leg  (r < 0.5):                  thin — all z (up to top wall)
+      Outer leg  (1.0 <= r < 1.5):           thin — all z (up to top wall)
+      Bend       (r < 1.5, 2.5 < z < 3.0):  thin — connects inner & outer at top
+      Top wall   (z >= 3.0):                 THICK
+      Inner wall (0.5 <= r < 1.0, z <= 2.5): THICK — separates the two legs
+      Outer wall (r >= 1.5):                 THICK — all z
+
+    Vectorised over array inputs.
     """
-    Determine if location (r, z) is in optically thick region
-    
-    Based on Crooked Pipe geometry:
-    - For r ∈ [0.0, 0.5]:
-        - z ∈ [0.0, 2.5]: optically thin
-        - z ∈ [2.5, 7.0]: OPTICALLY THICK
-    - For r ∈ [0.5, 2.0]:
-        - z ∈ [0.0, 3.0]: OPTICALLY THICK
-        - z ∈ [3.0, 4.5]: optically thin
-        - z ∈ [4.5, 7.0]: OPTICALLY THICK
-        
-    Vectorized to handle scalar or array inputs
-    """
-    # Check if inputs are scalar
     scalar_input = np.isscalar(r) and np.isscalar(z)
-    
-    # Convert to arrays if needed
-    r = np.atleast_1d(r)
-    z = np.atleast_1d(z)
-    
-    # Start with all thick (default)
-    result = np.ones_like(r, dtype=bool)
-    
-    # Lower thin region: r < 0.5 and (z < 3.0 or z > 4.0)
-    lower_thin = (r < 0.5) & ((z < 3.0) | (z > 4.0))
-    result[lower_thin] = False
-    
-    # Ascending thin region (left): r < 1.5 and (z > 2.5 and z < 3.0)
-    ascending_left_thin = (r < 1.5) & (z > 2.5) & (z < 3.0)
-    result[ascending_left_thin] = False
-    
-    # Ascending thin region (right): r < 1.5 and (z > 4.0 and z < 4.5)
-    ascending_right_thin = (r < 1.5) & (z > 4.0) & (z < 4.5)
-    result[ascending_right_thin] = False
-    
-    # Top thin region: (r >= 1.0 and r < 1.5) and (z > 2.5 and z < 4.5)
-    top_thin = (r >= 1.0) & (r < 1.5) & (z > 2.5) & (z < 4.5)
-    result[top_thin] = False
-    
-    # Return scalar if input was scalar
+    r = np.atleast_1d(np.asarray(r, dtype=float))
+    z = np.atleast_1d(np.asarray(z, dtype=float))
+
+    result = np.ones_like(r, dtype=bool)  # default: thick
+
+    inner_leg = (r < 0.5)  & (z < 3.0)                   # near-axis channel
+    outer_leg = (r >= 1.0) & (r < 1.5) & (z < 3.0)       # return channel
+    bend      = (r < 1.5)  & (z > 2.5) & (z < 3.0)       # top bend connecting legs
+
+    result[inner_leg] = False
+    result[outer_leg] = False
+    result[bend]      = False
+
     if scalar_input:
         return bool(result[0])
     return result
@@ -476,90 +461,53 @@ def plot_mesh(solver, n_groups=10):
 
 
 def plot_solution(solver, time_value, save_prefix='crooked_pipe_noneq', show_mesh=False, first_one=False, T_bc=None):
-    """Plot material temperature and radiation temperature as separate figures"""
+    """Plot material temperature and radiation temperature as separate figures.
+
+    Uses pcolormesh with actual mesh edge arrays so non-uniform (refined) grids
+    render at the correct physical coordinates.
+    """
     T_2d = solver.T.reshape(solver.nx_cells, solver.ny_cells)
     phi_2d = np.sum(solver.phi_g_stored, axis=0).reshape(solver.nx_cells, solver.ny_cells)
     Er_2d = phi_2d / C_LIGHT
     T_rad_2d = (Er_2d / A_RAD)**0.25
-    
-    r_centers = solver.x_centers
-    z_centers = solver.y_centers
-    
-    R, Z = np.meshgrid(r_centers, z_centers, indexing='ij')
-    first_one = True  # need colorbar every time because scale changes across time steps, so can't reuse previous one
-    # PLOT 1: Material temperature
-    # Always use the taller figure (colorbar included every time)
-    fig1, ax1 = plt.subplots(1, 1, figsize=(8, 3*1.275))
-    
-    #make max color equal to current max rounded to nearest 0.01 keV for better comparison across time steps
-    max_T = np.max(T_2d)
-    vmax_T = np.ceil(max_T * 100) / 100.0
-    vmax_T = max(vmax_T, T_init + 0.01)  # ensure vmax > vmin
-    im1 = ax1.pcolormesh(Z, R, T_2d, shading='auto', cmap='plasma', vmin=T_init, vmax=vmax_T)
-    ax1.set_xlabel('z (cm)', fontsize=12)
-    ax1.set_ylabel('r (cm)', fontsize=12)
-    #ax1.set_title(f'Material Temperature T at t = {time_value:.3f} ns', fontsize=13, fontweight='bold')
-    
-    if first_one:
-        cbar1 = plt.colorbar(im1, ax=ax1, orientation='horizontal', location='top', pad=0.15, label='T (keV)')
-    
-    ax1.set_aspect('equal')
-    
-    # Overlay sample mesh lines if requested
-    if show_mesh:
-        r_faces = solver.x_faces
-        z_faces = solver.y_faces
-        # Sample every Nth line to avoid clutter
-        n_lines = 15
-        r_step = max(1, len(r_faces) // n_lines)
-        z_step = max(1, len(z_faces) // n_lines)
-        for r in r_faces[::r_step]:
-            ax1.axhline(r, color='white', alpha=0.2, linewidth=0.3)
-        for z in z_faces[::z_step]:
-            ax1.axvline(z, color='white', alpha=0.2, linewidth=0.3)
-    
-    plt.tight_layout()
-    filename1 = f'{save_prefix}_material_t_{time_value:.5f}ns.png'
-    if first_one:
-        show(filename1, close_after=True, cbar_ax=cbar1.ax)
-    else:
-        show(filename1, close_after=True)
-    print(f"Saved: {filename1}")
-    
-    # PLOT 2: Radiation temperature
-    # Always use the taller figure (colorbar included every time)
-    fig2, ax2 = plt.subplots(1, 1, figsize=(8, 3*1.275))
-    
-    #make max color equal to current max rounded to nearest 0.01 keV for better comparison across time steps
-    max_T_rad = np.max(T_rad_2d)
-    vmax_T_rad = np.ceil(max_T_rad * 100) / 100.0
-    if T_bc is not None:
-        vmax_T_rad = min(vmax_T_rad, 1.1 * T_bc)
-    vmax_T_rad = max(vmax_T_rad, T_init + 0.01)  # ensure vmax > vmin
-    im2 = ax2.pcolormesh(Z, R, T_rad_2d, shading='auto', cmap='plasma', vmin=T_init, vmax=vmax_T_rad)
-    ax2.set_xlabel('z (cm)', fontsize=12)
-    ax2.set_ylabel('r (cm)', fontsize=12)
-    #ax2.set_title(f'Radiation Temperature T_rad at t = {time_value:.3f} ns', fontsize=13, fontweight='bold')
-    
-    if first_one:
-        cbar2 = plt.colorbar(im2, ax=ax2, orientation='horizontal', location='top', pad=0.15, label=r'$T_\mathrm{r}$ (keV)')
-    
-    ax2.set_aspect('equal')
-    
-    # Overlay sample mesh lines if requested
-    if show_mesh:
-        for r in r_faces[::r_step]:
-            ax2.axhline(r, color='white', alpha=0.2, linewidth=0.3)
-        for z in z_faces[::z_step]:
-            ax2.axvline(z, color='white', alpha=0.2, linewidth=0.3)
-    
-    plt.tight_layout()
-    filename2 = f'{save_prefix}_radiation_t_{time_value:.5f}ns.png'
-    if first_one:
-        show(filename2, close_after=True, cbar_ax=cbar2.ax)
-    else:
-        show(filename2, close_after=True)
-    print(f"Saved: {filename2}")
+
+    r_edges = solver.x_faces
+    z_edges = solver.y_faces
+    ZE, RE = np.meshgrid(z_edges, r_edges)  # both (nr+1, nz+1)
+
+    vmin = T_init
+    cbar_labels = {'material': 'T (keV)', 'radiation': r'$T_\mathrm{r}$ (keV)'}
+
+    for T_field, tag, filename in [
+        (T_2d,     'material',  f'{save_prefix}_material_t_{time_value:.5f}ns.png'),
+        (T_rad_2d, 'radiation', f'{save_prefix}_radiation_t_{time_value:.5f}ns.png'),
+    ]:
+        vmax = np.ceil(T_field.max() * 100) / 100.0
+        if tag == 'radiation' and T_bc is not None:
+            vmax = min(vmax, 1.1 * T_bc)
+        vmax = max(vmax, vmin + 0.01)
+
+        fig, ax = plt.subplots(1, 1, figsize=(5.5, 3 * 1.275))
+        im = ax.pcolormesh(
+            ZE, RE, T_field,
+            vmin=vmin, vmax=vmax,
+            cmap='plasma',
+            shading='flat',
+        )
+        ax.set_xlabel('z (cm)')
+        ax.set_ylabel('r (cm)')
+        ax.set_aspect('equal')
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes('top', size='5%', pad=0.3)
+        cbar = plt.colorbar(im, cax=cax, orientation='horizontal')
+        cax.xaxis.set_ticks_position('top')
+        cax.xaxis.set_label_position('top')
+        cax.set_xlabel(cbar_labels[tag])
+        plt.tight_layout()
+        fig.savefig(filename, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        print(f'Saved: {filename}')
 
 
 def plot_fiducial_history(times, fiducial_data, n_groups=10):
@@ -694,6 +642,87 @@ def _default_n_threads(n_groups):
 
 
 # =============================================================================
+# SNAPSHOT SAVE (replaces matplotlib figure calls during the time loop)
+# =============================================================================
+
+def save_solution_snapshot(solver, t, save_prefix, energy_edges,
+                            fiducial_indices, fiducial_spectra_snapshots,
+                            spectrum_output_times, times, fiducial_data,
+                            fiducial_labels, T_bc=None):
+    """
+    Save solver state at an output time to NPZ files — no matplotlib.
+
+    Writes three files:
+      {save_prefix}_snapshot_t_{t:.5f}ns.npz  — 2D field arrays for colormaps
+      {save_prefix}_spectra.npz               — accumulated spectra at fiducial
+                                                points (overwritten each call)
+      {save_prefix}_fiducial_history.npz      — accumulated T_mat/T_rad history
+                                                at fiducial points (overwritten
+                                                each call)
+    """
+    nx, ny = solver.nx_cells, solver.ny_cells
+    dE = energy_edges[1:] - energy_edges[:-1]
+
+    T_2d   = solver.T.reshape(nx, ny)
+    phi_2d = np.sum(solver.phi_g_stored, axis=0).reshape(nx, ny)
+    Er_2d  = solver.E_r.reshape(nx, ny)
+    T_rad_2d = np.maximum(Er_2d / A_RAD, 0.0) ** 0.25
+    E_r_groups_3d = (solver.phi_g_stored / C_LIGHT).reshape(len(energy_edges) - 1, nx, ny)
+
+    snap_file = f'{save_prefix}_snapshot_t_{t:.5f}ns.npz'
+    np.savez_compressed(
+        snap_file,
+        T_2d=T_2d,
+        T_rad_2d=T_rad_2d,
+        phi_2d=phi_2d,
+        Er_2d=Er_2d,
+        E_r_groups_3d=E_r_groups_3d,
+        r_centers=solver.x_centers,
+        z_centers=solver.y_centers,
+        r_faces=solver.x_faces,
+        z_faces=solver.y_faces,
+        time=np.float64(t),
+        T_bc=np.float64(T_bc if T_bc is not None else np.nan),
+        energy_edges=energy_edges,
+    )
+    print(f"  Saved snapshot: {snap_file}")
+
+    # Collect spectrum at fiducial points and update running spectra NPZ
+    snap = np.array([
+        solver.phi_g_stored[:, ri * ny + zi] / C_LIGHT / dE
+        for (ri, zi) in fiducial_indices.values()
+    ])  # (n_points, n_groups)
+    fiducial_spectra_snapshots.append(snap)
+    spectrum_output_times.append(float(t))
+
+    spectra_file = f'{save_prefix}_spectra.npz'
+    np.savez_compressed(
+        spectra_file,
+        output_times=np.array(spectrum_output_times),
+        labels=np.array(list(fiducial_indices.keys())),
+        spectra=np.array(fiducial_spectra_snapshots),
+        energy_edges=energy_edges,
+        energy_centers=0.5 * (energy_edges[:-1] + energy_edges[1:]),
+    )
+    print(f"  Saved spectra:  {spectra_file}")
+
+    # Save fiducial temperature history accumulated up to this output time
+    fid_T_mat = np.array([fiducial_data[lbl]['T_mat'] for lbl in fiducial_labels])
+    fid_T_rad = np.array([fiducial_data[lbl]['T_rad'] for lbl in fiducial_labels])
+    fiducial_history_file = f'{save_prefix}_fiducial_history.npz'
+    np.savez_compressed(
+        fiducial_history_file,
+        times=np.array(times),
+        labels=np.array(fiducial_labels),
+        T_mat=fid_T_mat,
+        T_rad=fid_T_rad,
+    )
+    print(f"  Saved fiducial: {fiducial_history_file}")
+
+    return snap  # caller may discard
+
+
+# =============================================================================
 # CHECKPOINT HELPERS
 # =============================================================================
 
@@ -777,12 +806,13 @@ def main(
     use_refined_mesh=False,
     n_refine=10,
     n_coarse_r=60,
-    n_coarse_z=210,
+    n_coarse_z=105,
     refine_width=0.01,
     n_threads=None,
     restart_file=None,
     checkpoint_file=None,
     checkpoint_every=0,
+    max_steps=0,
 ):
     """Run the multigroup non-equilibrium Crooked Pipe test problem.
 
@@ -812,7 +842,7 @@ def main(
     print("CROOKED PIPE TEST PROBLEM - MULTIGROUP NON-EQUILIBRIUM")
     print("=" * 80)
     print("2D Cylindrical (r-z) Geometry")
-    print("Domain: r in [0.0, 2.0] cm, z in [0.0, 7.0] cm")
+    print("Domain: r in [0.0, 2.0] cm, z in [0.0, 3.5] cm")
     print(f"Groups: {n_groups} (group-dependent power-law opacities)")
     print("Material properties:")
     print("  Opacity law: sigma(T,E) = 10.0 * rho * T^{-1/2} * E^{-3} cm^-1")
@@ -835,7 +865,7 @@ def main(
     print("=" * 80)
 
     x_min, x_max = 0.0, 2.0
-    y_min, y_max = 0.0, 7.0
+    y_min, y_max = 0.0, 3.5
     nx_cells, ny_cells = n_coarse_r, n_coarse_z
     energy_edges = np.logspace(-4, np.log10(10.0), n_groups + 1)
 
@@ -908,7 +938,7 @@ def main(
     if use_refined_mesh:
         # Generate custom mesh with refinement at material interfaces
         # Interface locations in r: 0.5, 1.0, 1.5 cm
-        # Interface locations in z: 2.5, 3.0, 4.0, 4.5 cm
+        # Interface locations in z: 2.5, 3.0 cm
         print("  Generating refined mesh at material interfaces...")
         r_faces = generate_refined_z_faces(
             z_min=x_min,
@@ -921,7 +951,7 @@ def main(
         z_faces = generate_refined_z_faces(
             z_min=y_min,
             z_max=y_max,
-            interface_locations=[2.5, 3.0, 4.0, 4.5],
+            interface_locations=[2.5, 3.0],
             n_refine=n_refine,
             n_coarse=n_coarse_z,
             refine_width=refine_width
@@ -1072,8 +1102,27 @@ def main(
 
     _t_run_start = _time.perf_counter()
     dE = energy_edges[1:] - energy_edges[:-1]          # group widths (keV)
-    fiducial_spectra_snapshots: list = []               # (n_points, n_groups) per snapshot
+    # Reload previously accumulated spectra if the file already exists
+    # (handles restarts where the in-memory lists are lost between runs).
+    _spectra_file = f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}_spectra.npz'
+    fiducial_spectra_snapshots: list = []
     spectrum_output_times: list = []
+    if os.path.exists(_spectra_file):
+        try:
+            _prev = np.load(_spectra_file, allow_pickle=True)
+            _prev_times = list(_prev['output_times'])
+            _prev_spectra = list(_prev['spectra'])  # list of (n_points, n_groups) arrays
+            # Only keep entries for times strictly before the current restart point
+            for _pt, _sp in zip(_prev_times, _prev_spectra):
+                if _pt < t - 1e-12:
+                    spectrum_output_times.append(float(_pt))
+                    fiducial_spectra_snapshots.append(np.array(_sp))
+            if spectrum_output_times:
+                print(f"  Restored {len(spectrum_output_times)} spectra snapshot(s) "
+                      f"from {_spectra_file} (up to t={spectrum_output_times[-1]:.5f} ns)")
+        except Exception as _e:
+            print(f"  Warning: could not reload {_spectra_file}: {_e}")
+    steps_this_run = 0   # steps taken in this invocation (reset on each launch)
     # Minimum meaningful dt for snapping to output times.  When floating-point
     # accumulation leaves t within this tolerance of an output time we save
     # immediately (before the next step) instead of trying to take a near-zero
@@ -1082,6 +1131,7 @@ def main(
 
     while t < t_final:
         step += 1
+        steps_this_run += 1
         dt_current = solver.dt
 
         # Early save: floating-point accumulation can leave t within dt_min_snap
@@ -1095,31 +1145,21 @@ def main(
                     f" (within {dt_min_snap:.1e} ns of target {output_t} ns)",
                     flush=True,
                 )
-                plot_solution(
+                save_solution_snapshot(
                     solver, t,
                     save_prefix=f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}',
-                    show_mesh=False,
-                    first_one=first_one,
+                    energy_edges=energy_edges,
+                    fiducial_indices=fiducial_indices,
+                    fiducial_spectra_snapshots=fiducial_spectra_snapshots,
+                    spectrum_output_times=spectrum_output_times,
+                    times=times,
+                    fiducial_data=fiducial_data,
+                    fiducial_labels=fiducial_labels,
                     T_bc=boundary_temperature(t),
                 )
                 output_times_saved.add(output_t)
                 last_save_t = t
                 first_one = False
-                snap = np.array([
-                    solver.phi_g_stored[:, ri * solver.ny_cells + zi] / C_LIGHT / dE
-                    for (ri, zi) in fiducial_indices.values()
-                ])
-                fiducial_spectra_snapshots.append(snap)
-                spectrum_output_times.append(float(t))
-                # Intermediate diagnostic plots (overwritten at each output time)
-                _plot_intermediate_spectra(
-                    fiducial_spectra_snapshots, spectrum_output_times,
-                    energy_edges, fiducial_labels,
-                    f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}',
-                )
-                plot_fiducial_history(
-                    np.array(times, dtype=float), fiducial_data, n_groups=n_groups,
-                )
                 print(f"  >>> Checkpoint → {checkpoint_file}", flush=True)
                 save_checkpoint(
                     solver, step, t, times,
@@ -1201,36 +1241,25 @@ def main(
         for output_t in output_times_in_window:
             if output_t not in output_times_saved and abs(t - output_t) < 1e-6:
                 print(
-                    f"  >>> Saving colormap at t = {t:.6e} ns"
+                    f"  >>> Saving snapshot at t = {t:.6e} ns"
                     f" (target: {output_t} ns)",
                     flush=True,
                 )
-                plot_solution(
+                save_solution_snapshot(
                     solver, t,
                     save_prefix=f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}',
-                    show_mesh=False,
-                    first_one=first_one,
+                    energy_edges=energy_edges,
+                    fiducial_indices=fiducial_indices,
+                    fiducial_spectra_snapshots=fiducial_spectra_snapshots,
+                    spectrum_output_times=spectrum_output_times,
+                    times=times,
+                    fiducial_data=fiducial_data,
+                    fiducial_labels=fiducial_labels,
                     T_bc=boundary_temperature(t),
                 )
                 output_times_saved.add(output_t)
                 last_save_t = t
                 first_one = False
-                # Collect radiation spectrum at fiducial points (GJ/cm^3/keV).
-                snap = np.array([
-                    solver.phi_g_stored[:, ri * solver.ny_cells + zi] / C_LIGHT / dE
-                    for (ri, zi) in fiducial_indices.values()
-                ])  # shape (n_points, n_groups)
-                fiducial_spectra_snapshots.append(snap)
-                spectrum_output_times.append(float(t))
-                # Intermediate diagnostic plots (overwritten at each output time)
-                _plot_intermediate_spectra(
-                    fiducial_spectra_snapshots, spectrum_output_times,
-                    energy_edges, fiducial_labels,
-                    f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}',
-                )
-                plot_fiducial_history(
-                    np.array(times, dtype=float), fiducial_data, n_groups=n_groups,
-                )
                 print(
                     f"  >>> Checkpoint → {checkpoint_file}",
                     flush=True,
@@ -1253,13 +1282,39 @@ def main(
                 output_times_saved, checkpoint_file,
             )
 
+        # Step-limit exit: save checkpoint and signal the shell script to
+        # relaunch us from where we left off (exit code 75).
+        if max_steps > 0 and steps_this_run >= max_steps:
+            print(
+                f"  >>> max_steps={max_steps} reached at step {step}."
+                f"  Saving checkpoint and exiting for restart.",
+                flush=True,
+            )
+            save_checkpoint(
+                solver, step, t, times,
+                fiducial_labels, fiducial_data,
+                output_times_saved, checkpoint_file,
+            )
+            return None   # caller checks for None → sys.exit(75)
+
         if hit_output_time:
             solver.dt = dt_current
         solver.dt = min(solver.dt * dt_increase_factor, dt_max)
 
     if t_final not in output_times_saved:
-        print(f"  Saving colormap at final time t = {t_final:.3f} ns")
-        plot_solution(solver, t_final, save_prefix=f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}', show_mesh=False, first_one=first_one, T_bc=boundary_temperature(t_final))
+        print(f"  Saving snapshot at final time t = {t_final:.3f} ns")
+        save_solution_snapshot(
+            solver, t_final,
+            save_prefix=f'crooked_pipe_{n_groups}g_noneq_{mesh_tag}',
+            energy_edges=energy_edges,
+            fiducial_indices=fiducial_indices,
+            fiducial_spectra_snapshots=fiducial_spectra_snapshots,
+            spectrum_output_times=spectrum_output_times,
+            times=times,
+            fiducial_data=fiducial_data,
+            fiducial_labels=fiducial_labels,
+            T_bc=boundary_temperature(t_final),
+        )
 
     times = np.array(times)
     for label in fiducial_data:
@@ -1287,23 +1342,7 @@ def main(
         fiducial_data=fiducial_data,
     )
     print(f"Saved: {npz_filename}")
-
-    # Save radiation spectrum at fiducial points for each output snapshot.
-    # Array layout:  spectra[snapshot, point, group]  units: GJ/cm^3/keV
-    if fiducial_spectra_snapshots:
-        spectra_npz = f'crooked_pipe_{n_groups}g_noneq_spectra_{mesh_tag}_{solver.nx_cells}x{solver.ny_cells}.npz'
-        np.savez(
-            spectra_npz,
-            output_times=np.array(spectrum_output_times),
-            labels=np.array(list(fiducial_indices.keys())),
-            spectra=np.array(fiducial_spectra_snapshots),
-            energy_edges=energy_edges,
-            energy_centers=0.5 * (energy_edges[:-1] + energy_edges[1:]),
-        )
-        print(f'Saved: {spectra_npz}')
-
-    print("\nPlotting fiducial point temperature history...")
-    plot_fiducial_history(times, fiducial_data, n_groups=n_groups)
+    print(f"  → Run plot_crooked_pipe_noneq_solutions.py to generate all figures.")
 
     print("\n" + "=" * 80)
     print("SOLUTION SUMMARY")
@@ -1380,7 +1419,7 @@ def parse_arguments():
     parser.add_argument(
         "--bc-ramp-time",
         type=float,
-        default=20.0,
+        default=1.0,
         help="Time to ramp boundary temperature from start to end (ns)",
     )
     parser.add_argument(
@@ -1403,7 +1442,7 @@ def parse_arguments():
     parser.add_argument(
         "--n-coarse-z",
         type=int,
-        default=210,
+        default=105,
         help="Number of coarse cells in z-direction",
     )
     parser.add_argument(
@@ -1438,6 +1477,14 @@ def parse_arguments():
         default=0,
         help="Save a checkpoint every N steps (0 = only at output times).",
     )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=0,
+        help="Stop after this many time steps, save a checkpoint, and exit "
+             "with code 75 so the wrapper script can relaunch. "
+             "0 means no limit (run to completion).",
+    )
     return parser.parse_args()
 
 
@@ -1469,4 +1516,8 @@ if __name__ == "__main__":
         restart_file=args.restart_file,
         checkpoint_file=args.checkpoint_file,
         checkpoint_every=args.checkpoint_every,
+        max_steps=args.max_steps,
     )
+    if solver is None:
+        # max_steps hit: checkpoint saved, relaunch needed.
+        sys.exit(75)

@@ -59,7 +59,7 @@ from plotfuncs import show
 # A_RAD and C_LIGHT are imported from MG_IMC.
 
 # ── Problem constants ────────────────────────────────────────────────────────
-T_INIT    = 0.01   # keV — cold initial condition
+T_INIT    = 0.05   # keV — cold initial condition
 RHO_THICK = 2.0    # g/cm^3 — optically thick regions
 RHO_THIN  = 0.01   # g/cm^3 — optically thin regions
 CV_MASS   = 0.05   # GJ/(g*keV) — mass-specific heat capacity
@@ -252,7 +252,7 @@ def plot_solution(T_mat, T_rad, r_centers, z_centers, time_value, save_prefix,
 
     for T_field, tag in [(T_mat, 'material'), (T_rad, 'radiation')]:
         vmax = np.ceil(T_field.max() * 100) / 100.0
-        if tag == 'radiation' and T_bc is not None:
+        if T_bc is not None:
             vmax = min(vmax, 1.1 * T_bc)
         vmax = max(vmax, vmin + 0.01)  # ensure vmax > vmin
 
@@ -398,6 +398,38 @@ def plot_material_layout(r_centers, z_centers, run_tag, r_edges=None, z_edges=No
     fname = f'crooked_pipe_mg_imc_material_{run_tag}.png'
     fig.savefig(fname, dpi=120, bbox_inches='tight')
     plt.close(fig)
+
+
+def save_snapshot(state, t, save_prefix, energy_edges, r_edges, z_edges, T_bc=None):
+    """Save 2D field arrays at an output time to NPZ — same format as diffusion snapshots.
+
+    Writes {save_prefix}_snapshot_t_{t:.5f}ns.npz with keys matching the diffusion
+    version so plot_crooked_pipe_noneq_solutions.py can read both.
+    """
+    E_r_groups_3d = state.radiation_energy_by_group  # (n_groups, nr, nz) GJ/cm^3
+    if E_r_groups_3d is None:
+        n_g = len(energy_edges) - 1
+        E_r_groups_3d = np.zeros((n_g, *state.temperature.shape))
+    Er_2d  = np.sum(E_r_groups_3d, axis=0)           # total E_r (GJ/cm^3)
+    phi_2d = Er_2d * C_LIGHT                          # scalar flux = c * E_r
+
+    snap_file = f'{save_prefix}_snapshot_t_{t:.5f}ns.npz'
+    np.savez_compressed(
+        snap_file,
+        T_2d=state.temperature,
+        T_rad_2d=state.radiation_temperature,
+        phi_2d=phi_2d,
+        Er_2d=Er_2d,
+        E_r_groups_3d=E_r_groups_3d,
+        r_centers=0.5 * (r_edges[:-1] + r_edges[1:]),
+        z_centers=0.5 * (z_edges[:-1] + z_edges[1:]),
+        r_faces=r_edges,
+        z_faces=z_edges,
+        time=np.float64(t),
+        T_bc=np.float64(T_bc if T_bc is not None else np.nan),
+        energy_edges=energy_edges,
+    )
+    print(f'    Saved snapshot: {snap_file}')
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -799,8 +831,23 @@ def main(
 
     wall_start = _time.perf_counter()
     dE = energy_edges[1:] - energy_edges[:-1]          # group widths (keV)
-    fiducial_spectra_snapshots: list = []               # (n_points, n_groups) per snapshot
+    # Reload previously accumulated spectra if the file already exists
+    # (handles restarts where the in-memory lists are lost between runs).
+    _spectra_file = f'crooked_pipe_mg_imc_{run_tag}_spectra.npz'
+    fiducial_spectra_snapshots: list = []
     spectrum_output_times: list = []
+    if os.path.exists(_spectra_file):
+        try:
+            _prev = np.load(_spectra_file, allow_pickle=True)
+            for _pt, _sp in zip(list(_prev['output_times']), list(_prev['spectra'])):
+                if _pt < state.time - 1e-12:
+                    spectrum_output_times.append(float(_pt))
+                    fiducial_spectra_snapshots.append(np.array(_sp))
+            if spectrum_output_times:
+                print(f'  Restored {len(spectrum_output_times)} spectra snapshot(s) '
+                      f'from {_spectra_file} (up to t={spectrum_output_times[-1]:.5f} ns)')
+        except Exception as _e:
+            print(f'  Warning: could not reload {_spectra_file}: {_e}')
 
     while state.time < t_final - 1e-12:
         step_dt = min(current_dt, t_final - state.time)
@@ -884,6 +931,14 @@ def main(
                     z_edges=z_edges,
                     T_bc=T_bc_now,
                 )
+                save_snapshot(
+                    state, state.time,
+                    save_prefix=f'crooked_pipe_mg_imc_{run_tag}',
+                    energy_edges=energy_edges,
+                    r_edges=r_edges,
+                    z_edges=z_edges,
+                    T_bc=T_bc_now,
+                )
                 output_times_saved.add(tout)
                 # Collect radiation spectrum at fiducial points (GJ/cm^3/keV).
                 if state.radiation_energy_by_group is not None:
@@ -899,8 +954,30 @@ def main(
                         energy_edges, list(fiducial_indices.keys()),
                         f'crooked_pipe_mg_imc_{run_tag}',
                     )
+                    # Save accumulated spectra NPZ (same format as diffusion version)
+                    _sf = f'crooked_pipe_mg_imc_{run_tag}_spectra.npz'
+                    np.savez_compressed(
+                        _sf,
+                        output_times=np.array(spectrum_output_times),
+                        labels=np.array(list(fiducial_indices.keys())),
+                        spectra=np.array(fiducial_spectra_snapshots),
+                        energy_edges=energy_edges,
+                        energy_centers=0.5 * (energy_edges[:-1] + energy_edges[1:]),
+                    )
+                    print(f'    Saved spectra:  {_sf}')
                 # Intermediate fiducial history plot
                 plot_fiducial_history(times, fiducial_data, fiducial_data_rad, run_tag)
+                # Save accumulated fiducial history NPZ (same format as diffusion version)
+                _fid_labels = list(fiducial_data.keys())
+                _fhf = f'crooked_pipe_mg_imc_{run_tag}_fiducial_history.npz'
+                np.savez_compressed(
+                    _fhf,
+                    times=np.array(times),
+                    labels=np.array(_fid_labels),
+                    T_mat=np.array([fiducial_data[l] for l in _fid_labels]),
+                    T_rad=np.array([fiducial_data_rad[l] for l in _fid_labels]),
+                )
+                print(f'    Saved fiducial: {_fhf}')
                 # Always checkpoint at output times
                 print(f'  >> Checkpoint -> {checkpoint_file}')
                 save_checkpoint(
@@ -1038,11 +1115,11 @@ def parse_arguments():
                              'Split is always clamped to [0.1, 0.9].')
     parser.add_argument('--Nmax',       type=int,   default=1000000,
                         help='Maximum census particles after combing')
-    parser.add_argument('--bc-t-start', type=float, default=0.05,
+    parser.add_argument('--bc-t-start', type=float, default=0.5,
                         help='Boundary source T at t=0 (keV)')
     parser.add_argument('--bc-t-end',   type=float, default=0.5,
                         help='Boundary source T after ramp (keV)')
-    parser.add_argument('--bc-ramp-time', type=float, default=20.0,
+    parser.add_argument('--bc-ramp-time', type=float, default=1.0,
                         help='Duration of boundary temperature ramp (ns)')
     parser.add_argument('--output-times', type=str, default=None,
                         help='Comma-separated output times in ns '

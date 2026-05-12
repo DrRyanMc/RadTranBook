@@ -11,7 +11,7 @@
 
 # ─── Configuration ─────────────────────────────────────────────────────────
 N_GROUPS=10
-N_THREADS=1        # set to the number of physical cores you want to use
+N_THREADS=10        # set to the number of physical cores you want to use
 
 # Checkpoint filename matches what the Python script auto-generates:
 #   crooked_pipe_checkpoint_<N_GROUPS>g_refined_<nx>x<ny>.npz
@@ -26,11 +26,12 @@ BASE_ARGS="--use-refined-mesh \
            --dt-initial 1e-4 \
            --dt-max 0.01 \
            --dt-growth 1.1 \
-           --bc-t-start 0.05 \
+           --bc-t-start 0.5 \
            --bc-t-end 0.5 \
-           --bc-ramp-time 20.0 \
+           --bc-ramp-time 1.0 \
            --output-times 0.001,0.01,0.1,1,5,10,20,50,100,200 \
-           --checkpoint-every 5"
+           --checkpoint-every 10 \
+           --max-steps 10"
 
 # ─── Optional --clean flag ──────────────────────────────────────────────────
 if [ "${1}" = "--clean" ]; then
@@ -47,7 +48,7 @@ fi
 
 cd "$(dirname "$0")"
 
-MAX_RESTARTS=100   # safety valve: stop after this many consecutive crashes
+MAX_RESTARTS=1000   # safety valve: stop after this many consecutive crashes
 
 for attempt in $(seq 1 $MAX_RESTARTS); do
     if [ -f "$CHECKPOINT" ]; then
@@ -72,6 +73,13 @@ for attempt in $(seq 1 $MAX_RESTARTS); do
         echo ""
         echo "Run completed successfully."
         exit 0
+    fi
+
+    # Exit code 75 = max_steps reached, checkpoint saved, restart needed.
+    if [ $EXIT_CODE -eq 75 ]; then
+        echo ""
+        echo "Step limit reached (exit 75) – restarting from checkpoint (attempt $((attempt + 1)))…"
+        continue
     fi
 
     echo ""

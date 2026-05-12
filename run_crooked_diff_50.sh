@@ -31,16 +31,18 @@ trap resubmit SIGTERM
 module load python
 cd ~/RadTranBook
 
-BASE_ARGS="--use-refined-mesh --n-groups 50 --n-threads 1 --checkpoint-every 5"
+BASE_ARGS="--use-refined-mesh --n-groups 50 --n-threads 1 --checkpoint-every 5 --max-steps 5"
 
 if [ -f "$CHECKPOINT" ]; then
     echo "Restarting from checkpoint: $CHECKPOINT"
     python3 nonEquilibriumDiffusion/problems/crooked_pipe_multigroup_noneq.py \
         $BASE_ARGS \
+        --checkpoint-file "$CHECKPOINT" \
         --restart-file "$CHECKPOINT"
 else
     python3 nonEquilibriumDiffusion/problems/crooked_pipe_multigroup_noneq.py \
-        $BASE_ARGS
+        $BASE_ARGS \
+        --checkpoint-file "$CHECKPOINT"
 fi
 
 EXIT_CODE=$?
@@ -48,6 +50,9 @@ EXIT_CODE=$?
 if [ $EXIT_CODE -eq 0 ]; then
     touch "$DONE_FLAG"
     echo "Completed successfully."
+elif [ $EXIT_CODE -eq 75 ]; then
+    echo "Step limit reached – resubmitting from checkpoint."
+    qsub "$SCRIPT"
 elif [ -f "$CHECKPOINT" ]; then
     echo "Exited with code $EXIT_CODE – resubmitting from checkpoint."
     qsub "$SCRIPT"

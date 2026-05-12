@@ -8,9 +8,9 @@
 # ─── Configuration ─────────────────────────────────────────────────────────
 N_GROUPS=10
 NR=60
-NZ=210
+NZ=105
 #this next line needs to do that calculation and not just be a string so that it is an integer when passed to the Python script.
-NMax=$((10000000 * N_GROUPS))  # keep number of particles per group constant as N_GROUPS changes
+NMax=$((1000000 * N_GROUPS))  # keep number of particles per group constant as N_GROUPS changes
 # make Ntotal half NMax and ensure it is an integer
 Ntotal=$((NMax / 2))
 
@@ -53,10 +53,10 @@ BASE_ARGS="--n-groups ${N_GROUPS} \
            --dt-initial 1e-4 \
            --dt-max .01 \
            --dt-growth 1.1 \
-           --bc-t-start 0.05 \
+           --bc-t-start 0.5 \
            --bc-t-end 0.5 \
            --bc-ramp-time 20.0 \
-           --output-times 0.001,0.01,0.1,1,5,10,20,50,100,200 \
+           --output-times 0.001,0.01,0.1,.2,.5,1,2,5,10,20,50,100,200 \
            --checkpoint-every 10 \
            --max-events 10000000"
 
@@ -66,12 +66,12 @@ if [ -f "$CHECKPOINT" ]; then
     python3 MG_IMC/crooked_pipe_multigroup_imc.py \
         $BASE_ARGS \
         --restart-file "$CHECKPOINT" \
-        --checkpoint-file "$CHECKPOINT" > "$CHECKPOINT.log" 2>&1
+        --checkpoint-file "$CHECKPOINT" > "$CHECKPOINT.log"
 else
     echo "Starting fresh run."
     python3 MG_IMC/crooked_pipe_multigroup_imc.py \
         $BASE_ARGS \
-        --checkpoint-file "$CHECKPOINT" > "$CHECKPOINT.log" 2>&1
+        --checkpoint-file "$CHECKPOINT" > "$CHECKPOINT.log"
 fi
 
 EXIT_CODE=$?
