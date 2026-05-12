@@ -49,7 +49,7 @@ cd ~/RadTranBook
 BASE_ARGS="--n-groups ${N_GROUPS} \
            --use-refined-mesh \
            --Ntotal-T-floor .1 \
-           ----Ntarget ${Ntarget} --Nboundary ${Nboundary} \
+           --Ntarget ${Ntarget} --Nboundary ${Nboundary} \
            --Nmax ${NMax} \
            --dt-initial 1e-4 \
            --dt-max .01 \
