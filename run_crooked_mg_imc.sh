@@ -66,12 +66,12 @@ if [ -f "$CHECKPOINT" ]; then
     python3 MG_IMC/crooked_pipe_multigroup_imc.py \
         $BASE_ARGS \
         --restart-file "$CHECKPOINT" \
-        --checkpoint-file "$CHECKPOINT" > "$CHECKPOINT.log"
+        --checkpoint-file "$CHECKPOINT" > "$CHECKPOINT.log" 2>&1
 else
     echo "Starting fresh run."
     python3 MG_IMC/crooked_pipe_multigroup_imc.py \
         $BASE_ARGS \
-        --checkpoint-file "$CHECKPOINT" > "$CHECKPOINT.log"
+        --checkpoint-file "$CHECKPOINT" > "$CHECKPOINT.log" 2>&1
 fi
 
 EXIT_CODE=$?
