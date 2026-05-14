@@ -450,14 +450,15 @@ def plot_mesh(solver, n_groups=10):
     
     ax.set_xlabel('z (cm)', fontsize=12)
     ax.set_ylabel('r (cm)', fontsize=12)
-    ax.set_title(f'Computational Mesh ({solver.nx_cells} × {solver.ny_cells} cells)', 
-                 fontsize=13, fontweight='bold')
+    # ax.set_title(f'Computational Mesh ({solver.nx_cells} × {solver.ny_cells} cells)', 
+    #              fontsize=13, fontweight='bold')
     ax.set_aspect('equal')
     
     plt.tight_layout()
-    plt.savefig(f'crooked_pipe_{n_groups}g_noneq_mesh.png', dpi=150, bbox_inches='tight')
-    print(f"Saved: crooked_pipe_{n_groups}g_noneq_mesh.png")
-    plt.close()
+    # plt.savefig(f'crooked_pipe_{n_groups}g_noneq_mesh.png', dpi=150, bbox_inches='tight')
+    # print(f"Saved: crooked_pipe_{n_groups}g_noneq_mesh.png")
+    # plt.close()
+    show(f'crooked_pipe_{n_groups}g_noneq_mesh.png', close_after=True)
 
 
 def plot_solution(solver, time_value, save_prefix='crooked_pipe_noneq', show_mesh=False, first_one=False, T_bc=None):
@@ -1407,7 +1408,7 @@ def parse_arguments():
     parser.add_argument(
         "--bc-t-start",
         type=float,
-        default=0.05,
+        default=0.5,
         help="Initial boundary source temperature (keV)",
     )
     parser.add_argument(

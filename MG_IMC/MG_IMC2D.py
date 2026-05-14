@@ -690,8 +690,10 @@ def _move_particle_rz(weight, mu_perp, eta, r, z, i, j, r_edges, z_edges, sigma_
     z_l = z_edges[j]
     z_r = z_edges[j + 1]
 
-    # Distance to radial boundaries
-    sr_l = _distance_to_radial_boundary_rz(r, mu_perp, eta, r_l)
+    # Distance to radial boundaries.
+    # Never cross r=0 (cylindrical axis) — it is not a physical surface.
+    # Matches the gray IMC which returns 1e30 when r_in==0.
+    sr_l = _distance_to_radial_boundary_rz(r, mu_perp, eta, r_l) if r_l > 0.0 else 1e30
     sr_r = _distance_to_radial_boundary_rz(r, mu_perp, eta, r_r)
     sr = min(sr_l, sr_r)
 
@@ -710,9 +712,11 @@ def _move_particle_rz(weight, mu_perp, eta, r, z, i, j, r_edges, z_edges, sigma_
         s_scat = 1e30
 
     s_min = min(sr, sz, s_scat, distance_to_census)
-    
     if s_min < 1e-14:
-        s_min = max(s_min, sr, sz, distance_to_census)
+        # Particle is effectively stuck (e.g. sitting exactly on a boundary).
+        # Return a zero-move census event so the transport loop can discard it
+        # cleanly.  Using max() here would teleport the particle, which is wrong.
+        s_min = 1e-14
 
     # New position — use the correct transverse path length l = s * sqrt(1 - eta^2),
     # matching the gray IMC formula (NOT sqrt(1 - mu_perp^2)).
@@ -917,7 +921,6 @@ def _transport_particles_2d_mg(
                 if i < 0:
                     if reflect_l:
                         d1 = -d1
-                        g = n_groups - 1
                         n_reflect += 1
                     else:
                         boundary_loss += w
