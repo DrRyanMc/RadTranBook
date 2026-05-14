@@ -6,7 +6,7 @@
 #$ -N crooked_mg_imc
 
 # ─── Configuration ─────────────────────────────────────────────────────────
-N_GROUPS=4
+N_GROUPS=10
 NR=60
 NZ=105
 #this next line needs to do that calculation and not just be a string so that it is an integer when passed to the Python script.
