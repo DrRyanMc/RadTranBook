@@ -6,14 +6,14 @@
 #$ -N crooked_mg_imc
 
 # ─── Configuration ─────────────────────────────────────────────────────────
-N_GROUPS=10
+N_GROUPS=4
 NR=60
 NZ=105
 #this next line needs to do that calculation and not just be a string so that it is an integer when passed to the Python script.
-NMax=$((1000000 * N_GROUPS))  # keep number of particles per group constant as N_GROUPS changes
+NMax=$((2000000 * N_GROUPS))  # keep number of particles per group constant as N_GROUPS changes
 # make Nboundary half NMax and ensure it is an integer
-Ntarget=$((500000 * N_GROUPS))
-Nboundary=$((250000 * N_GROUPS))
+Ntarget=$((200000 * N_GROUPS))
+Nboundary=$((400000 * N_GROUPS))
 
 # Checkpoint filename must match what the Python script auto-generates:
 #   crooked_pipe_mg_imc_checkpoint_<N_GROUPS>g_<mesh_tag>_<nr_actual>x<nz_actual>.pkl

@@ -61,8 +61,8 @@ from plotfuncs import show
 # ── Problem constants ────────────────────────────────────────────────────────
 T_INIT    = 0.05   # keV — cold initial condition
 RHO_THICK = 2.0    # g/cm^3 — optically thick regions
-RHO_THIN  = 0.01   # g/cm^3 — optically thin regions
-CV_MASS   = 0.05   # GJ/(g*keV) — mass-specific heat capacity
+RHO_THIN  = 0.1   # g/cm^3 — optically thin regions
+CV_MASS   = 0.5   # GJ/(g*keV) — mass-specific heat capacity
 
 CHECKPOINT_VERSION = 1
 
