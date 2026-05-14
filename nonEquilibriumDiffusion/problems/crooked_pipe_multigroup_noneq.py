@@ -1009,11 +1009,11 @@ def main(
     # Fiducial point index map  (built before restart so it's always set)
     # ------------------------------------------------------------------ #
     fiducial_points = {
-        'Point 1: r=0.0, z=0.25': (0.0, 0.25),
-        'Point 2: r=0.0, z=2.75': (0.0, 2.75),
-        'Point 3: r=1.25, z=3.5': (1.25, 3.5),
-        'Point 4: r=0.0, z=4.25': (0.0, 4.25),
-        'Point 5: r=0.0, z=6.75': (0.0, 6.75),
+        'r=0.00 z=0.25': (0.00, 0.25),   # inner leg, near inlet
+        'r=0.00 z=2.25': (0.00, 2.25),   # inner leg, below bend
+        'r=0.75 z=3.05': (0.75, 3.05),   # outer leg, near top
+        'r=1.25 z=2.25': (1.25, 2.25),   # outer leg, mid-height
+        'r=1.25 z=0.25': (1.25, 0.25),   # outer leg, near exit
     }
     fiducial_labels = list(fiducial_points.keys())
     r_centers = solver.x_centers

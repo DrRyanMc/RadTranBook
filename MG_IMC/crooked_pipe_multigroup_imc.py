@@ -26,8 +26,8 @@ Geometry — U-shaped (reversed) crooked pipe:
 
 Initial condition: T = Tr = T_INIT = 0.01 keV everywhere
 Fiducial monitor points:
-    (r=0.0,  z=0.25),  (r=0.0,  z=2.25), (r=1.25, z=3.25),
-    (r=1.25, z=1.75),  (r=1.25, z=0.25)
+    (r=0.0,  z=0.25),  (r=0.0,  z=2.25), (r=0.75, z=3.05),
+    (r=1.25, z=2.25),  (r=1.25, z=0.25)
 """
 
 import argparse
@@ -735,8 +735,8 @@ def main(
     fiducial_points = {
         'r=0.00 z=0.25': (0.00, 0.25),   # inner leg, near inlet
         'r=0.00 z=2.25': (0.00, 2.25),   # inner leg, below bend
-        'r=1.25 z=3.25': (1.25, 3.25),   # outer leg, near top
-        'r=1.25 z=1.75': (1.25, 1.75),   # outer leg, mid-height
+        'r=0.75 z=3.05': (0.75, 3.05),   # outer leg, near top
+        'r=1.25 z=2.25': (1.25, 2.25),   # outer leg, mid-height
         'r=1.25 z=0.25': (1.25, 0.25),   # outer leg, near exit
     }
     fiducial_indices = {}
