@@ -10,9 +10,9 @@ N_GROUPS=4
 NR=60
 NZ=105
 #this next line needs to do that calculation and not just be a string so that it is an integer when passed to the Python script.
-NMax=$((2000000 * N_GROUPS))  # keep number of particles per group constant as N_GROUPS changes
+NMax=$((1000000 * N_GROUPS))  # keep number of particles per group constant as N_GROUPS changes
 # make Nboundary half NMax and ensure it is an integer
-Ntarget=$((200000 * N_GROUPS))
+Ntarget=$((300000 * N_GROUPS))
 Nboundary=$((400000 * N_GROUPS))
 
 # Checkpoint filename must match what the Python script auto-generates:
@@ -49,9 +49,10 @@ cd ~/RadTranBook
 BASE_ARGS="--n-groups ${N_GROUPS} \
            --use-refined-mesh \
            --Ntotal-T-floor .1 \
-           --Ntarget ${Ntarget} --Nboundary ${Nboundary} \
+           --T-emit-floor 0.1 \
+           --Ntotal ${Ntarget} \
            --Nmax ${NMax} \
-           --dt-initial 1e-4 \
+           --dt-initial 0.01 \
            --dt-max .01 \
            --dt-growth 1.1 \
            --bc-t-start 0.5 \

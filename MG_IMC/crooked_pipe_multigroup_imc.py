@@ -61,8 +61,8 @@ from plotfuncs import show
 # ── Problem constants ────────────────────────────────────────────────────────
 T_INIT    = 0.05   # keV — cold initial condition
 RHO_THICK = 2.0    # g/cm^3 — optically thick regions
-RHO_THIN  = 0.1   # g/cm^3 — optically thin regions
-CV_MASS   = 0.5   # GJ/(g*keV) — mass-specific heat capacity
+RHO_THIN  = 0.01   # g/cm^3 — optically thin regions
+CV_MASS   = 0.05   # GJ/(g*keV) — mass-specific heat capacity
 
 CHECKPOINT_VERSION = 1
 
@@ -533,6 +533,7 @@ def main(
     Nboundary=20000,
     Ntotal=0,
     Ntotal_T_floor=0.0,
+    T_emit_floor=0.0,
     Nmax=100000,
     bc_t_start=0.05,
     bc_t_end=0.5,
@@ -815,6 +816,7 @@ def main(
         'Nboundary':       Nboundary,
         'Ntotal':          Ntotal,
         'Ntotal_T_floor':  Ntotal_T_floor,
+        'T_emit_floor':    T_emit_floor,
         'Nmax':            Nmax,
         'bc_t_start':      bc_t_start,
         'bc_t_end':        bc_t_end,
@@ -870,6 +872,7 @@ def main(
             Nboundary=Nboundary,
             Ntotal=Ntotal,
             Ntotal_T_floor=Ntotal_T_floor,
+            T_emit_floor=T_emit_floor,
             Nsource=0,
             Nmax=Nmax,
             T_boundary=T_boundary,
@@ -1113,6 +1116,10 @@ def parse_arguments():
                              'this temperature (keV) from the emission estimate. '
                              'E.g. set to 1.1*T_init=0.011 to ignore cold material. '
                              'Split is always clamped to [0.1, 0.9].')
+    parser.add_argument('--T-emit-floor', type=float, default=0.1,
+                        help='Emission temperature floor (keV). Cells with T below this '
+                             'value contribute zero emission energy and no particles are '
+                             'sourced from them. Default 0 (disabled).')
     parser.add_argument('--Nmax',       type=int,   default=1000000,
                         help='Maximum census particles after combing')
     parser.add_argument('--bc-t-start', type=float, default=0.5,
@@ -1165,6 +1172,7 @@ if __name__ == '__main__':
         Nboundary=args.Nboundary,
         Ntotal=args.Ntotal,
         Ntotal_T_floor=args.Ntotal_T_floor,
+        T_emit_floor=args.T_emit_floor,
         Nmax=args.Nmax,
         bc_t_start=args.bc_t_start,
         bc_t_end=args.bc_t_end,

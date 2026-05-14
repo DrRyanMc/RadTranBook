@@ -1609,6 +1609,7 @@ def step(
     emission_fractions=None,
     Ntotal=0,
     Ntotal_T_floor=0.0,
+    T_emit_floor=0.0,
     _timing=False,
 ):
     """Advance one 2D multigroup IMC step.
@@ -1835,7 +1836,11 @@ def step(
         # Note: sigma_a has already been modified by Fleck factor (f) at line 1280
         emission_by_group = sigma_a * b_star * __a * __c * temperature[None, :, :]**4 * dt * volumes[None, :, :]
 
-        
+        # Zero out cells below the emission temperature floor (if set).
+        if T_emit_floor > 0.0:
+            cold_mask = temperature < T_emit_floor   # shape (nx, ny)
+            emission_by_group[:, cold_mask] = 0.0
+
         # Sample particles: first by position weighted by total emission, then by group
         total_emission_per_cell = np.sum(emission_by_group, axis=0)
         E_emit = float(np.sum(total_emission_per_cell))
