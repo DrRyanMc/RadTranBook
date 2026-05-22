@@ -49,7 +49,7 @@ If the library is not available, the solver falls back to gray approximation.
 
 import numpy as np
 from scipy.sparse.linalg import gmres, LinearOperator
-from typing import Callable, Optional, List, Tuple
+from typing import Callable, Optional, List, Tuple, Union
 
 # Try to import the diffusion operator solvers
 try:
@@ -592,7 +592,7 @@ class MultigroupDiffusionSolver1D:
         print(f"  Emission fractions χ: {self.chi}")
         print(f"  Using flux limiters: {self.use_flux_limiters}")
     
-    def _compute_emission_fractions(self, T_ref: np.ndarray | float = 1.0) -> np.ndarray:
+    def _compute_emission_fractions(self, T_ref: Union[np.ndarray, float] = 1.0) -> np.ndarray:
         """
         Compute emission fractions χ_g from current opacity and dB/dT.
         
@@ -633,7 +633,7 @@ class MultigroupDiffusionSolver1D:
         
         return chi
 
-    def update_emission_fractions(self, T_ref: np.ndarray | float, verbose: bool = False) -> np.ndarray:
+    def update_emission_fractions(self, T_ref: Union[np.ndarray, float], verbose: bool = False) -> np.ndarray:
         """Update automatic emission fractions χ_g from the current opacity and temperature."""
         if not self.auto_update_emission_fractions:
             return self.chi
@@ -694,6 +694,10 @@ class MultigroupDiffusionSolver1D:
             # Get cv at this temperature (if temperature-dependent)
             if self.cv_is_function:
                 cv_i = self.cv_func(T[i])
+                # cv_func may return a spatially-varying array (shape n_cells)
+                # when called with a scalar T; extract the i-th element in that case.
+                if np.ndim(cv_i) > 0:
+                    cv_i = float(cv_i[i])
             else:
                 cv_i = self.cv
             
@@ -1406,8 +1410,12 @@ class MultigroupDiffusionSolver1D:
         # New energy
         e_new = e_n + self.dt * f * energy_change + (1.0 - f) * Delta_e
         
-        # Convert to temperature
-        T_new = np.array([self.inverse_material_energy_func(e_new[i]) for i in range(self.n_cells)])
+        # Convert to temperature (inverse_material_energy_func may return an
+        # array when cv is spatially varying; extract the i-th element in that case)
+        T_new = np.empty(self.n_cells, dtype=np.float64)
+        for i in range(self.n_cells):
+            T_i = self.inverse_material_energy_func(e_new[i])
+            T_new[i] = float(T_i[i]) if np.ndim(T_i) > 0 else float(T_i)
         
         return T_new
     

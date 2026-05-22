@@ -218,12 +218,17 @@ def sample_linear_density(dx, s, T, N, adjust_slope=True):
 
 
 @jit(nopython=True, cache=True)
-def equilibrium_sample(N, T, mesh):
+def equilibrium_sample(N, T, mesh, T_emit_floor=0.0):
     """Sample N equilibrium particles in slab geometry (uniform within each cell)."""
     I = int(mesh.shape[0])
     dx = mesh[:, 1] - mesh[:, 0]
-    total_emitted = np.sum(__a * T**4 * dx)
     energy_per_zone = __a * T**4 * dx
+    if T_emit_floor > 0.0:
+        energy_per_zone[T < T_emit_floor] = 0.0
+    total_emitted = np.sum(energy_per_zone)
+    if N <= 0 or total_emitted <= 0.0:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty, np.zeros(0), empty, np.empty(0, dtype=np.int64)
     emitted_per_zone = np.ceil(energy_per_zone / total_emitted * N).astype("int")
     N = np.sum(emitted_per_zone)
     weights      = np.empty(N)
@@ -232,10 +237,11 @@ def equilibrium_sample(N, T, mesh):
     offset = 0
     for i in range(I):
         n = emitted_per_zone[i]
-        weights[offset:offset+n]      = energy_per_zone[i] / n
-        positions[offset:offset+n]    = np.random.uniform(mesh[i, 0], mesh[i, 1], n)
-        cell_indices[offset:offset+n] = i
-        offset += n
+        if n > 0:
+            weights[offset:offset+n]      = energy_per_zone[i] / n
+            positions[offset:offset+n]    = np.random.uniform(mesh[i, 0], mesh[i, 1], n)
+            cell_indices[offset:offset+n] = i
+            offset += n
     mus   = np.random.uniform(-1, 1, N)
     times = np.zeros(N)
     assert len(weights) == len(mus) == len(times) == len(positions) == len(cell_indices)
@@ -243,7 +249,7 @@ def equilibrium_sample(N, T, mesh):
 
 
 @jit(nopython=True, cache=True)
-def emitted_particles(Ntarget, Temperatures, dt, mesh, sigma_a):
+def emitted_particles(Ntarget, Temperatures, dt, mesh, sigma_a, T_emit_floor=0.0):
     """Sample emission particles for slab geometry (linear-T tilt in x)."""
     dx = mesh[:, 1] - mesh[:, 0]
     slopes = np.zeros(Temperatures.shape)
@@ -257,7 +263,12 @@ def emitted_particles(Ntarget, Temperatures, dt, mesh, sigma_a):
 
     assert np.all(Temperatures > 0), "Negative temperature in emitted_particles"
     emitted_energies = __a * __c * Temperatures**4 * sigma_a * dt * dx
+    if T_emit_floor > 0.0:
+        emitted_energies[Temperatures < T_emit_floor] = 0.0
     total_emission   = np.sum(emitted_energies)
+    if total_emission <= 0.0:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty, empty, empty, np.empty(0, dtype=np.int64), emitted_energies
     Ns = np.empty(len(emitted_energies), dtype=np.int64)
     for i in range(len(emitted_energies)):
         Ns[i] = int(math.ceil(Ntarget * emitted_energies[i] / total_emission))
@@ -522,7 +533,7 @@ def move_particles_spherical(weights, mus, times, positions, cell_indices,
 
 
 @jit(nopython=True, cache=True)
-def equilibrium_sample_spherical(N, T, mesh):
+def equilibrium_sample_spherical(N, T, mesh, T_emit_floor=0.0):
     """Sample N equilibrium particles in spherical geometry.
 
     Positions drawn uniformly in volume: r = (r₀³ + (r₁³−r₀³)ξ)^(1/3).
@@ -534,7 +545,12 @@ def equilibrium_sample_spherical(N, T, mesh):
     r1s = mesh[:, 1]
     volumes = (4.0 / 3.0) * math.pi * (r1s**3 - r0s**3)
     energy_per_zone = __a * T**4 * volumes
+    if T_emit_floor > 0.0:
+        energy_per_zone[T < T_emit_floor] = 0.0
     total_emitted   = np.sum(energy_per_zone)
+    if N <= 0 or total_emitted <= 0.0:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty, np.zeros(0), empty, np.empty(0, dtype=np.int64)
     emitted_per_zone = np.ceil(energy_per_zone / total_emitted * N).astype("int")
     N = np.sum(emitted_per_zone)
     weights      = np.empty(N)
@@ -543,15 +559,16 @@ def equilibrium_sample_spherical(N, T, mesh):
     offset = 0
     for i in range(I):
         n   = emitted_per_zone[i]
-        r0  = mesh[i, 0]
-        r1  = mesh[i, 1]
-        # Uniform-in-volume sampling
-        xis = np.random.uniform(0.0, 1.0, n)
-        r_samples = (r0**3 + (r1**3 - r0**3) * xis) ** (1.0 / 3.0)
-        weights[offset:offset+n]      = energy_per_zone[i] / n
-        positions[offset:offset+n]    = r_samples
-        cell_indices[offset:offset+n] = i
-        offset += n
+        if n > 0:
+            r0  = mesh[i, 0]
+            r1  = mesh[i, 1]
+            # Uniform-in-volume sampling
+            xis = np.random.uniform(0.0, 1.0, n)
+            r_samples = (r0**3 + (r1**3 - r0**3) * xis) ** (1.0 / 3.0)
+            weights[offset:offset+n]      = energy_per_zone[i] / n
+            positions[offset:offset+n]    = r_samples
+            cell_indices[offset:offset+n] = i
+            offset += n
     mus   = np.random.uniform(-1.0, 1.0, N)
     times = np.zeros(N)
     assert len(weights) == len(mus) == len(times) == len(positions) == len(cell_indices)
@@ -610,7 +627,7 @@ def _solve_spherical_cdf(r0, r1, a_coeff, M_coeff, xi):
 
 
 @jit(nopython=True, cache=True)
-def emitted_particles_spherical(Ntarget, Temperatures, dt, mesh, sigma_a):
+def emitted_particles_spherical(Ntarget, Temperatures, dt, mesh, sigma_a, T_emit_floor=0.0):
     """Sample emission particles for spherical geometry (linear-T⁴ tilt in r).
 
     Uses the CDF-inversion formula from Box 9.2 ("Linear in r Sourcing").
@@ -643,7 +660,12 @@ def emitted_particles_spherical(Ntarget, Temperatures, dt, mesh, sigma_a):
 
     assert np.all(Temperatures > 0.0), "Negative temperature in emitted_particles_spherical"
     emitted_energies = __a * __c * T4 * sigma_a * dt * volumes
+    if T_emit_floor > 0.0:
+        emitted_energies[Temperatures < T_emit_floor] = 0.0
     total_emission   = np.sum(emitted_energies)
+    if total_emission <= 0.0:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty, empty, empty, np.empty(0, dtype=np.int64), emitted_energies
 
     Ns = np.empty(I, dtype=np.int64)
     for i in range(I):
@@ -835,7 +857,7 @@ def _cell_volumes(mesh, geometry):
 
 
 def init_simulation(Ntarget, Tinit, Tr_init, mesh, eos, inv_eos,
-                    Ntarget_ic=None, geometry='slab'):
+                    Ntarget_ic=None, geometry='slab', T_emit_floor=0.0):
     """Initialise particle arrays and material state; return a SimulationState at t=0.
 
     Parameters
@@ -851,9 +873,9 @@ def init_simulation(Ntarget, Tinit, Tr_init, mesh, eos, inv_eos,
 
     N_ic = Ntarget_ic if Ntarget_ic is not None else Ntarget
     if geometry == 'slab':
-        p = equilibrium_sample(N_ic, Tr_init, mesh)
+        p = equilibrium_sample(N_ic, Tr_init, mesh, T_emit_floor=T_emit_floor)
     else:
-        p = equilibrium_sample_spherical(N_ic, Tr_init, mesh)
+        p = equilibrium_sample_spherical(N_ic, Tr_init, mesh, T_emit_floor=T_emit_floor)
 
     weights      = p[0]; mus = p[1]; times = p[2]
     positions    = p[3]; cell_indices = p[4]
@@ -886,7 +908,7 @@ def init_simulation(Ntarget, Tinit, Tr_init, mesh, eos, inv_eos,
 def step(state, Ntarget, Nboundary, Nsource, NMax, T_boundary, dt, mesh,
          sigma_a_func, inv_eos, cv, source, reflect=(False, False), theta=1.0,
          use_scalar_intensity_Tr=True, conserve_comb_energy=False,
-         geometry='slab'):
+         T_emit_floor=0.0, geometry='slab'):
     """Advance the simulation by one time step dt.
 
     Parameters
@@ -968,9 +990,11 @@ def step(state, Ntarget, Nboundary, Nsource, NMax, T_boundary, dt, mesh,
 
     # --- Internal emission ---
     if geometry == 'slab':
-        internal_source = emitted_particles(Ntarget, temperature, dt, mesh, sigma_a)
+        internal_source = emitted_particles(Ntarget, temperature, dt, mesh, sigma_a,
+                                            T_emit_floor=T_emit_floor)
     else:
-        internal_source = emitted_particles_spherical(Ntarget, temperature, dt, mesh, sigma_a)
+        internal_source = emitted_particles_spherical(Ntarget, temperature, dt, mesh, sigma_a,
+                                                      T_emit_floor=T_emit_floor)
     weights      = np.concatenate((weights,      internal_source[0]))
     mus          = np.concatenate((mus,           internal_source[1]))
     times        = np.concatenate((times,         internal_source[2]))

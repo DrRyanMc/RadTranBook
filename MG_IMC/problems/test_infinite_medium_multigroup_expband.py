@@ -35,7 +35,8 @@ import matplotlib.pyplot as plt
 os.environ.setdefault("NUMBA_CACHE_DIR", "")
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, THIS_DIR)
+_MG_DIR = os.path.dirname(THIS_DIR)  # MG_IMC/ — contains MG_IMC2D.py
+sys.path.insert(0, _MG_DIR)
 
 from MG_IMC2D import (  # pylint: disable=wrong-import-position
     __a,

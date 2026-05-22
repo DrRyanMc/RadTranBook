@@ -4,6 +4,7 @@ Utility functions for multigroup IMC simulations.
 Provides common opacity models, energy group structures, and helper functions.
 """
 
+import os
 import numpy as np
 
 # Physical constants (from MG_IMC2D)
@@ -265,6 +266,334 @@ def print_group_info(energy_edges, sigma_funcs=None, T_test=1.0):
             print(f"{g:<8} {sigma_g:<20.6e}")
     
     print("=" * 60)
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint I/O (atomic writes via temp-file rename)
+# ---------------------------------------------------------------------------
+
+def atomic_checkpoint_save(path, payload):
+    """Save *payload* (any picklable dict) to *path* atomically.
+
+    Writes to ``path + ".tmp"`` first, then renames to *path* to prevent
+    partial writes if the process is killed mid-save.
+
+    Parameters
+    ----------
+    path : str
+        Destination file path.
+    payload : dict
+        Any picklable object.
+    """
+    import pickle
+    tmp = str(path) + ".tmp"
+    with open(tmp, "wb") as f:
+        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(tmp, str(path))
+
+
+def checkpoint_load(path):
+    """Load and return the dict previously saved by :func:`atomic_checkpoint_save`.
+
+    Parameters
+    ----------
+    path : str
+        Checkpoint file to read.
+
+    Returns
+    -------
+    payload : dict
+    """
+    import pickle
+    with open(str(path), "rb") as f:
+        return pickle.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Planck-spectrum group integrals (pure-Python numerical quadrature)
+# ---------------------------------------------------------------------------
+
+def planck_group_integral(E_low, E_high, T, n_quad=80):
+    """Return the integrated Planck intensity B_g(T) for a frequency group.
+
+    .. math::
+
+        B_g(T) = \\int_{E_{low}}^{E_{high}} \\frac{2 E^3}{c^2}
+                 \\frac{1}{e^{E/T} - 1} \\, dE
+
+    Evaluated with *n_quad*-point composite trapezoid rule.  Uses the same
+    convention as the ``planck_integrals`` C extension (energy in keV).
+
+    Parameters
+    ----------
+    E_low, E_high : float
+        Group energy bounds (keV).
+    T : float
+        Temperature (keV).  Returns 0 for T ≤ 0.
+    n_quad : int
+        Number of quadrature points (default 80).
+
+    Returns
+    -------
+    B_g : float
+    """
+    if T <= 0.0:
+        return 0.0
+    E = np.linspace(E_low, E_high, n_quad)
+    B_E = (2.0 * E**3 / C_LIGHT**2) / (np.exp(np.minimum(E / T, 500.0)) - 1.0 + 1e-300)
+    if hasattr(np, "trapezoid"):
+        return float(np.trapezoid(B_E, E))
+    return float(np.trapz(B_E, E))
+
+
+def planck_spectrum_by_group(energy_edges, T):
+    """Return per-group Planck integrals B_g(T) for all groups.
+
+    Parameters
+    ----------
+    energy_edges : array_like
+        Group boundary energies, length ``n_groups + 1`` (keV).
+    T : float
+        Temperature (keV).
+
+    Returns
+    -------
+    B : ndarray, shape (n_groups,)
+    """
+    n_groups = len(energy_edges) - 1
+    B = np.zeros(n_groups)
+    for g in range(n_groups):
+        B[g] = planck_group_integral(energy_edges[g], energy_edges[g + 1], T)
+    return B
+
+
+# ---------------------------------------------------------------------------
+# Mean opacities via numerical quadrature
+# ---------------------------------------------------------------------------
+
+def rosseland_mean_D(sigma_func, T, E_low, E_high, T_floor=1e-10, n_quad=60):
+    """Rosseland-mean diffusion coefficient  D = 1 / (3 σ_R).
+
+    Uses the Rosseland harmonic mean:
+
+    .. math::
+
+        \\frac{1}{\\sigma_R} = \\frac{\\int (1/\\sigma_a) \\partial B/\\partial T \\, dE}
+                                      {\\int \\partial B/\\partial T \\, dE}
+
+    where the integrals run over [E_low, E_high].
+
+    Parameters
+    ----------
+    sigma_func : callable
+        ``sigma_func(T_scalar, E_scalar) -> float`` — absorption opacity.
+    T : float
+        Temperature (keV); clamped to *T_floor*.
+    E_low, E_high : float
+        Group energy bounds (keV).
+    T_floor : float
+        Minimum temperature used in opacity evaluation.
+    n_quad : int
+        Quadrature points.
+
+    Returns
+    -------
+    D : float
+        Diffusion coefficient (cm).
+    """
+    T_use = max(float(T), T_floor)
+    E = np.linspace(E_low, E_high, n_quad)
+    x = E / T_use
+    x_clip = np.minimum(x, 500.0)
+    ex = np.exp(x_clip)
+    dBdT_kernel = np.where(
+        x_clip < 100.0,
+        ex / (ex - 1.0 + 1e-300)**2,
+        np.exp(-x_clip),
+    )
+    dBdT = (2.0 * E**4 / (C_LIGHT**2 * T_use**2)) * dBdT_kernel
+    inv_sigma = np.array([1.0 / max(float(sigma_func(T_use, e)), 1e-300) for e in E])
+    if hasattr(np, "trapezoid"):
+        denom = np.trapezoid(dBdT, E)
+        numer = np.trapezoid(inv_sigma * dBdT, E)
+    else:
+        denom = np.trapz(dBdT, E)
+        numer = np.trapz(inv_sigma * dBdT, E)
+    if denom < 1e-300:
+        sigma_geom = float(np.sqrt(sigma_func(T_use, E_low) * sigma_func(T_use, E_high)))
+        return 1.0 / (3.0 * max(sigma_geom, 1e-20))
+    inv_sigma_R = numer / denom
+    return float(max(inv_sigma_R, 1e-20)) / 3.0
+
+
+def planck_mean_sigma(sigma_func, T, E_low, E_high, T_floor=1e-10, n_quad=60):
+    """Planck-mean absorption opacity  σ_P = ⟨σ_a⟩_{B_E(T)}.
+
+    Parameters
+    ----------
+    sigma_func : callable
+        ``sigma_func(T_scalar, E_scalar) -> float`` — absorption opacity.
+    T : float
+        Temperature (keV); clamped to *T_floor*.
+    E_low, E_high : float
+        Group energy bounds (keV).
+    T_floor : float
+        Minimum temperature used in evaluation.
+    n_quad : int
+        Quadrature points.
+
+    Returns
+    -------
+    sigma_P : float
+        Planck-mean opacity (cm⁻¹).
+    """
+    T_use = max(float(T), T_floor)
+    E = np.linspace(E_low, E_high, n_quad)
+    x_clip = np.minimum(E / T_use, 500.0)
+    B_E = (2.0 * E**3 / C_LIGHT**2) / (np.exp(x_clip) - 1.0 + 1e-300)
+    sigma_E = np.array([float(sigma_func(T_use, e)) for e in E])
+    if hasattr(np, "trapezoid"):
+        denom = np.trapezoid(B_E, E)
+        numer = np.trapezoid(sigma_E * B_E, E)
+    else:
+        denom = np.trapz(B_E, E)
+        numer = np.trapz(sigma_E * B_E, E)
+    if denom < 1e-300:
+        return float(np.sqrt(sigma_func(T_use, E_low) * sigma_func(T_use, E_high)))
+    return float(numer / denom)
+
+
+def geom_mean_sigma(sigma_func, T, E_low, E_high, T_floor=1e-10):
+    """Geometric mean of σ_a at group energy boundaries.
+
+    .. math::
+
+        \\sigma_{\\rm geom} = \\sqrt{\\sigma_a(T, E_{\\rm low}) \\cdot
+                                     \\sigma_a(T, E_{\\rm high})}
+
+    Parameters
+    ----------
+    sigma_func : callable
+        ``sigma_func(T_scalar, E_scalar) -> float``.
+    T : float
+        Temperature (keV).
+    E_low, E_high : float
+        Group energy bounds (keV).
+    T_floor : float
+        Minimum temperature used in evaluation.
+
+    Returns
+    -------
+    sigma_geom : float
+    """
+    T_use = max(float(T), T_floor)
+    s_low  = float(sigma_func(T_use, E_low))
+    s_high = float(sigma_func(T_use, E_high))
+    return float(np.sqrt(s_low * s_high))
+
+
+# ---------------------------------------------------------------------------
+# Generic power-law opacity model
+# ---------------------------------------------------------------------------
+
+def make_powerlaw_sigma(C_OPA, alpha, beta, rho=1.0, sigma_max=1e14):
+    """Return a scalar opacity function  σ(T, E) = ρ · C · T^α · E^β.
+
+    Parameters
+    ----------
+    C_OPA : float
+        Opacity coefficient.
+    alpha : float
+        Temperature exponent.
+    beta : float
+        Energy (frequency) exponent.
+    rho : float
+        Material density (g/cm³).  Default 1.
+    sigma_max : float
+        Hard upper cap on the returned opacity.  Default 1e14.
+
+    Returns
+    -------
+    sigma : callable
+        ``sigma(T_scalar, E_scalar) -> float``.
+    """
+    def sigma(T, E):
+        T_use = max(float(T), 1e-300)
+        return float(min(rho * C_OPA * T_use**alpha * float(E)**beta, sigma_max))
+    return sigma
+
+
+def make_powerlaw_group_opacity(E_low, E_high, C_OPA, alpha, beta,
+                                rho=1.0, sigma_max=1e14):
+    """Group opacity using the geometric mean of boundary values.
+
+    Returns a closure ``opacity(T) -> float`` suitable for use as a
+    sigma_a function in the MG-IMC and diffusion solvers:
+
+    .. math::
+
+        \\sigma_g(T) = \\sqrt{\\sigma(T, E_{\\rm low}) \\cdot \\sigma(T, E_{\\rm high})}
+
+    where  σ(T, E) = ρ · C · T^α · E^β.
+
+    Parameters
+    ----------
+    E_low, E_high : float
+        Group energy bounds (keV).
+    C_OPA : float
+        Opacity coefficient.
+    alpha : float
+        Temperature exponent.
+    beta : float
+        Energy exponent.
+    rho : float
+        Density (g/cm³).
+    sigma_max : float
+        Hard upper cap.
+
+    Returns
+    -------
+    opacity : callable
+        ``opacity(T) -> float``.
+    """
+    sigma_func = make_powerlaw_sigma(C_OPA, alpha, beta, rho, sigma_max)
+
+    def opacity(T):
+        return float(np.sqrt(sigma_func(T, E_low) * sigma_func(T, E_high)))
+
+    return opacity
+
+
+# ---------------------------------------------------------------------------
+# Mesh utilities
+# ---------------------------------------------------------------------------
+
+def build_clustered_edges(x_min, x_max, nx, cluster_beta=0.0, side='left'):
+    """Build a 1-D mesh with optional boundary clustering.
+
+    Parameters
+    ----------
+    x_min, x_max : float
+        Domain limits.
+    nx : int
+        Number of cells.
+    cluster_beta : float
+        Clustering strength.  ``0`` gives uniform spacing.  Positive values
+        compress cells near *side* using an exponential map.
+    side : str
+        ``'left'`` (default) or ``'right'``.
+
+    Returns
+    -------
+    edges : ndarray, length nx + 1
+    """
+    if cluster_beta <= 0.0:
+        return np.linspace(x_min, x_max, nx + 1)
+    s = np.linspace(0.0, 1.0, nx + 1)
+    mapped = (np.exp(cluster_beta * s) - 1.0) / (np.exp(cluster_beta) - 1.0)
+    if side == 'right':
+        mapped = 1.0 - mapped[::-1]
+    return x_min + (x_max - x_min) * mapped
 
 
 if __name__ == "__main__":

@@ -6,7 +6,11 @@ os.environ['NUMBA_CACHE_DIR'] = ''
 
 import numpy as np
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_here = os.path.dirname(os.path.abspath(__file__))
+_mg_dir = os.path.dirname(_here)     # MG_IMC/ — contains MG_IMC2D.py
+_root = os.path.dirname(_mg_dir)     # RadTranBook/
+sys.path.insert(0, _root)
+sys.path.insert(0, _mg_dir)
 
 from MG_IMC2D import run_simulation, __c, __a
 

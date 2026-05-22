@@ -44,7 +44,7 @@ import numpy as np
 
 # ── Path setup ──────────────────────────────────────────────────────────────
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.dirname(_HERE)
+_ROOT = os.path.dirname(os.path.dirname(_HERE))  # problems -> MG_IMC -> RadTranBook
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 

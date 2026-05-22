@@ -20,14 +20,14 @@ import numpy as np
 from scipy.interpolate import BPoly
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))  # visualization -> MG_IMC -> RadTranBook
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from utils.plotfuncs import font, show
 
 from MG_IMC import C_LIGHT
-from MG_IMC import test_marshak_wave_multigroup_powerlaw as imc_case
+from MG_IMC.problems import test_marshak_wave_multigroup_powerlaw as imc_case
 from DiscreteOrdinates.problems import test_marshak_wave_multigroup_powerlaw as do_case
 
 _RUN_COLORS = {

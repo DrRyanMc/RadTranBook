@@ -1372,6 +1372,34 @@ def _comb_mg(weights, cell_i, cell_j, groups, dir1, dir2, times, pos1, pos2, Nma
     return nw, ni, nj, ng, nd1, nd2, nt, np1, np2, comb_energy_discrepancy
 
 
+def warmup_jit():
+    """Force Numba to load (deserialize) the cached JIT kernels now.
+
+    Calling this at init time moves the ~15-45 s cache-load delay out of the
+    first ``step()`` call and into setup, where it is clearly visible.
+    """
+    t0 = _time.perf_counter()
+    print("[MG_IMC2D] Loading Numba JIT cache ...", flush=True)
+    _edges = np.array([0.0, 1.0])
+    _sigma = np.zeros((1, 1, 1))
+    _vols  = np.ones((1, 1))
+    _empty = np.empty(0, dtype=np.float64)
+    _emptyi = np.empty(0, dtype=np.int64)
+    _transport_particles_2d_mg(
+        _empty, _empty, _empty, _empty, _empty, _empty,
+        _emptyi, _emptyi, _emptyi,
+        _edges, _edges,
+        _sigma, _sigma, _vols,
+        1.0,
+        (False, False, False, False),
+        1000,
+        _GEOM_XY,
+        0.0,
+    )
+    dt = _time.perf_counter() - t0
+    print(f"[MG_IMC2D] JIT cache loaded in {dt:.1f} s", flush=True)
+
+
 def init_simulation(
     Ntarget,
     Tinit,
@@ -1414,6 +1442,7 @@ def init_simulation(
     state : SimulationState2DMG
         Initial state
     """
+    warmup_jit()
     nx, ny = _shape_from_edges(edges1, edges2)
     n_groups = len(energy_edges) - 1
     volumes = _cell_volumes(edges1, edges2, geometry)
@@ -1613,6 +1642,8 @@ def step(
     Ntotal=0,
     Ntotal_T_floor=0.0,
     T_emit_floor=0.0,
+    Nmax_growth=0,
+    Nmax_final=None,
     _timing=False,
 ):
     """Advance one 2D multigroup IMC step.
@@ -2043,6 +2074,10 @@ def step(
         "energy_expected_dE": boundary_emission + source_emission - boundary_loss,
         "energy_residual": energy_residual,
         "energy_loss": energy_loss,
+        "Nmax_next": (min(Nmax + Nmax_growth, Nmax_final)
+                      if Nmax_final is not None
+                      else Nmax + Nmax_growth)
+                     if Nmax_growth > 0 else Nmax,
         "profiling": {
             "phase_times_s": {
                 "sampling": t_transport_start - t_step_start,
@@ -2095,6 +2130,9 @@ def run_simulation(
     geometry="xy",
     max_events_per_particle=1_000_000,
     emission_fractions=None,
+    T_emit_floor=0.0,
+    Nmax_growth=0,
+    Nmax_final=None,
 ):
     """Run full multigroup IMC simulation.
     
@@ -2162,9 +2200,13 @@ def run_simulation(
             geometry=geometry,
             max_events_per_particle=max_events_per_particle,
             emission_fractions=emission_fractions,
+            T_emit_floor=T_emit_floor,
+            Nmax_growth=Nmax_growth,
+            Nmax_final=Nmax_final,
         )
 
         t = state.time
+        Nmax = info["Nmax_next"]
         step_count += 1
         cumulative_residual += info["energy_residual"]
 

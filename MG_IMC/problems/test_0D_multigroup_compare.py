@@ -24,8 +24,11 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 
 # Add parent directories to path
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_here = os.path.dirname(os.path.abspath(__file__))
+_mg_dir = os.path.dirname(_here)     # MG_IMC/ — needed for direct MG_IMC2D imports
+parent_dir = os.path.dirname(_mg_dir)  # RadTranBook/
 sys.path.insert(0, parent_dir)
+sys.path.insert(0, _mg_dir)
 sys.path.insert(0, os.path.join(parent_dir, 'IMC'))
 
 # Import gray IMC

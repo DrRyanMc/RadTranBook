@@ -23,11 +23,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Add project root to path for package imports and plotting utilities.
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from MG_IMC import A_RAD, C_LIGHT, SimulationState2DMG, init_simulation, step
+
+try:
+    from planck_integrals import Bg_multigroup as _planck_Bg_multigroup
+    _PLANCK_LIB_AVAILABLE = True
+except ImportError:
+    _PLANCK_LIB_AVAILABLE = False
+    raise ImportError(
+        "planck_integrals module is required for multigroup Planck integrals."
+    )
 
 from utils.plotfuncs import font, show
 
@@ -110,25 +119,30 @@ def load_checkpoint(path):
     return payload
 
 
-def _planck_group_integral(E_low, E_high, T):
-    """Planck group integral B_g(T) in gray units used by MG_IMC."""
+def _planck_group_integral_fallback(E_low, E_high, T):
+    """Fallback Planck group integral B_g(T) via numerical quadrature."""
     if T <= 0.0:
         return 0.0
     nquad = 80
     E = np.linspace(E_low, E_high, nquad)
     B_E = (2.0 * E**3 / C_LIGHT**2) / (np.exp(E / T) - 1.0 + 1e-300)
-    # NumPy compatibility: newer builds may only expose trapezoid.
     if hasattr(np, "trapezoid"):
         return np.trapezoid(B_E, E)
     return np.trapz(B_E, E)
 
 
 def Bg_multigroup(energy_edges, T):
-    """Return per-group Planck integrals for temperature T."""
+    """Return per-group Planck integrals for temperature T.
+
+    Uses planck_integrals library (fast Numba JIT) when available, falling
+    back to local numerical quadrature otherwise.
+    """
+    if _PLANCK_LIB_AVAILABLE:
+        return _planck_Bg_multigroup(np.asarray(energy_edges, dtype=float), float(T))
     n_groups = len(energy_edges) - 1
     out = np.zeros(n_groups)
     for g in range(n_groups):
-        out[g] = _planck_group_integral(energy_edges[g], energy_edges[g + 1], T)
+        out[g] = _planck_group_integral_fallback(energy_edges[g], energy_edges[g + 1], T)
     return out
 
 
@@ -190,6 +204,11 @@ def run_marshak_wave_multigroup_powerlaw_imc(
     ntarget=200000,
     nboundary=100000,
     nmax=400000,
+    nmax_growth=0,
+    nmax_final=None,
+    ntotal=0,
+    ntotal_T_floor=0.01,
+    T_emit_floor=0.01,
     use_scalar_intensity_Tr=True,
     nx=140,
     dt=0.01,
@@ -198,6 +217,7 @@ def run_marshak_wave_multigroup_powerlaw_imc(
     checkpoint_every=10,
     checkpoint_file=None,
     restart_from=None,
+    mode_label=None,
 ):
     print("=" * 80)
     print(f"Marshak Wave Problem - Multigroup IMC ({n_groups} Groups) with Power-Law Opacity")
@@ -310,7 +330,13 @@ def run_marshak_wave_multigroup_powerlaw_imc(
         print(f"  dx_min={dx.min():.4e} cm, dx_max={dx.max():.4e} cm, dx_max/dx_min={dx.max()/dx.min():.2f}")
     else:
         print("  Grid: uniform")
-    print(f"  Particles: Ntarget={ntarget}, Nboundary={nboundary}, Nmax={nmax}")
+    if mode_label is not None:
+        print(f"  Mode: {mode_label}")
+    print(f"  Particles: Ntarget={ntarget}, Nboundary={nboundary}")
+    if nmax_growth > 0:
+        print(f"  Nmax: {nmax} -> {nmax_final} (growth {nmax_growth}/step)")
+    else:
+        print(f"  Nmax: {nmax}")
     if checkpoint_every > 0:
         print(f"  Checkpoint cadence: every {checkpoint_every} steps")
     else:
@@ -337,6 +363,11 @@ def run_marshak_wave_multigroup_powerlaw_imc(
         "x_edges": x_edges,
         "y_edges": y_edges,
         "energy_edges": energy_edges,
+        "mode_label": mode_label,
+        "ntarget": int(ntarget),
+        "nboundary": int(nboundary),
+        "nmax_growth": int(nmax_growth),
+        "nmax_final": None if nmax_final is None else int(nmax_final),
     }
 
     if checkpoint_file is None:
@@ -360,6 +391,7 @@ def run_marshak_wave_multigroup_powerlaw_imc(
         step_count = int(payload.get("step_count", 0))
         cumulative_residual = float(payload.get("cumulative_residual", 0.0))
         history = payload.get("history", [])
+        nmax_current = int(saved_meta.get("nmax_current", nmax))
         np_state = payload.get("np_random_state", None)
         if np_state is not None:
             np.random.set_state(np_state)
@@ -368,7 +400,7 @@ def run_marshak_wave_multigroup_powerlaw_imc(
             random.setstate(py_state)
         print(
             f"Restart state: t={state.time:.6f} ns, step={step_count}, "
-            f"history_entries={len(history)}"
+            f"history_entries={len(history)}, Nmax={nmax_current}"
         )
     else:
         state = init_simulation(
@@ -386,6 +418,7 @@ def run_marshak_wave_multigroup_powerlaw_imc(
         step_count = 0
         cumulative_residual = 0.0
         history = []
+        nmax_current = nmax
 
     t = float(state.time)
     time_tol = max(1e-15, 1e-12 * max(final_time, 1.0))
@@ -406,8 +439,11 @@ def run_marshak_wave_multigroup_powerlaw_imc(
             state,
             Ntarget=ntarget,
             Nboundary=nboundary,
+            Ntotal=ntotal,
+            Ntotal_T_floor=ntotal_T_floor,
+            T_emit_floor=T_emit_floor,
             Nsource=0,
-            Nmax=nmax,
+            Nmax=nmax_current,
             T_boundary=T_boundary,
             dt=dt_step,
             edges1=x_edges,
@@ -423,11 +459,14 @@ def run_marshak_wave_multigroup_powerlaw_imc(
             conserve_comb_energy=False,
             geometry="xy",
             max_events_per_particle=100000,
+            Nmax_growth=nmax_growth,
+            Nmax_final=nmax_final,
         )
 
         t = float(state.time)
         step_count += 1
         cumulative_residual += float(info.get("energy_residual", 0.0))
+        nmax_current = int(info.get("Nmax_next", nmax_current))
 
         _now = _time.perf_counter()
         wall_step = _now - _step_wall_start
@@ -463,6 +502,7 @@ def run_marshak_wave_multigroup_powerlaw_imc(
             )
 
         if checkpoint_every > 0 and (step_count % checkpoint_every == 0):
+            metadata["nmax_current"] = int(nmax_current)
             save_checkpoint(
                 checkpoint_file,
                 state,
@@ -474,6 +514,7 @@ def run_marshak_wave_multigroup_powerlaw_imc(
             print(f"Saved checkpoint: {checkpoint_file} (step={step_count}, t={t:.6f} ns)")
 
     if checkpoint_every > 0:
+        metadata["nmax_current"] = int(nmax_current)
         save_checkpoint(
             checkpoint_file,
             state,
@@ -684,11 +725,26 @@ def run_marshak_wave_multigroup_powerlaw_imc(
 
 def main():
     parser = argparse.ArgumentParser(description="Marshak wave multigroup IMC with power-law opacity")
+    parser.add_argument(
+        "--mode",
+        choices=["quick", "standard", "publication"],
+        default=None,
+        help="Particle-budget preset. If omitted, legacy explicit defaults are used.",
+    )
     parser.add_argument("--groups", type=int, default=10, help="Number of energy groups")
     parser.add_argument("--no-time-bc", action="store_true", help="Disable time-dependent left boundary temperature")
-    parser.add_argument("--Ntarget", type=int, default=500_000, help="Material emission particles per step")
-    parser.add_argument("--Nboundary", type=int, default=500_000, help="Boundary source particles per side per step")
-    parser.add_argument("--Nmax", type=int, default=1_000_000, help="Census comb target")
+    parser.add_argument("--Ntarget", type=int, default=None, help="Material emission particles per step")
+    parser.add_argument("--Nboundary", type=int, default=None, help="Boundary source particles per side per step")
+    parser.add_argument("--Ntotal", type=int, default=0,
+                        help="If > 0, split total budget between boundary and material emission by energy")
+    parser.add_argument("--Ntotal-T-floor", type=float, default=0.02,
+                        help="Exclude material cells at or below this temperature (keV) from emission "
+                             "estimate when using --Ntotal (default: 0.01)")
+    parser.add_argument("--T-emit-floor", type=float, default=0.02,
+                        help="Emission temperature floor (keV); cells below this emit no particles "
+                             "(default: 0.01)")
+    parser.add_argument("--Nmax", type=int, default=None,
+                        help="Initial census comb target. Negative = fixed threshold mode")
     parser.add_argument("--nx", type=int, default=140, help="Number of x-cells (default: 140)")
     parser.add_argument("--dt", type=float, default=0.01, help="Timestep in ns (default: 0.01)")
     parser.add_argument("--final-time", type=float, default=10.0, help="Final time in ns (default: 10.0)")
@@ -726,12 +782,46 @@ def main():
     )
     args = parser.parse_args()
 
+    legacy_defaults = {
+        "Ntarget": 500_000,
+        "Nboundary": 500_000,
+        "Nmax": 1_000_000,
+    }
+    mode_params = {
+        "quick":       dict(Ntarget=5_000,   Nmax_init=10_000,    Nmax_growth=1_000,   Nmax_final=50_000),
+        "standard":    dict(Ntarget=50_000,  Nmax_init=100_000,   Nmax_growth=20_000,  Nmax_final=2_000_000),
+        "publication": dict(Ntarget=500_000, Nmax_init=2_000_000, Nmax_growth=100_000, Nmax_final=20_000_000),
+    }
+
+    if args.mode is None:
+        ntarget = legacy_defaults["Ntarget"] if args.Ntarget is None else args.Ntarget
+        nboundary = legacy_defaults["Nboundary"] if args.Nboundary is None else args.Nboundary
+        nmax_init = legacy_defaults["Nmax"] if args.Nmax is None else args.Nmax
+        nmax_growth = 0
+        nmax_final = None
+    else:
+        p = mode_params[args.mode]
+        ntarget = p["Ntarget"] if args.Ntarget is None else args.Ntarget
+        nboundary = ntarget if args.Nboundary is None else args.Nboundary
+        nmax_init = p["Nmax_init"]
+        nmax_growth = p["Nmax_growth"]
+        nmax_final = p["Nmax_final"]
+        if args.Nmax is not None:
+            nmax_init = args.Nmax
+            nmax_growth = 0 if args.Nmax < 0 else nmax_growth
+            nmax_final = args.Nmax if args.Nmax < 0 else nmax_final
+
     run_marshak_wave_multigroup_powerlaw_imc(
         n_groups=args.groups,
         time_dependent_bc=not args.no_time_bc,
-        ntarget=args.Ntarget,
-        nboundary=args.Nboundary,
-        nmax=args.Nmax,
+        ntarget=ntarget,
+        nboundary=nboundary,
+        ntotal=args.Ntotal,
+        ntotal_T_floor=args.Ntotal_T_floor,
+        T_emit_floor=args.T_emit_floor,
+        nmax=nmax_init,
+        nmax_growth=nmax_growth,
+        nmax_final=nmax_final,
         use_scalar_intensity_Tr=not args.use_particle_binning_Tr,
         nx=args.nx,
         dt=args.dt,
@@ -740,6 +830,7 @@ def main():
         checkpoint_every=args.checkpoint_every,
         checkpoint_file=args.checkpoint_file,
         restart_from=args.restart_from,
+        mode_label=args.mode,
     )
 
 

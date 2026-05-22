@@ -17,8 +17,11 @@ os.environ['NUMBA_CACHE_DIR'] = ''
 import numpy as np
 import sys
 
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_here = os.path.dirname(os.path.abspath(__file__))
+_mg_dir = os.path.dirname(_here)     # MG_IMC/ — needed for direct MG_IMC2D imports
+parent_dir = os.path.dirname(_mg_dir)  # RadTranBook/
 sys.path.insert(0, parent_dir)
+sys.path.insert(0, _mg_dir)
 
 from MG_IMC2D import __c, __a
 from planck_integrals import Bg
@@ -60,22 +63,22 @@ print(f"\n{'='*80}")
 print("CHECK 1: Planck Mean Opacity")
 print(f"{'='*80}")
 
-# Compute b_g for each group
-b_g = np.zeros(n_groups)
-for g in range(n_groups):
-    E_low = energy_edges[g]
-    E_high = energy_edges[g + 1]
-    b_g[g] = Bg(E_low, E_high, T)
+# Compute b_g for each group using planck_integrals library (raw integrals,
+# then normalise so fractions sum to 1, matching MG_IMC2D internal convention).
+b_g_raw = np.array([Bg(energy_edges[g], energy_edges[g + 1], T)
+                    for g in range(n_groups)])
+spectral_coverage = b_g_raw.sum() / Bg(0.0, 1e6, T) if Bg(0.0, 1e6, T) > 0 else float('nan')
+b_g = b_g_raw / (b_g_raw.sum() + 1e-300)  # normalised emission fractions
 
-# Verify b_g sums to 1
 sum_bg = np.sum(b_g)
 print(f"\nPlanck fractions b_g at T = {T} keV:")
 for g in range(n_groups):
     print(f"  Group {g}: b_{g} = {b_g[g]:.6f}")
-print(f"\nSum of b_g = {sum_bg:.10f}  (should be 1.0)")
+print(f"\nSpectral coverage = {spectral_coverage:.6f}  (fraction of total Planck integral covered by groups)")
+print(f"Sum of normalised b_g = {sum_bg:.10f}  (should be 1.0)")
 
 if not np.isclose(sum_bg, 1.0, rtol=1e-6):
-    print(f"⚠ WARNING: b_g does not sum to 1!")
+    print(f"⚠ WARNING: normalised b_g does not sum to 1!")
 else:
     print(f"✓ b_g sums to 1.0")
 

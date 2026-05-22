@@ -12,7 +12,7 @@ import numpy as np
 
 # ── project imports ────────────────────────────────────────────────────────────
 _here        = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(_here)            # MG_IMC → RadTranBook
+project_root = os.path.dirname(os.path.dirname(_here))   # visualization -> MG_IMC -> RadTranBook
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 

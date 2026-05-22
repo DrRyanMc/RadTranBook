@@ -26,7 +26,7 @@ import sys
 import os
 
 # Add parent directory to path to import MG_IMC package
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, parent_dir)
 
 from MG_IMC import (
@@ -34,17 +34,6 @@ from MG_IMC import (
     C_LIGHT as __c,
     A_RAD as __a,
 )
-
-# Add utils to path for plotting
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'utils'))
-from plotfuncs import show
-# Try to import plotting
-try:
-    import matplotlib.pyplot as plt
-    PLOTTING_AVAILABLE = True
-except ImportError:
-    print("Warning: matplotlib not available, skipping plots")
-    PLOTTING_AVAILABLE = False
 
 # Reference solution data from Su & Olson (1997) Table 4
 # Format: x, tau=0.1, tau=0.3, tau=1.0, tau=3.0
@@ -351,57 +340,33 @@ for i, (tau_val, target_time) in enumerate(zip(output_times_tau, output_times)):
         print(f"      Weight floor kills: {events['weight_floor_kills']}")
         print(f"      Census events: {events['census_events']}")
 
-# Plotting
-if PLOTTING_AVAILABLE and len(saved_solutions) > 0:
-    print(f"\n{'='*80}")
-    print("Creating comparison plots...")
-    print(f"{'='*80}")
-    
-    colors_time = ['blue', 'green', 'red', 'purple']
+# Save results for visualization
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+out_dir = os.path.normpath(os.path.join(_script_dir, "..", "results", "su_olson_picket_fence"))
+os.makedirs(out_dir, exist_ok=True)
+results_path = os.path.join(out_dir, "imc_results.npz")
 
-    plot_specs = [
-        ('U1', ref_data_U1, r'$U_1$ (Group 1 Radiation)', 'Group 1: σ₁ = 2/11 (Thin)', (1e-3, 1e0), 'test_su_olson_picket_fence_imc_U1.pdf'),
-        ('U2', ref_data_U2, r'$U_2$ (Group 2 Radiation)', 'Group 2: σ₂ = 20/11 (Thick)', (1e-4, 1e0), 'test_su_olson_picket_fence_imc_U2.pdf'),
-        ('V', ref_data_V, r'$V$ (Material Energy)', 'Material Energy Density', (1e-5, 1e0), 'test_su_olson_picket_fence_imc_V.pdf'),
-    ]
+solved_tau = [t for t in output_times_tau if t in saved_solutions]
+np.savez_compressed(
+    results_path,
+    x_centers=x_centers,
+    tau_values=np.array(solved_tau),
+    U1=np.array([saved_solutions[t]['U1'] for t in solved_tau]),
+    U2=np.array([saved_solutions[t]['U2'] for t in solved_tau]),
+    V=np.array([saved_solutions[t]['V'] for t in solved_tau]),
+    T=np.array([saved_solutions[t]['T'] for t in solved_tau]),
+    actual_times=np.array([saved_solutions[t]['time'] for t in solved_tau]),
+    ref_U1=ref_data_U1,
+    ref_U2=ref_data_U2,
+    ref_V=ref_data_V,
+    source_region=np.float64(source_region),
+    sigma_1=np.float64(sigma_1),
+    sigma_2=np.float64(sigma_2),
+    T_h=np.float64(T_h),
+    mean_free_time=np.float64(mean_free_time),
+)
+print(f"\nResults saved \u2192 {results_path}")
 
-    for quantity_key, ref_data, y_label, title, y_limits, output_file in plot_specs:
-        fig, ax = plt.subplots(1, 1, figsize=(6, 5))
-
-        for idx, tau_val in enumerate(output_times_tau):
-            if tau_val not in saved_solutions:
-                continue
-
-            sol = saved_solutions[tau_val]
-            color = colors_time[idx]
-
-            y = sol[quantity_key]
-            mask = (sol['x'] >= 0.05) & (sol['x'] <= 5.0) & (y > 0.0)
-            ax.plot(sol['x'][mask], y[mask], color=color, linestyle='-', linewidth=2.5, alpha=0.8,
-                    label=f'IMC τ={tau_val:.1f}')
-
-            if tau_val in [0.1, 0.3, 1.0, 3.0]:
-                tau_idx = [0.1, 0.3, 1.0, 3.0].index(tau_val)
-                ref_mask = (~np.isnan(ref_data[:, tau_idx + 1])) & (ref_data[:, 0] >= 0.05) & (ref_data[:, tau_idx + 1] > 0.0)
-                ax.plot(ref_data[ref_mask, 0], ref_data[ref_mask, tau_idx + 1],
-                        marker='s', markerfacecolor=color, markeredgecolor='black',
-                        markersize=6, markeredgewidth=1.5, linestyle='', alpha=0.8,
-                        label=f'Ref τ={tau_val:.1f}')
-
-        ax.axvline(x=source_region, color='gray', linestyle='--', alpha=0.3, linewidth=1)
-        ax.set_xlabel('Position (mean-free paths)', fontsize=12)
-        ax.set_ylabel(y_label, fontsize=12)
-        #ax.set_title(title, fontsize=13, fontweight='bold')
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-        #ax.legend(fontsize=9, loc='best', ncol=2)
-        ax.grid(True, alpha=0.3, which='both')
-        ax.set_xlim([0.05, 5.0])
-        ax.set_ylim(y_limits)
-
-        fig.tight_layout()
-        show(output_file, close_after=True)
-        
 
 # Print summary statistics
 print(f"\n{'='*80}")
@@ -435,9 +400,7 @@ print(f"\n✓ Reference data from Su & Olson (1997) Table 2")
 print(f"✓ Results normalized by a*T_h⁴ with T_h = {T_h} keV")
 print(f"✓ Time normalized by mean free time τ = 1/(c*σ_avg)")
 
-if PLOTTING_AVAILABLE:
-    print(f"✓ Comparison plot shows IMC (solid lines) vs Reference (hollow markers)")
-else:
-    print("  (Plotting skipped - matplotlib not available)")
+print(f"✓ Results saved \u2192 {results_path}")
+print(f"✓ Run visualization/plot_su_olson_picket_fence.py to generate comparison figures")
 
 print("="*80)

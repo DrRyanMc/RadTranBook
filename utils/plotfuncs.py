@@ -12,13 +12,27 @@ import scipy.optimize as opt
 from scipy.optimize import curve_fit
 import os
 
-# Updated function to include the threshold energy condition
+# Original default plotting font (kept as `font`).
 _GILL_SANS_PATH = '/Library/Fonts/GillSans.ttc'
 if os.path.exists(_GILL_SANS_PATH):
     font = fm.FontProperties(family='Gill Sans', fname=_GILL_SANS_PATH, size=12)
 else:
     # Fall back to the default sans-serif font on systems without Gill Sans.
     font = fm.FontProperties(family='sans-serif', size=12)
+
+# Additional IMC/Marshak typography profile.
+_IMC_SANS_STACK = [
+    "Univers LT Std",
+    "TeX Gyre Heros",
+    "Helvetica",
+    "Arial",
+    "DejaVu Sans",
+]
+font_imc = fm.FontProperties(
+    family=_IMC_SANS_STACK,
+    size=12,
+    variant="small-caps",
+)
 def hide_spines(intx=False,inty=False,cbar_ax=None):
     """Hides the top and rightmost axis spines from view for all active
     figures and their respective axes."""
