@@ -15,7 +15,7 @@ ramping from T_start to T_end over bc_ramp_time ns.
 
 Restart/checkpoint: pickle-based (consistent with existing MG_IMC conventions).
 
-Domain: r in [0.0, 2.0] cm, z in [0.0, 3.5] cm
+Domain: r in [0.0, 2.0] cm, z in [0.0, 7.0] cm
 
 Geometry — U-shaped (reversed) crooked pipe:
   Inner leg  (r < 0.5):          thin channel up from z=0 (inlet)
@@ -66,7 +66,7 @@ from plotfuncs import show
 
 # ── Problem constants ────────────────────────────────────────────────────────
 T_INIT    = 0.05   # keV — cold initial condition
-RHO_THICK = 8.0    # g/cm^3 — optically thick regions
+RHO_THICK = 2.0    # g/cm^3 — optically thick regions
 RHO_THIN  = 0.01   # g/cm^3 — optically thin regions
 CV_MASS   = 0.05   # GJ/(g*keV) — mass-specific heat capacity
 
@@ -171,13 +171,18 @@ def fit_color_temperature(E_g, energy_edges, T_min=0.05, T_max=15.0):
 def is_optically_thick(r, z):
     """Return True where (r,z) is in an optically thick region.
 
-    U-shaped crooked-pipe thick/thin map (domain z in [0, 3.5]):
-      Inner leg  (r < 0.5):          thin — all z
-      Outer leg  (1.0 <= r < 1.5):   thin — all z
-      Bend       (r < 1.5, 2.5 < z < 3.0): thin — connects inner & outer at top
-      Top wall   (z >= 3.0):                THICK
-      Inner wall (0.5 <= r < 1.0, z <= 2.5): THICK — separates the two legs
-      Outer wall (r >= 1.5):          THICK — all z
+     Crooked-pipe thick/thin map matching the diffusion implementation.
+     Thin regions are defined as:
+        1) lower_thin:
+            r < 0.5 and (z < 3.0 or z > 4.0)
+        2) ascending_left_thin:
+            r < 1.5 and 2.5 < z < 3.0
+        3) ascending_right_thin:
+            r < 1.5 and 4.0 < z < 4.5
+        4) top_thin:
+            1.0 <= r < 1.5 and 2.5 < z < 4.5
+
+    Everything else is thick.
 
     Vectorised over array inputs.
     """
@@ -187,13 +192,15 @@ def is_optically_thick(r, z):
 
     result = np.ones_like(r, dtype=bool)  # default: thick
 
-    inner_leg = (r < 0.5)  & (z < 3.0)           # near-axis channel
-    outer_leg = (r >= 1.0) & (r < 1.5) & (z < 3.0)  # return channel
-    bend      = (r < 1.5)  & (z > 2.5) & (z < 3.0)  # top bend connecting legs
+    lower_thin = (r < 0.5) & ((z < 3.0) | (z > 4.0))
+    ascending_left_thin = (r < 1.5) & (z > 2.5) & (z < 3.0)
+    ascending_right_thin = (r < 1.5) & (z > 4.0) & (z < 4.5)
+    top_thin = (r >= 1.0) & (r < 1.5) & (z > 2.5) & (z < 4.5)
 
-    result[inner_leg] = False
-    result[outer_leg] = False
-    result[bend]      = False
+    result[lower_thin] = False
+    result[ascending_left_thin] = False
+    result[ascending_right_thin] = False
+    result[top_thin] = False
 
     if scalar_input:
         return bool(result[0])
@@ -502,6 +509,24 @@ def plot_material_layout(r_centers, z_centers, run_tag, r_edges=None, z_edges=No
     plt.close(fig)
 
 
+def plot_mesh(r_edges, z_edges, run_tag, out_dir='.'):
+    """Plot the computational mesh for quick geometry sanity checks."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for r in r_edges:
+        ax.plot([z_edges[0], z_edges[-1]], [r, r], color='black', linewidth=0.3, alpha=0.5)
+    for z in z_edges:
+        ax.plot([z, z], [r_edges[0], r_edges[-1]], color='black', linewidth=0.3, alpha=0.5)
+
+    ax.set_xlabel('z (cm)')
+    ax.set_ylabel('r (cm)')
+    ax.set_title(f'Computational mesh ({len(r_edges)-1} x {len(z_edges)-1} cells)')
+    ax.set_aspect('equal')
+    plt.tight_layout()
+    fname = os.path.join(out_dir, f'crooked_pipe_mg_imc_mesh_{run_tag}.png')
+    fig.savefig(fname, dpi=120, bbox_inches='tight')
+    plt.close(fig)
+
+
 def save_snapshot(state, t, save_prefix, energy_edges, r_edges, z_edges, T_col_2d=None, T_bc=None):
     """Save 2D field arrays at an output time to NPZ — same format as diffusion snapshots.
 
@@ -630,7 +655,7 @@ def main(
     n_groups=10,
     output_times=None,
     nr=60,
-    nz=105,
+    nz=210,
     dt_initial=1e-4,
     dt_max=0.01,
     dt_increase_factor=1.1,
@@ -795,8 +820,8 @@ def main(
             refine_width=refine_width,
         )
         z_edges = generate_refined_faces(
-            0.0, 3.5,
-            interface_locations=[2.5, 3.0],
+            0.0, 7.0,
+            interface_locations=[2.5, 3.0, 4.0, 4.5],
             n_refine=n_refine,
             n_coarse=n_coarse_z,
             refine_width=refine_width,
@@ -804,7 +829,7 @@ def main(
         print(f'  Refined mesh: {len(r_edges)-1} x {len(z_edges)-1} cells')
     else:
         r_edges = np.linspace(0.0, 2.0, nr + 1)
-        z_edges = np.linspace(0.0, 3.5, nz + 1)
+        z_edges = np.linspace(0.0, 7.0, nz + 1)
 
     r_centers = 0.5 * (r_edges[:-1] + r_edges[1:])
     z_centers = 0.5 * (z_edges[:-1] + z_edges[1:])
@@ -878,6 +903,7 @@ def main(
     # ── Material layout plot ──────────────────────────────────────────────────
     plot_material_layout(r_centers, z_centers, run_tag,
                          r_edges=r_edges, z_edges=z_edges, out_dir=out_dir)
+    plot_mesh(r_edges, z_edges, run_tag, out_dir=out_dir)
 
     # ── Boundary temperature ramp ────────────────────────────────────────────
     def boundary_temperature(t):
@@ -1332,7 +1358,7 @@ def parse_arguments():
                         help='Number of energy groups')
     parser.add_argument('--nr',         type=int,   default=60,
                         help='Coarse r-direction cells')
-    parser.add_argument('--nz',         type=int,   default=105,
+    parser.add_argument('--nz',         type=int,   default=210,
                         help='Coarse z-direction cells')
     parser.add_argument('--dt-initial', type=float, default=1e-4,
                         help='Initial time step (ns)')
