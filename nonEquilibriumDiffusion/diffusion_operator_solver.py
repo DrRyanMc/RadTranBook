@@ -179,6 +179,34 @@ class DiffusionOperatorSolver1D:
         #   f(T_cell, phi_cell, r_boundary) -> D_boundary
         self.left_boundary_diffusion_func = None
         self.right_boundary_diffusion_func = None
+
+    def _evaluate_boundary_diffusion(self, side, temperature, phi_guess):
+        """Return the face diffusion coefficient at the requested boundary."""
+        if side == 'left':
+            boundary_diffusion_func = self.left_boundary_diffusion_func
+            T_cell = temperature[0]
+            phi_cell = phi_guess[0]
+            r_face = self.r_faces[0]
+            dx = self.dr_cells[0]
+        else:
+            boundary_diffusion_func = self.right_boundary_diffusion_func
+            T_cell = temperature[-1]
+            phi_cell = phi_guess[-1]
+            r_face = self.r_faces[-1]
+            dx = self.dr_cells[-1]
+
+        if boundary_diffusion_func is not None:
+            try:
+                D_candidate = boundary_diffusion_func(T_cell, phi_cell, r_face)
+                if np.isfinite(D_candidate) and D_candidate > 0.0:
+                    return D_candidate
+            except Exception:
+                pass
+
+        try:
+            return self.diffusion_coeff_func(T_cell, r_face, phi_cell, phi_cell, dx)
+        except TypeError:
+            return self.diffusion_coeff_func(T_cell, r_face)
     
     def apply_operator(self, phi, T):
         """
@@ -263,22 +291,10 @@ class DiffusionOperatorSolver1D:
         
         # Boundary faces - also handle flux-limiting interface
         # Left boundary (face 0)
-        try:
-            phi_left = phi_guess[0]
-            phi_right = phi_guess[0]  # Use same value for boundary
-            dx = self.dr_cells[0]
-            D_faces[0] = self.diffusion_coeff_func(temperature[0], self.r_faces[0], phi_left, phi_right, dx)
-        except TypeError:
-            D_faces[0] = self.diffusion_coeff_func(temperature[0], self.r_faces[0])
+        D_faces[0] = self._evaluate_boundary_diffusion('left', temperature, phi_guess)
         
         # Right boundary (face -1)
-        try:
-            phi_left = phi_guess[-1]
-            phi_right = phi_guess[-1]  # Use same value for boundary
-            dx = self.dr_cells[-1]
-            D_faces[-1] = self.diffusion_coeff_func(temperature[-1], self.r_faces[-1], phi_left, phi_right, dx)
-        except TypeError:
-            D_faces[-1] = self.diffusion_coeff_func(temperature[-1], self.r_faces[-1])
+        D_faces[-1] = self._evaluate_boundary_diffusion('right', temperature, phi_guess)
 
         
         # Evaluate absorption coefficients

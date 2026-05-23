@@ -42,6 +42,12 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
+try:
+    from planck_integrals import Bg_multigroup
+    _PLANCK_AVAILABLE = True
+except ImportError:
+    _PLANCK_AVAILABLE = False
+
 # ── Path setup ──────────────────────────────────────────────────────────────
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))  # problems -> MG_IMC -> RadTranBook
@@ -60,11 +66,102 @@ from plotfuncs import show
 
 # ── Problem constants ────────────────────────────────────────────────────────
 T_INIT    = 0.05   # keV — cold initial condition
-RHO_THICK = 2.0    # g/cm^3 — optically thick regions
+RHO_THICK = 8.0    # g/cm^3 — optically thick regions
 RHO_THIN  = 0.01   # g/cm^3 — optically thin regions
 CV_MASS   = 0.05   # GJ/(g*keV) — mass-specific heat capacity
 
 CHECKPOINT_VERSION = 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COLOUR-TEMPERATURE HELPERS (MATCH DILUTE-SPHERE FIT METHOD)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _planck_group_integral_fallback(E_low, E_high, T):
+    """Planck group integral using fixed quadrature when planck_integrals is unavailable."""
+    if T <= 0:
+        return 0.0
+    E = np.linspace(E_low, E_high, 60)
+    B = (2.0 * E**3 / C_LIGHT**2) / (np.exp(np.clip(E / T, 0, 500)) - 1 + 1e-300)
+    if hasattr(np, 'trapezoid'):
+        return float(np.trapezoid(B, E))
+    return float(np.trapz(B, E))
+
+
+def _Bg_all(energy_edges, T):
+    """Return array of Planck group integrals at temperature T."""
+    if _PLANCK_AVAILABLE:
+        return Bg_multigroup(energy_edges, T)
+    n = len(energy_edges) - 1
+    return np.array([
+        _planck_group_integral_fallback(energy_edges[g], energy_edges[g + 1], T)
+        for g in range(n)
+    ])
+
+
+def _peak_nu_from_spec(spec, nu_c):
+    """Return parabolic-interpolation peak frequency of a discrete spectrum."""
+    if np.all(spec <= 0):
+        return np.nan
+    i = int(np.argmax(spec))
+    nu_peak = nu_c[i]
+    if 0 < i < len(spec) - 1 and spec[i - 1] > 0 and spec[i + 1] > 0:
+        xl, yl = np.log(nu_c[i - 1]), np.log(spec[i - 1])
+        xm, ym = np.log(nu_c[i]),     np.log(spec[i])
+        xr, yr = np.log(nu_c[i + 1]), np.log(spec[i + 1])
+        denom = (xl - xm) * (xl - xr) * (xm - xr)
+        a = (xr * (ym - yl) + xm * (yl - yr) + xl * (yr - ym)) / denom
+        b = (xr**2 * (yl - ym) + xm**2 * (yr - yl) + xl**2 * (ym - yr)) / denom
+        if a < 0:
+            x_peak = -b / (2.0 * a)
+            if xl <= x_peak <= xr:
+                nu_peak = np.exp(x_peak)
+    return float(nu_peak)
+
+
+_PLANCK_PEAK_CACHE = {}
+
+
+def _get_planck_peak_lookup(energy_edges, T_min=0.05, T_max=15.0, n_pts=300):
+    """Build (or fetch) lookup table mapping T -> nu_peak(B_g/DeltaE_g)."""
+    key = tuple(np.asarray(energy_edges, dtype=float))
+    if key not in _PLANCK_PEAK_CACHE:
+        dE = energy_edges[1:] - energy_edges[:-1]
+        nu_c = np.sqrt(energy_edges[:-1] * energy_edges[1:])
+        T_arr = np.logspace(np.log10(T_min), np.log10(T_max), n_pts)
+        nu_peaks = np.array([
+            _peak_nu_from_spec(_Bg_all(energy_edges, T) / np.where(dE > 0, dE, 1e-300), nu_c)
+            for T in T_arr
+        ])
+        _PLANCK_PEAK_CACHE[key] = (T_arr, nu_peaks)
+    return _PLANCK_PEAK_CACHE[key]
+
+
+def fit_color_temperature(E_g, energy_edges, T_min=0.05, T_max=15.0):
+    """Estimate colour temperature from group energies using discrete-peak matching."""
+    if len(energy_edges) == 2:
+        E_tot = float(E_g[0])
+        if E_tot <= 0:
+            return np.nan
+        return float(np.clip((E_tot / A_RAD) ** 0.25, T_min, T_max))
+
+    dE = energy_edges[1:] - energy_edges[:-1]
+    spec = np.asarray(E_g, dtype=float) / np.where(dE > 0, dE, 1e-300)
+    if np.all(spec <= 0):
+        return np.nan
+
+    nu_c = np.sqrt(energy_edges[:-1] * energy_edges[1:])
+    nu_peak_sim = _peak_nu_from_spec(spec, nu_c)
+    if not np.isfinite(nu_peak_sim):
+        return np.nan
+
+    T_arr, nu_peak_B = _get_planck_peak_lookup(energy_edges, T_min, T_max)
+    if nu_peak_sim <= nu_peak_B[0]:
+        return float(T_min)
+    if nu_peak_sim >= nu_peak_B[-1]:
+        return float(T_max)
+    T_c = float(np.interp(nu_peak_sim, nu_peak_B, T_arr))
+    return float(np.clip(T_c, T_min, T_max))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -224,7 +321,7 @@ def generate_refined_faces(coord_min, coord_max, interface_locations,
 # VISUALISATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def plot_solution(T_mat, T_rad, r_centers, z_centers, time_value, save_prefix,
+def plot_solution(T_mat, T_rad, T_col, r_centers, z_centers, time_value, save_prefix,
                   r_edges=None, z_edges=None, T_bc=None):
     """Separate colourmap figures for material T and radiation T.
 
@@ -248,9 +345,13 @@ def plot_solution(T_mat, T_rad, r_centers, z_centers, time_value, save_prefix,
 
     vmin = T_INIT
 
-    cbar_labels = {'material': 'T (keV)', 'radiation': r'$T_\mathrm{r}$ (keV)'}
+    cbar_labels = {
+        'material': 'T (keV)',
+        'radiation': r'$T_\mathrm{r}$ (keV)',
+        'color': r'$T_\mathrm{c}$ (keV)',
+    }
 
-    for T_field, tag in [(T_mat, 'material'), (T_rad, 'radiation')]:
+    for T_field, tag in [(T_mat, 'material'), (T_rad, 'radiation'), (T_col, 'color')]:
         vmax = np.ceil(T_field.max() * 100) / 100.0
         if T_bc is not None:
             vmax = min(vmax, 1.1 * T_bc)
@@ -280,15 +381,16 @@ def plot_solution(T_mat, T_rad, r_centers, z_centers, time_value, save_prefix,
         print(f'    Saved {fname}')
 
 
-def plot_fiducial_history(times, fiducial_data, fiducial_data_rad, mesh_tag):
-    """Temperature vs time at fiducial monitor points (mat and rad)."""
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=False)
+def plot_fiducial_history(times, fiducial_data, fiducial_data_rad, fiducial_data_col,
+                          mesh_tag, out_dir='.'):
+    """Temperature vs time at fiducial monitor points (mat, rad, colour)."""
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5), sharey=False)
     colors = plt.cm.tab10(np.linspace(0, 1, len(fiducial_data)))
 
     for ax, data_dict, ylabel in zip(
         axes,
-        [fiducial_data, fiducial_data_rad],
-        ['Material Temperature (keV)', 'Radiation Temperature (keV)'],
+        [fiducial_data, fiducial_data_rad, fiducial_data_col],
+        ['Material Temperature (keV)', 'Radiation Temperature (keV)', 'Color Temperature (keV)'],
     ):
         for (label, vals), c in zip(data_dict.items(), colors):
             ax.plot(times, vals, label=label, color=c)
@@ -300,7 +402,7 @@ def plot_fiducial_history(times, fiducial_data, fiducial_data_rad, mesh_tag):
 
     fig.suptitle(f'Crooked Pipe MG-IMC — {mesh_tag}', fontsize=11)
     fig.tight_layout()
-    fname = f'crooked_pipe_mg_imc_fiducial_{mesh_tag}.png'
+    fname = os.path.join(out_dir, f'crooked_pipe_mg_imc_fiducial_{mesh_tag}.png')
     fig.savefig(fname, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f'    Saved {fname}')
@@ -367,7 +469,7 @@ def _plot_intermediate_spectra(spectra_snapshots, spectrum_times, energy_edges,
         print(f'    Saved {outname}')
 
 
-def plot_material_layout(r_centers, z_centers, run_tag, r_edges=None, z_edges=None):
+def plot_material_layout(r_centers, z_centers, run_tag, r_edges=None, z_edges=None, out_dir='.'):
     """Quick sanity-check plot of the thick/thin material map."""
     R, Z = np.meshgrid(r_centers, z_centers, indexing='ij')
     rho = material_density(R, Z)
@@ -395,12 +497,12 @@ def plot_material_layout(r_centers, z_centers, run_tag, r_edges=None, z_edges=No
     ax.set_ylabel('r (cm)')
     ax.set_title('Material density')
     fig.tight_layout()
-    fname = f'crooked_pipe_mg_imc_material_{run_tag}.png'
+    fname = os.path.join(out_dir, f'crooked_pipe_mg_imc_material_{run_tag}.png')
     fig.savefig(fname, dpi=120, bbox_inches='tight')
     plt.close(fig)
 
 
-def save_snapshot(state, t, save_prefix, energy_edges, r_edges, z_edges, T_bc=None):
+def save_snapshot(state, t, save_prefix, energy_edges, r_edges, z_edges, T_col_2d=None, T_bc=None):
     """Save 2D field arrays at an output time to NPZ — same format as diffusion snapshots.
 
     Writes {save_prefix}_snapshot_t_{t:.5f}ns.npz with keys matching the diffusion
@@ -418,6 +520,7 @@ def save_snapshot(state, t, save_prefix, energy_edges, r_edges, z_edges, T_bc=No
         snap_file,
         T_2d=state.temperature,
         T_rad_2d=state.radiation_temperature,
+        T_col_2d=(T_col_2d if T_col_2d is not None else np.full_like(state.temperature, np.nan)),
         phi_2d=phi_2d,
         Er_2d=Er_2d,
         E_r_groups_3d=E_r_groups_3d,
@@ -482,7 +585,7 @@ def _deserialize_state(data):
 
 
 def save_checkpoint(path, state, step_count, current_dt, times, fiducial_data,
-                    fiducial_data_rad, output_times_saved, metadata):
+                    fiducial_data_rad, fiducial_data_col, output_times_saved, metadata):
     """Persist full simulation state so the run can be resumed after a crash."""
     payload = {
         'checkpoint_version':    CHECKPOINT_VERSION,
@@ -492,6 +595,7 @@ def save_checkpoint(path, state, step_count, current_dt, times, fiducial_data,
         'times':                 list(times),
         'fiducial_data':         {k: list(v) for k, v in fiducial_data.items()},
         'fiducial_data_rad':     {k: list(v) for k, v in fiducial_data_rad.items()},
+        'fiducial_data_col':     {k: list(v) for k, v in fiducial_data_col.items()},
         'output_times_saved':    list(output_times_saved),
         'metadata':              metadata,
         'np_random_state':       np.random.get_state(),
@@ -522,6 +626,7 @@ def load_checkpoint(path):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def main(
+    mode='standard',
     n_groups=10,
     output_times=None,
     nr=60,
@@ -529,12 +634,15 @@ def main(
     dt_initial=1e-4,
     dt_max=0.01,
     dt_increase_factor=1.1,
-    Ntarget=20000,
-    Nboundary=20000,
+    Ntarget=None,
+    Nboundary=None,
     Ntotal=0,
     Ntotal_T_floor=0.0,
+    particle_budget_fmin=None,
     T_emit_floor=0.0,
-    Nmax=100000,
+    Nmax=None,
+    Nmax_growth=None,
+    Nmax_final=None,
     bc_t_start=0.05,
     bc_t_end=0.5,
     bc_ramp_time=20.0,
@@ -552,6 +660,8 @@ def main(
 
     Parameters
     ----------
+    mode : {'quick', 'standard', 'publication'}
+        Particle-count preset. Explicit CLI overrides still take precedence.
     n_groups : int
         Number of energy groups.
     output_times : list of float
@@ -564,10 +674,12 @@ def main(
         Maximum time step (ns).
     dt_increase_factor : float
         Factor by which dt grows each step (no output hit).
-    Ntarget : int
+    Ntarget : int or None
         Target emission particles per step (used when Ntotal=0).
-    Nboundary : int
+        If None, taken from *mode* preset.
+    Nboundary : int or None
         Boundary source particles per step (used when Ntotal=0).
+        If None, taken from *mode* preset.
     Ntotal : int
         If > 0, override Ntarget/Nboundary and split this total budget
         between boundary and material emission proportional to the energy
@@ -577,9 +689,16 @@ def main(
         (keV) are excluded from the material emission estimate so that a cold
         bulk domain does not dilute the boundary share.  Set to
         ``1.1 * T_INIT`` (or similar) to ignore unheated material.
-        Clamp is always applied: f_bc is restricted to [0.1, 0.9].
-    Nmax : int
-        Maximum census particles after combing.
+    particle_budget_fmin : float or None
+        Minimum fraction per source channel in Ntotal mode. For a two-channel
+        split (boundary/material), this is clamped to [0, 0.5]. If None,
+        taken from *mode* preset.
+    Nmax : int or None
+        Initial census cap after combing. If None, taken from *mode* preset.
+    Nmax_growth : int or None
+        Census-cap growth per step. If None, taken from *mode* preset.
+    Nmax_final : int or None
+        Maximum census cap reached by growth. If None, taken from *mode* preset.
     bc_t_start : float
         Boundary temperature at t=0 (keV).
     bc_t_end : float
@@ -608,11 +727,58 @@ def main(
 
     t_final = max(output_times)
 
+    # Mode-based particle presets (same pattern used by dilute-sphere scripts).
+    mode_params = {
+        'quick': {
+            'Ntarget': 20_000,
+            'Nboundary': 20_000,
+            'Nmax_init': 100_000,
+            'Nmax_growth': 10_000,
+            'Nmax_final': 500_000,
+        },
+        'standard': {
+            'Ntarget': 200_000,
+            'Nboundary': 200_000,
+            'Nmax_init': 1_000_000,
+            'Nmax_growth': 50_000,
+            'Nmax_final': 5_000_000,
+        },
+        'publication': {
+            'Ntarget': 1_000_000,
+            'Nboundary': 1_000_000,
+            'Nmax_init': 5_000_000,
+            'Nmax_growth': 200_000,
+            'Nmax_final': 30_000_000,
+        },
+    }
+    if mode not in mode_params:
+        raise ValueError(f"Unknown mode {mode!r}; choose from {list(mode_params)}")
+    p = mode_params[mode]
+    if Ntarget is None:
+        Ntarget = p['Ntarget']
+    if Nboundary is None:
+        Nboundary = p['Nboundary']
+    if Nmax is None:
+        Nmax = p['Nmax_init']
+    if Nmax_growth is None:
+        Nmax_growth = p['Nmax_growth']
+    if Nmax_final is None:
+        Nmax_final = p['Nmax_final']
+    if particle_budget_fmin is None:
+        particle_budget_fmin = 0.1
+
+    Ntarget = int(Ntarget)
+    Nboundary = int(Nboundary)
+    Nmax = int(Nmax)
+    Nmax_growth = int(Nmax_growth)
+    Nmax_final = int(Nmax_final)
+    particle_budget_fmin = float(np.clip(particle_budget_fmin, 0.0, 0.5))
+    if Nmax_final < Nmax:
+        Nmax_final = Nmax
+
     # ── Energy groups ────────────────────────────────────────────────────────
-    # Range [1e-4 keV, 10 keV] on a log scale — matches the diffusion reference.
-    # np.logspace takes base-10 exponents, so first arg must be log10(1e-4) = -4,
-    # NOT 1e-4 (which would give 10^(1e-4) ≈ 1.0 keV as the lower edge).
-    energy_edges = np.logspace(-4, 1, n_groups + 1)
+    # Range [5e-3 keV, 10 keV] on a log scale 
+    energy_edges = np.logspace(np.log10(5e-3), np.log10(10), n_groups + 1)
 
     # ── Mesh construction ────────────────────────────────────────────────────
     mesh_tag = 'refined' if use_refined_mesh else 'uniform'
@@ -668,25 +834,34 @@ def main(
         for g in range(n_groups)
     ]
 
-    # ── Run tag and checkpoint filename ──────────────────────────────────────
+    # ── Output directory, run tag, and checkpoint filename ───────────────────
     run_tag = f'{n_groups}g_{mesh_tag}_{nr_actual}x{nz_actual}'
+    out_tag = f'imc_{n_groups}g_{mode}_{mesh_tag}_{nr_actual}x{nz_actual}'
+    out_dir = os.path.join('results', 'crooked_pipe_multigroup_imc', out_tag)
+    os.makedirs(out_dir, exist_ok=True)
     if checkpoint_file is None:
-        checkpoint_file = f'crooked_pipe_mg_imc_checkpoint_{run_tag}.pkl'
+        checkpoint_file = os.path.join(out_dir, 'checkpoint.pkl')
 
     # ── Print run summary ─────────────────────────────────────────────────────
     print('=' * 72)
     print('CROOKED PIPE — MULTIGROUP IMC  2D Cylindrical (r-z)')
     print('=' * 72)
+    print(f'  mode      = {mode}')
     print(f'  n_groups  = {n_groups}')
     print(f'  mesh      = {nr_actual} x {nz_actual}  ({mesh_tag})')
     if Ntotal > 0:
         floor_str = f', T_floor={Ntotal_T_floor:.4g} keV' if Ntotal_T_floor > 0 else ''
-        print(f'  Ntotal    = {Ntotal}  (energy-proportional split{floor_str}),  Nmax = {Nmax}')
+        print(f'  Ntotal    = {Ntotal}  (energy-proportional split{floor_str}), '
+              f'Nmax = {Nmax} -> {Nmax_final} (growth {Nmax_growth}/step)')
+        print(f'  split fmin= {particle_budget_fmin:.3f}  '
+              f'(each channel >= {100.0 * particle_budget_fmin:.1f}% of Ntotal)')
     else:
-        print(f'  Ntarget   = {Ntarget},  Nboundary = {Nboundary},  Nmax = {Nmax}')
+        print(f'  Ntarget   = {Ntarget},  Nboundary = {Nboundary}, '
+              f'Nmax = {Nmax} -> {Nmax_final} (growth {Nmax_growth}/step)')
     print(f'  dt_init   = {dt_initial} ns,  dt_max = {dt_max} ns,  growth = {dt_increase_factor}')
     print(f'  T_bc ramp : {bc_t_start} → {bc_t_end} keV over {bc_ramp_time} ns')
     print(f'  output_times: {output_times}  (t_final={t_final} ns)')
+    print(f'  output dir: {out_dir}')
     print(f'  checkpoint: {checkpoint_file}')
     print()
     print('  Boundary condition type: SURFACE blackbody source (NOT volumetric)')
@@ -701,7 +876,8 @@ def main(
     print('=' * 72)
 
     # ── Material layout plot ──────────────────────────────────────────────────
-    plot_material_layout(r_centers, z_centers, run_tag, r_edges=r_edges, z_edges=z_edges)
+    plot_material_layout(r_centers, z_centers, run_tag,
+                         r_edges=r_edges, z_edges=z_edges, out_dir=out_dir)
 
     # ── Boundary temperature ramp ────────────────────────────────────────────
     def boundary_temperature(t):
@@ -784,19 +960,28 @@ def main(
         times            = list(payload['times'])
         fiducial_data    = {k: list(v) for k, v in payload['fiducial_data'].items()}
         fiducial_data_rad= {k: list(v) for k, v in payload['fiducial_data_rad'].items()}
+        fiducial_data_col= payload.get('fiducial_data_col')
+        if fiducial_data_col is None:
+            fiducial_data_col = {label: [T_INIT] * len(times) for label in fiducial_points}
+        else:
+            fiducial_data_col = {k: list(v) for k, v in fiducial_data_col.items()}
         output_times_saved = set(payload['output_times_saved'])
         np.random.set_state(payload['np_random_state'])
         random.setstate(payload['py_random_state'])
+        Nmax_current = int(saved_meta.get('Nmax_current', Nmax))
         print(f'  Resumed at t = {state.time:.6e} ns, step {step_count}')
         print(f'  Census particles: {len(state.weights)}')
         print(f'  Current dt: {current_dt:.6e} ns')
+        print(f'  Current Nmax: {Nmax_current}')
     else:
         step_count        = 0
         current_dt        = dt_initial
         times             = [0.0]
         fiducial_data     = {label: [T_INIT] for label in fiducial_points}
         fiducial_data_rad = {label: [T_INIT] for label in fiducial_points}
+        fiducial_data_col = {label: [T_INIT] for label in fiducial_points}
         output_times_saved = set()
+        Nmax_current      = int(Nmax)
         print('\nStarting from initial conditions.')
         # Print fiducial cell mapping for reference
         for label, (ii, jj) in fiducial_indices.items():
@@ -808,6 +993,7 @@ def main(
         print(f'Periodic checkpoints every {checkpoint_every} steps')
 
     metadata = {
+        'mode':            mode,
         'n_groups':        n_groups,
         'nr':              nr_actual,
         'nz':              nz_actual,
@@ -816,8 +1002,12 @@ def main(
         'Nboundary':       Nboundary,
         'Ntotal':          Ntotal,
         'Ntotal_T_floor':  Ntotal_T_floor,
+        'particle_budget_fmin': particle_budget_fmin,
         'T_emit_floor':    T_emit_floor,
         'Nmax':            Nmax,
+        'Nmax_growth':     Nmax_growth,
+        'Nmax_final':      Nmax_final,
+        'Nmax_current':    int(Nmax_current),
         'bc_t_start':      bc_t_start,
         'bc_t_end':        bc_t_end,
         'bc_ramp_time':    bc_ramp_time,
@@ -828,16 +1018,19 @@ def main(
 
     # ── Time evolution ────────────────────────────────────────────────────────
     print('\nTime stepping …')
-    print(f"{'Time':>12}  {'N_par':>8}  {'E_mat':>14}  {'E_rad':>14}")
-    print('-' * 56)
+    print(f"{'Step':>6}  {'t (ns)':>9}  {'N_part':>8}  {'N_bc':>7}  "
+          f"{'E_bc':>12}  {'E_tot':>12}  {'E_int':>12}  {'E_rad':>12}  "
+          f"{'Resid':>10}")
+    print('-' * 105)
 
     wall_start = _time.perf_counter()
     dE = energy_edges[1:] - energy_edges[:-1]          # group widths (keV)
     # Reload previously accumulated spectra if the file already exists
     # (handles restarts where the in-memory lists are lost between runs).
-    _spectra_file = f'crooked_pipe_mg_imc_{run_tag}_spectra.npz'
+    _spectra_file = os.path.join(out_dir, f'crooked_pipe_mg_imc_{run_tag}_spectra.npz')
     fiducial_spectra_snapshots: list = []
     spectrum_output_times: list = []
+    Tc_col_2d = np.full_like(state.temperature, np.nan)
     if os.path.exists(_spectra_file):
         try:
             _prev = np.load(_spectra_file, allow_pickle=True)
@@ -866,15 +1059,17 @@ def main(
         _t_now[0] = float(state.time)
 
         # --- advance one step ---
+        t0_step = _time.perf_counter()
         state, info = step(
             state=state,
             Ntarget=Ntarget,
             Nboundary=Nboundary,
             Ntotal=Ntotal,
             Ntotal_T_floor=Ntotal_T_floor,
+            particle_budget_fmin=particle_budget_fmin,
             T_emit_floor=T_emit_floor,
             Nsource=0,
-            Nmax=Nmax,
+            Nmax=Nmax_current,
             T_boundary=T_boundary,
             dt=step_dt,
             edges1=r_edges,
@@ -888,7 +1083,16 @@ def main(
             geometry='rz',
             max_events_per_particle=max_events_per_particle,
             boundary_source_func=boundary_source_func,
+            Nmax_growth=Nmax_growth,
+            Nmax_final=Nmax_final,
         )
+        wall_step = _time.perf_counter() - t0_step
+
+        if 'Nmax_next' in info:
+            Nmax_current = int(info['Nmax_next'])
+        else:
+            Nmax_current = min(Nmax_current + Nmax_growth, Nmax_final)
+        metadata['Nmax_current'] = int(Nmax_current)
 
         step_count += 1
 
@@ -897,15 +1101,21 @@ def main(
         for label, (ii, jj) in fiducial_indices.items():
             fiducial_data[label].append(float(state.temperature[ii, jj]))
             fiducial_data_rad[label].append(float(state.radiation_temperature[ii, jj]))
+            if state.radiation_energy_by_group is not None:
+                tc = fit_color_temperature(state.radiation_energy_by_group[:, ii, jj], energy_edges)
+            else:
+                tc = np.nan
+            fiducial_data_col[label].append(float(tc) if np.isfinite(tc) else np.nan)
 
         # ── Per-step diagnostic ────────────────────────────────────────────
         e_mat = info.get('total_internal_energy', float('nan'))
         e_rad = info.get('total_radiation_energy', float('nan'))
+        e_tot = info.get('total_energy', float('nan'))
+        e_res = info.get('energy_residual', float('nan'))
         n_par = info.get('N_particles', len(state.weights))
         actual_be   = info.get('boundary_emission', float('nan'))
         T_bc_now    = boundary_temperature(_t_now[0])
-        expected_be = A_RAD * C_LIGHT / 4.0 * T_bc_now**4 * (np.pi * _r_source**2) * step_dt
-        ratio_be    = actual_be / expected_be if expected_be > 0 else float('nan')
+        n_bc = info.get('N_boundary', 0)
         split_str = ''
         if Ntotal > 0:
             nb_act = info.get('N_boundary', 0)
@@ -914,32 +1124,43 @@ def main(
             emt = info.get('E_material_est', float('nan'))
             frac = ebc / (ebc + emt) if (ebc + emt) > 0 else float('nan')
             split_str = f'  [split] Nbc={nb_act} Nmat={nt_act} f_bc={frac:.3f}'
-        print(f'{state.time:10.6f} ns  N={n_par:8d}  '
-              f'E_mat={e_mat:.4e}  E_rad={e_rad:.4e}  '
-              f'[BC] T_bc={T_bc_now:.4f}keV  '
-              f'expected={expected_be:.4e}  actual={actual_be:.4e}  '
-              f'ratio={ratio_be:.3f}{split_str}')
+        print(f"{step_count:>6d}  {state.time:>9.5f}  "
+              f"{n_par:>8d}  {n_bc:>7d}  "
+              f"{actual_be:>12.5e}  {e_tot:>12.5e}  {e_mat:>12.5e}  {e_rad:>12.5e}  "
+              f"{e_res:>10.3e}  [{wall_step:.1f}s]{split_str}")
 
         # Output at requested times
         for tout in output_times:
             if tout not in output_times_saved and abs(state.time - tout) < 1e-9:
                 print(f'  >> Snapshot at t = {state.time:.4f} ns')
+                if state.radiation_energy_by_group is not None:
+                    n_g, nr_loc, nz_loc = state.radiation_energy_by_group.shape
+                    Tc_col_2d = np.full((nr_loc, nz_loc), np.nan)
+                    for ii in range(nr_loc):
+                        for jj in range(nz_loc):
+                            Tc_col_2d[ii, jj] = fit_color_temperature(
+                                state.radiation_energy_by_group[:, ii, jj], energy_edges
+                            )
+                else:
+                    Tc_col_2d = np.full_like(state.temperature, np.nan)
                 plot_solution(
                     state.temperature.copy(),
                     state.radiation_temperature.copy(),
+                    Tc_col_2d.copy(),
                     r_centers, z_centers,
                     state.time,
-                    save_prefix=f'crooked_pipe_mg_imc_{run_tag}',
+                    save_prefix=os.path.join(out_dir, f'crooked_pipe_mg_imc_{run_tag}'),
                     r_edges=r_edges,
                     z_edges=z_edges,
                     T_bc=T_bc_now,
                 )
                 save_snapshot(
                     state, state.time,
-                    save_prefix=f'crooked_pipe_mg_imc_{run_tag}',
+                    save_prefix=os.path.join(out_dir, f'crooked_pipe_mg_imc_{run_tag}'),
                     energy_edges=energy_edges,
                     r_edges=r_edges,
                     z_edges=z_edges,
+                    T_col_2d=Tc_col_2d,
                     T_bc=T_bc_now,
                 )
                 output_times_saved.add(tout)
@@ -955,10 +1176,10 @@ def main(
                     _plot_intermediate_spectra(
                         fiducial_spectra_snapshots, spectrum_output_times,
                         energy_edges, list(fiducial_indices.keys()),
-                        f'crooked_pipe_mg_imc_{run_tag}',
+                        os.path.join(out_dir, f'crooked_pipe_mg_imc_{run_tag}'),
                     )
                     # Save accumulated spectra NPZ (same format as diffusion version)
-                    _sf = f'crooked_pipe_mg_imc_{run_tag}_spectra.npz'
+                    _sf = os.path.join(out_dir, f'crooked_pipe_mg_imc_{run_tag}_spectra.npz')
                     np.savez_compressed(
                         _sf,
                         output_times=np.array(spectrum_output_times),
@@ -969,23 +1190,25 @@ def main(
                     )
                     print(f'    Saved spectra:  {_sf}')
                 # Intermediate fiducial history plot
-                plot_fiducial_history(times, fiducial_data, fiducial_data_rad, run_tag)
+                plot_fiducial_history(times, fiducial_data, fiducial_data_rad,
+                                     fiducial_data_col, run_tag, out_dir=out_dir)
                 # Save accumulated fiducial history NPZ (same format as diffusion version)
                 _fid_labels = list(fiducial_data.keys())
-                _fhf = f'crooked_pipe_mg_imc_{run_tag}_fiducial_history.npz'
+                _fhf = os.path.join(out_dir, f'crooked_pipe_mg_imc_{run_tag}_fiducial_history.npz')
                 np.savez_compressed(
                     _fhf,
                     times=np.array(times),
                     labels=np.array(_fid_labels),
                     T_mat=np.array([fiducial_data[l] for l in _fid_labels]),
                     T_rad=np.array([fiducial_data_rad[l] for l in _fid_labels]),
+                    T_col=np.array([fiducial_data_col[l] for l in _fid_labels]),
                 )
                 print(f'    Saved fiducial: {_fhf}')
                 # Always checkpoint at output times
                 print(f'  >> Checkpoint -> {checkpoint_file}')
                 save_checkpoint(
                     checkpoint_file, state, step_count, current_dt,
-                    times, fiducial_data, fiducial_data_rad,
+                    times, fiducial_data, fiducial_data_rad, fiducial_data_col,
                     output_times_saved, metadata,
                 )
                 break
@@ -999,7 +1222,7 @@ def main(
             print(f'  >> Periodic checkpoint (step {step_count}) -> {checkpoint_file}')
             save_checkpoint(
                 checkpoint_file, state, step_count, current_dt,
-                times, fiducial_data, fiducial_data_rad,
+                times, fiducial_data, fiducial_data_rad, fiducial_data_col,
                 output_times_saved, metadata,
             )
 
@@ -1010,13 +1233,14 @@ def main(
     times_arr = np.array(times)
     fiducial_data    = {k: np.array(v) for k, v in fiducial_data.items()}
     fiducial_data_rad= {k: np.array(v) for k, v in fiducial_data_rad.items()}
+    fiducial_data_col= {k: np.array(v) for k, v in fiducial_data_col.items()}
 
     wall_elapsed = _time.perf_counter() - wall_start
     print(f'\nFinished. t_final = {state.time:.4f} ns, '
           f'{step_count} steps, wall = {wall_elapsed:.1f} s')
 
     # Save final solution
-    npz_file = f'crooked_pipe_mg_imc_solution_{run_tag}.npz'
+    npz_file = os.path.join(out_dir, f'crooked_pipe_mg_imc_solution_{run_tag}.npz')
     np.savez(
         npz_file,
         r_centers=r_centers,
@@ -1024,10 +1248,12 @@ def main(
         energy_edges=energy_edges,
         T_final=state.temperature,
         Tr_final=state.radiation_temperature,
+        Tc_final=Tc_col_2d,
         times=times_arr,
         wall_elapsed_s=np.float64(wall_elapsed),
         **{f'fid_{k}': v for k, v in fiducial_data.items()},
         **{f'fid_rad_{k}': v for k, v in fiducial_data_rad.items()},
+        **{f'fid_col_{k}': v for k, v in fiducial_data_col.items()},
     )
     print(f'Saved solution: {npz_file}')
 
@@ -1040,20 +1266,22 @@ def main(
     fiducial_labels_list = list(fiducial_data.keys())
     fid_T_mat = np.array([fiducial_data[lbl]     for lbl in fiducial_labels_list])
     fid_T_rad = np.array([fiducial_data_rad[lbl] for lbl in fiducial_labels_list])
-    fid_npz = f'crooked_pipe_mg_imc_fiducial_{run_tag}.npz'
+    fid_T_col = np.array([fiducial_data_col[lbl] for lbl in fiducial_labels_list])
+    fid_npz = os.path.join(out_dir, f'crooked_pipe_mg_imc_fiducial_{run_tag}.npz')
     np.savez(
         fid_npz,
         times=times_arr,
         labels=np.array(fiducial_labels_list),
         T_mat=fid_T_mat,
         T_rad=fid_T_rad,
+        T_col=fid_T_col,
     )
     print(f'Saved fiducial history: {fid_npz}')
 
     # Save radiation spectrum at fiducial points for each output snapshot.
     # Array layout:  spectra[snapshot, point, group]  units: GJ/cm^3/keV
     if fiducial_spectra_snapshots:
-        spectra_npz = f'crooked_pipe_mg_imc_spectra_{run_tag}.npz'
+        spectra_npz = os.path.join(out_dir, f'crooked_pipe_mg_imc_spectra_{run_tag}.npz')
         np.savez(
             spectra_npz,
             output_times=np.array(spectrum_output_times),
@@ -1067,17 +1295,23 @@ def main(
     # Save final radiation energy by group if available
     if hasattr(state, 'radiation_energy_by_group') and state.radiation_energy_by_group is not None:
         np.save(
-            f'crooked_pipe_mg_imc_Erad_bygroup_{run_tag}.npy',
+            os.path.join(out_dir, f'crooked_pipe_mg_imc_Erad_bygroup_{run_tag}.npy'),
             state.radiation_energy_by_group,
         )
 
     print('\nPlotting fiducial history …')
-    plot_fiducial_history(times_arr, fiducial_data, fiducial_data_rad, run_tag)
+    plot_fiducial_history(times_arr, fiducial_data, fiducial_data_rad,
+                         fiducial_data_col, run_tag, out_dir=out_dir)
 
     print('\nFinal fiducial temperatures:')
     for label, (ii, jj) in fiducial_indices.items():
+        if state.radiation_energy_by_group is not None:
+            tc_fin = fit_color_temperature(state.radiation_energy_by_group[:, ii, jj], energy_edges)
+        else:
+            tc_fin = np.nan
         print(f'  {label}: T_mat={state.temperature[ii,jj]:.4f}'
-              f'  T_rad={state.radiation_temperature[ii,jj]:.4f}  keV')
+              f'  T_rad={state.radiation_temperature[ii,jj]:.4f}'
+              f'  T_col={tc_fin:.4f}  keV')
 
     return state
 
@@ -1091,6 +1325,9 @@ def parse_arguments():
         description='Run the multigroup IMC crooked-pipe test problem.',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument('--mode', choices=['quick', 'standard', 'publication'],
+                        default='standard',
+                        help='Particle-count preset (Ntarget/Nboundary/Nmax growth)')
     parser.add_argument('--n-groups',   type=int,   default=10,
                         help='Number of energy groups')
     parser.add_argument('--nr',         type=int,   default=60,
@@ -1103,10 +1340,12 @@ def parse_arguments():
                         help='Maximum time step (ns)')
     parser.add_argument('--dt-growth',  type=float, default=1.1,
                         help='Time-step growth factor per step')
-    parser.add_argument('--Ntarget',    type=int,   default=200000,
-                        help='Target emission particles per step (ignored when --Ntotal > 0)')
-    parser.add_argument('--Nboundary',  type=int,   default=200000,
-                        help='Boundary source particles per step (ignored when --Ntotal > 0)')
+    parser.add_argument('--Ntarget',    type=int,   default=None,
+                        help='Override mode target emission particles per step '
+                            '(ignored when --Ntotal > 0)')
+    parser.add_argument('--Nboundary',  type=int,   default=None,
+                        help='Override mode boundary source particles per step '
+                            '(ignored when --Ntotal > 0)')
     parser.add_argument('--Ntotal',     type=int,   default=0,
                         help='If > 0, total new particles per step split proportionally '
                              'between boundary and material emission by energy. '
@@ -1115,13 +1354,20 @@ def parse_arguments():
                         help='When using --Ntotal, exclude material cells at or below '
                              'this temperature (keV) from the emission estimate. '
                              'E.g. set to 1.1*T_init=0.011 to ignore cold material. '
-                             'Split is always clamped to [0.1, 0.9].')
+                             'Split floor is controlled by --particle-budget-fmin.')
+    parser.add_argument('--particle-budget-fmin', type=float, default=None,
+                        help='Minimum split fraction for each source channel in '
+                             'Ntotal mode (default 0.1; clamped to [0, 0.5]).')
     parser.add_argument('--T-emit-floor', type=float, default=0.1,
                         help='Emission temperature floor (keV). Cells with T below this '
                              'value contribute zero emission energy and no particles are '
                              'sourced from them. Default 0 (disabled).')
-    parser.add_argument('--Nmax',       type=int,   default=1000000,
-                        help='Maximum census particles after combing')
+    parser.add_argument('--Nmax',       type=int,   default=None,
+                        help='Override mode initial census cap after combing')
+    parser.add_argument('--Nmax-growth', type=int,  default=None,
+                        help='Override mode census-cap growth per step')
+    parser.add_argument('--Nmax-final', type=int,   default=None,
+                        help='Override mode maximum census cap')
     parser.add_argument('--bc-t-start', type=float, default=0.5,
                         help='Boundary source T at t=0 (keV)')
     parser.add_argument('--bc-t-end',   type=float, default=0.5,
@@ -1161,6 +1407,7 @@ if __name__ == '__main__':
         output_times = [0.001, 0.01, 0.1, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
 
     main(
+        mode=args.mode,
         n_groups=args.n_groups,
         output_times=output_times,
         nr=args.nr,
@@ -1172,8 +1419,11 @@ if __name__ == '__main__':
         Nboundary=args.Nboundary,
         Ntotal=args.Ntotal,
         Ntotal_T_floor=args.Ntotal_T_floor,
+        particle_budget_fmin=args.particle_budget_fmin,
         T_emit_floor=args.T_emit_floor,
         Nmax=args.Nmax,
+        Nmax_growth=args.Nmax_growth,
+        Nmax_final=args.Nmax_final,
         bc_t_start=args.bc_t_start,
         bc_t_end=args.bc_t_end,
         bc_ramp_time=args.bc_ramp_time,

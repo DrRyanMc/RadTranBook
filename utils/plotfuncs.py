@@ -33,14 +33,14 @@ font_imc = fm.FontProperties(
     size=12,
     variant="small-caps",
 )
-def hide_spines(intx=False,inty=False,cbar_ax=None):
+def hide_spines(intx=False,inty=False,cbar_ax=None, fsize=12):
     """Hides the top and rightmost axis spines from view for all active
     figures and their respective axes."""
 
     # Retrieve a list of all current figures.
     figures = [x for x in matplotlib._pylab_helpers.Gcf.get_all_fig_managers()]
     if (plt.gca().get_legend()):
-        plt.setp(plt.gca().get_legend().get_texts(), fontproperties=font, size=12) 
+        plt.setp(plt.gca().get_legend().get_texts(), fontproperties=font, size=fsize) 
     for figure in figures:
         # Get all Axis instances related to the figure.
         for ax in figure.canvas.figure.get_axes():
@@ -61,18 +61,20 @@ def hide_spines(intx=False,inty=False,cbar_ax=None):
            # ax.xaxis.set_major_formatter(mtick.FuncFormatter(lambda v,_: ("10$^{%d}$" % math.log(v,10)) ))
             for label in ax.get_xticklabels() :
                 label.set_fontproperties(font)
+                label.set_fontsize(fsize)
             for label in ax.get_yticklabels() :
                 label.set_fontproperties(font)
+                label.set_fontsize(fsize)
             #ax.set_xticklabels(ax.get_xticks(), fontproperties = font)
-            ax.set_xlabel(ax.get_xlabel(), fontproperties = font)
-            ax.set_ylabel(ax.get_ylabel(), fontproperties = font)
-            ax.set_title(ax.get_title(), fontproperties = font)
+            ax.set_xlabel(ax.get_xlabel(), fontproperties = font, fontsize=fsize)
+            ax.set_ylabel(ax.get_ylabel(), fontproperties = font, fontsize=fsize)
+            ax.set_title(ax.get_title(), fontproperties = font, fontsize=fsize)
             if (inty):
                 ax.yaxis.set_major_formatter(mtick.FormatStrFormatter('%d'))
             if (intx):
                 ax.xaxis.set_major_formatter(mtick.FormatStrFormatter('%d'))
-def show(nm,a=0,b=0,cbar_ax=None, close_after=False):
-    hide_spines(a,b,cbar_ax)
+def show(nm,a=0,b=0,cbar_ax=None, close_after=False, font_size=12):
+    hide_spines(a,b,cbar_ax, fsize=font_size)
     #ax.xaxis.set_major_formatter(mtick.FuncFormatter(lambda v,_: ("10$^{%d}$" % math.log(v,10)) ))
     #plt.yticks([1,1e-2,1e-4,1e-6,1e-8,1e-10,1e-12], labels)
     #ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda v,_: ("10$^{%d}$" % math.log(v,10)) ))

@@ -296,6 +296,7 @@ class MultigroupDiffusionSolver1D:
                  dplanck_dT_funcs: Optional[List[Callable]] = None,
                  material_energy_func: Optional[Callable] = None,
                  inverse_material_energy_func: Optional[Callable] = None,
+                 enforce_streaming_R_floor: bool = False,
                  rho: float = 1.0,
                  cv: float = 1.0):
         """
@@ -365,6 +366,12 @@ class MultigroupDiffusionSolver1D:
         inverse_material_energy_func : callable or None
             Function T(e) inverse of material energy
             If None, uses T = e/(ρ·c_v)
+        enforce_streaming_R_floor : bool
+            If True and flux limiters are enabled, enforce a geometric
+            free-streaming floor on the limiter argument:
+                R_eff = max(R_computed, R_stream)
+            with R_stream = n_geom / (sigma_R * r), where n_geom is 0 for
+            planar, 1 for cylindrical, and 2 for spherical geometry.
         rho : float
             Material density (g/cm³)
         cv : float or callable
@@ -379,6 +386,7 @@ class MultigroupDiffusionSolver1D:
         self.geometry = geometry
         self.dt = dt
         self.rho = rho
+        self.enforce_streaming_R_floor = bool(enforce_streaming_R_floor)
         
         # Store cv as either scalar or function
         if callable(cv):
@@ -463,6 +471,12 @@ class MultigroupDiffusionSolver1D:
                         phi_avg = 0.5 * (phi_left + phi_right) + 1e-14
                         grad_phi = abs(phi_right - phi_left) / (dx + 1e-14)
                         R = grad_phi / (sigma_R * phi_avg + 1e-14)
+
+                        if self.enforce_streaming_R_floor:
+                            n_geom = 2.0 if self.geometry == 'spherical' else (1.0 if self.geometry == 'cylindrical' else 0.0)
+                            if n_geom > 0.0 and r > 0.0:
+                                R_stream = n_geom / (sigma_R * r + 1e-14)
+                                R = max(R, R_stream)
                         
                         # Track R values (only store a few for diagnostics)
                         if len(R_values_seen) < 5 and R > 0.5:
@@ -481,6 +495,37 @@ class MultigroupDiffusionSolver1D:
                     make_flux_limited_diff(base_diffusion_func, limiter_func, rosseland_func, g)
                 )
             diffusion_coeff_funcs = diffusion_coeff_funcs_wrapped
+
+        def make_boundary_flux_limited_diff(operator_solver, limiter, ross_func, bc_func, side):
+            def boundary_flux_limited_diff(T_cell, phi_cell, r_boundary):
+                sigma_R = ross_func(T_cell, r_boundary)
+                A_bc, B_bc, C_bc = bc_func(phi_cell, r_boundary)
+                dx_half = 0.5 * operator_solver.dr_cells[0 if side == 'left' else -1]
+                dx_half = max(dx_half, 1e-14)
+
+                if abs(B_bc) < 1e-14:
+                    phi_boundary = C_bc / A_bc if abs(A_bc) > 1e-14 else phi_cell
+                else:
+                    denom = A_bc - (B_bc / dx_half)
+                    if abs(denom) > 1e-14:
+                        phi_boundary = (C_bc - (B_bc / dx_half) * phi_cell) / denom
+                    else:
+                        phi_boundary = phi_cell
+
+                phi_avg = 0.5 * (phi_cell + phi_boundary) + 1e-14
+                grad_phi = abs(phi_cell - phi_boundary) / dx_half
+                R = grad_phi / (sigma_R * phi_avg + 1e-14)
+                lambda_val = limiter(R)
+                D_limited = lambda_val / (sigma_R + 1e-14)
+
+                # For Robin boundaries with B != 0, keep D_boundary at least on
+                # the BC diffusion scale so source injection is not artificially
+                # quenched when R is very large in a cold first cell.
+                if abs(B_bc) > 1e-14:
+                    return max(D_limited, abs(B_bc))
+                return D_limited
+
+            return boundary_flux_limited_diff
         
         for g in range(n_groups):
             solver = DiffusionOperatorSolver1D(

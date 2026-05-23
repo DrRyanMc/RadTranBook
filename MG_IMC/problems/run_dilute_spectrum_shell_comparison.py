@@ -400,6 +400,8 @@ def run_diffusion(args):
           f"{' + Larsen FL' if use_fl else ''}{src_note}")
     print(f"  Groups: {n_groups},  Cells: {n_cells},  dt: {dt} ns")
     print(f"  Method tag: {args.method}")
+    if use_fl:
+        print(f"  Streaming-limit R floor: {'on' if args.enforce_streaming_R_floor else 'off'}")
     print("=" * 72)
 
     cv_vol_ref = cv_vol  # capture before lambda
@@ -426,6 +428,7 @@ def run_diffusion(args):
         inverse_material_energy_func=lambda e: np.where(
             cv_vol_ref > 0, e / np.where(cv_vol_ref > 0, cv_vol_ref, 1.0), T_INIT
         ),
+        enforce_streaming_R_floor=(use_fl and args.enforce_streaming_R_floor),
     )
 
     # Cold initial condition: T = T_INIT everywhere, equilibrium E_r
@@ -676,6 +679,12 @@ def parse_args():
     p.add_argument(
         "--dt", type=float, default=DT_DEFAULT, metavar="DT",
         help=f"Nominal timestep in ns (default: {DT_DEFAULT}).",
+    )
+    p.add_argument(
+        "--enforce_streaming_R_floor",
+        action="store_true",
+        help="For FL methods, enforce R >= n_geom/(sigma_R*r) in limiter evaluation."
+             " Disabled by default.",
     )
     p.add_argument(
         "--gray_opacity", choices=["planck", "rosseland"], default="planck",

@@ -91,21 +91,21 @@ def main():
     plot_specs = [
         (
             "U1", ref_U1,
-            r"$U_1$ (Group 1 Radiation)",
-            fr"Group 1: $\sigma_1 = {sigma_1:.4f}$ cm$^{{-1}}$ (thin)",
+            r"$U_1$ (group 1 radiation)",
+            fr"group 1: $\sigma_1 = {sigma_1:.4f}$ cm$^{{-1}}$ (thin)",
             (1e-3, 1e0),
             "test_su_olson_picket_fence_imc_U1.pdf",
         ),
         (
             "U2", ref_U2,
-            r"$U_2$ (Group 2 Radiation)",
-            fr"Group 2: $\sigma_2 = {sigma_2:.4f}$ cm$^{{-1}}$ (thick)",
+            r"$U_2$ (group 2 radiation)",
+            fr"group 2: $\sigma_2 = {sigma_2:.4f}$ cm$^{{-1}}$ (thick)",
             (1e-4, 1e0),
             "test_su_olson_picket_fence_imc_U2.pdf",
         ),
         (
             "V", ref_V,
-            r"$V$ (Material Energy)",
+            r"$V$ (material energy)",
             "Material Energy Density",
             (1e-5, 1e0),
             "test_su_olson_picket_fence_imc_V.pdf",
@@ -116,7 +116,7 @@ def main():
     # Generate figures
     # ------------------------------------------------------------------
     for quantity_key, ref_data, y_label, title, y_limits, output_file in plot_specs:
-        fig, ax = plt.subplots(1, 1, figsize=(6, 5))
+        fig, ax = plt.subplots(1, 1, figsize=(6*1.618, 6))
 
         for idx, tau_val in enumerate(tau_list):
             if tau_val not in fields:
@@ -143,13 +143,13 @@ def main():
             ax.plot(
                 ref_data[ref_mask, 0], ref_data[ref_mask, tau_col],
                 marker="s", markerfacecolor=color, markeredgecolor="black",
-                markersize=6, markeredgewidth=1.5, linestyle="", alpha=0.8,
+                markersize=8, markeredgewidth=2.0, linestyle="", alpha=0.8,
                 label=fr"Ref $\tau={tau_val:.1f}$",
             )
 
         ax.axvline(x=source_region, color="gray", linestyle="--", alpha=0.3, linewidth=1)
-        ax.set_xlabel("Position (mean-free paths)", fontsize=12)
-        ax.set_ylabel(y_label, fontsize=12)
+        ax.set_xlabel("position (mean-free paths)", fontsize=18)
+        ax.set_ylabel(y_label, fontsize=18)
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.grid(True, alpha=0.3, which="both")
@@ -157,7 +157,7 @@ def main():
         ax.set_ylim(y_limits)
 
         fig.tight_layout()
-        show(output_file, close_after=True)
+        show(output_file, font_size=17, close_after=True)
 
 
 if __name__ == "__main__":

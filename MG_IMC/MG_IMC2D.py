@@ -1641,6 +1641,7 @@ def step(
     emission_fractions=None,
     Ntotal=0,
     Ntotal_T_floor=0.0,
+    particle_budget_fmin=0.1,
     T_emit_floor=0.0,
     Nmax_growth=0,
     Nmax_final=None,
@@ -1737,9 +1738,10 @@ def step(
         else:
             frac_bc = 0.5
 
-        # Clamp split: each source gets at least 10 % of Ntotal so neither
-        # channel is starved when one energy strongly dominates.
-        frac_bc = float(np.clip(frac_bc, 0.1, 0.9))
+        # Clamp split so each active channel gets at least fmin of Ntotal.
+        # For a two-way split, fmin must be in [0, 0.5].
+        fmin = float(np.clip(particle_budget_fmin, 0.0, 0.5))
+        frac_bc = float(np.clip(frac_bc, fmin, 1.0 - fmin))
 
         Nboundary = int(round(Ntotal * frac_bc))
         Ntarget   = Ntotal - Nboundary
@@ -2055,6 +2057,7 @@ def step(
         "N_particles": len(weights),
         "N_boundary": Nboundary,
         "N_target": Ntarget,
+        "particle_budget_fmin": float(np.clip(particle_budget_fmin, 0.0, 0.5)),
         "E_boundary_est": E_bc_est,
         "E_material_est": E_mat_est,
         "total_energy": total_energy,
