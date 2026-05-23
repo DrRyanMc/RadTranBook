@@ -64,13 +64,13 @@ BASE_ARGS="--n-groups ${N_GROUPS} \
 # ─── Run (restart if checkpoint exists) ────────────────────────────────────
 if [ -f "$CHECKPOINT" ]; then
     echo "Restarting from checkpoint: $CHECKPOINT"
-    python3 MG_IMC/crooked_pipe_multigroup_imc.py \
+    python3 MG_IMC/problems/crooked_pipe_multigroup_imc.py \
         $BASE_ARGS \
         --restart-file "$CHECKPOINT" \
         --checkpoint-file "$CHECKPOINT" > "$CHECKPOINT.log" 2>&1
 else
     echo "Starting fresh run."
-    python3 MG_IMC/crooked_pipe_multigroup_imc.py \
+    python3 MG_IMC/problems/crooked_pipe_multigroup_imc.py \
         $BASE_ARGS \
         --checkpoint-file "$CHECKPOINT" > "$CHECKPOINT.log" 2>&1
 fi
