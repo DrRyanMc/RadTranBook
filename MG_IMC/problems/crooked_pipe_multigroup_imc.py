@@ -24,10 +24,11 @@ Geometry — U-shaped (reversed) crooked pipe:
   Thick wall (0.5 <= r < 1.0, z <= 2.5): separates the two legs
   Outer wall (r >= 1.5):         always thick
 
+    
 Initial condition: T = Tr = T_INIT = 0.01 keV everywhere
 Fiducial monitor points:
-    (r=0.0,  z=0.25),  (r=0.0,  z=2.25), (r=0.75, z=3.05),
-    (r=1.25, z=2.25),  (r=1.25, z=0.25)
+    (r=0.0,  z=0.25),  (r=0.0,  z=2.25), (r=1.25, z=3.5),
+    (r=0.0, z=4.25),  (r=0.0, z=6.75)
 """
 
 import argparse
@@ -67,7 +68,7 @@ from plotfuncs import show
 # ── Problem constants ────────────────────────────────────────────────────────
 T_INIT    = 0.05   # keV — cold initial condition
 RHO_THICK = 2.0    # g/cm^3 — optically thick regions
-RHO_THIN  = 0.01   # g/cm^3 — optically thin regions
+RHO_THIN  = 0.1 #0.01   # g/cm^3 — optically thin regions
 CV_MASS   = 0.05   # GJ/(g*keV) — mass-specific heat capacity
 
 CHECKPOINT_VERSION = 1
@@ -221,6 +222,8 @@ def specific_heat(T, r, z):
     """Volumetric heat capacity rho * c_v  (GJ / cm^3 / keV)."""
     scalar_input = np.isscalar(T) and np.isscalar(r) and np.isscalar(z)
     rho = np.atleast_1d(material_density(r, z))
+    #if rho < 1, make result = 1.0 to avoid zero-heat-capacity issues in the thin regions.
+    rho = np.where(rho < 1.0e-2, 1.0/CV_MASS, rho)
     result = rho * CV_MASS
     if scalar_input:
         return float(result.flat[0])
@@ -654,8 +657,8 @@ def main(
     mode='standard',
     n_groups=10,
     output_times=None,
-    nr=60,
-    nz=210,
+    nr=40,
+    nz=140,
     dt_initial=1e-4,
     dt_max=0.01,
     dt_increase_factor=1.1,
@@ -803,7 +806,7 @@ def main(
 
     # ── Energy groups ────────────────────────────────────────────────────────
     # Range [5e-3 keV, 10 keV] on a log scale 
-    energy_edges = np.logspace(np.log10(5e-3), np.log10(10), n_groups + 1)
+    energy_edges = np.logspace(np.log10(1e-2), np.log10(10), n_groups + 1)
 
     # ── Mesh construction ────────────────────────────────────────────────────
     mesh_tag = 'refined' if use_refined_mesh else 'uniform'
@@ -935,12 +938,13 @@ def main(
 
     # ── Fiducial monitor points ───────────────────────────────────────────────
     fiducial_points = {
-        'r=0.00 z=0.25': (0.00, 0.25),   # inner leg, near inlet
-        'r=0.00 z=2.25': (0.00, 2.25),   # inner leg, below bend
-        'r=0.75 z=3.05': (0.75, 3.05),   # outer leg, near top
-        'r=1.25 z=2.25': (1.25, 2.25),   # outer leg, mid-height
-        'r=1.25 z=0.25': (1.25, 0.25),   # outer leg, near exit
+        'Point 1: r=0.0, z=0.25': (0.0, 0.25),
+        'Point 2: r=0.0, z=2.75': (0.0, 2.75),
+        'Point 3: r=1.25, z=3.5': (1.25, 3.5),
+        'Point 4: r=0.0, z=4.25': (0.0, 4.25),
+        'Point 5: r=0.0, z=6.75': (0.0, 6.75)
     }
+    
     fiducial_indices = {}
     for label, (rv, zv) in fiducial_points.items():
         ii = int(np.argmin(np.abs(r_centers - rv)))
@@ -961,6 +965,7 @@ def main(
         energy_edges,
         eos_func,
         inv_eos_func,
+        T_emit_floor=T_emit_floor,
         geometry='rz',
     )
 
@@ -1356,9 +1361,9 @@ def parse_arguments():
                         help='Particle-count preset (Ntarget/Nboundary/Nmax growth)')
     parser.add_argument('--n-groups',   type=int,   default=10,
                         help='Number of energy groups')
-    parser.add_argument('--nr',         type=int,   default=60,
+    parser.add_argument('--nr',         type=int,   default=40,
                         help='Coarse r-direction cells')
-    parser.add_argument('--nz',         type=int,   default=210,
+    parser.add_argument('--nz',         type=int,   default=140,
                         help='Coarse z-direction cells')
     parser.add_argument('--dt-initial', type=float, default=1e-4,
                         help='Initial time step (ns)')
@@ -1384,7 +1389,7 @@ def parse_arguments():
     parser.add_argument('--particle-budget-fmin', type=float, default=None,
                         help='Minimum split fraction for each source channel in '
                              'Ntotal mode (default 0.1; clamped to [0, 0.5]).')
-    parser.add_argument('--T-emit-floor', type=float, default=0.1,
+    parser.add_argument('--T-emit-floor', type=float, default=0.075,
                         help='Emission temperature floor (keV). Cells with T below this '
                              'value contribute zero emission energy and no particles are '
                              'sourced from them. Default 0 (disabled).')

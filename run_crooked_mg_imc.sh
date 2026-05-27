@@ -48,7 +48,7 @@ cd ~/RadTranBook
 
 BASE_ARGS="--n-groups ${N_GROUPS} \
            --use-refined-mesh \
-           --Ntotal-T-floor .1 \
+           --Ntotal-T-floor 0.075 \
            --T-emit-floor 0.075 \
            --mode publication
            --dt-initial 0.01 \

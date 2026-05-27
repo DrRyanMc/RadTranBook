@@ -86,7 +86,7 @@ _LABEL_MAP = [
     ("gray_fl",                 "Gray Diff+FL"),
     ("gray_src",                "Gray Diffusion ($T_S$)"),
     ("gray",                    "Gray Diffusion"),
-    ("mg_fl",                   "MG Diff+FL"),
+    ("mg_fl",                   "MG FLD"),
     ("mg",                      "MG Diffusion"),
     ("imc",                     "MG IMC"),
 ]
@@ -99,8 +99,8 @@ def _auto_label(results_dir):
             parts = tag.split("_")
             ng = next((p.rstrip("g") for p in parts
                        if p.endswith("g") and p[:-1].isdigit()), None)
-            if ng and "MG" in label:
-                return label + f" ({ng}g)"
+            # if ng and "MG" in label:
+            #     return label + f" ({ng}g)"
             return label
     return _infer_method_label(results_dir)
 
@@ -192,8 +192,8 @@ def fig_temperature_profiles(datasets, out_dir, snap_time=1.0,
     # Analytic free-streaming reference
     r_cav  = np.linspace(R_S, R_1, 200)
     Tr_fs  = free_streaming_Tr(r_cav)
-    ax.semilogy(r_cav, Tr_fs, "k:", lw=1.4,
-                label=r"$T_S\sqrt{R_S/2r}$ (free-stream)")
+    ax.semilogy(r_cav, Tr_fs, "k:", lw=1.4),
+#                label=r"$T_S\sqrt{R_S/2r}$ (free-stream)")
 
     ax.axvline(R_1, color="0.55", lw=1.0, ls="--")
     ax.axvline(R_2, color="0.55", lw=1.0, ls="--")
@@ -204,8 +204,9 @@ def fig_temperature_profiles(datasets, out_dir, snap_time=1.0,
     t_label = f"{actual_t:.3f}" if actual_t is not None else f"{snap_time:.3f}"
     ax.set_xlabel("r  (cm)", fontproperties=font)
     ax.set_ylabel("Temperature  (keV)", fontproperties=font)
-    ax.set_title(f"Temperature profiles,  t = {t_label} ns", fontproperties=font)
-    ax.legend(prop=font, fontsize=8.5)
+    #ax.set_title(f"Temperature profiles,  t = {t_label} ns", fontproperties=font)
+    ax.legend(loc="upper right", prop=font, fontsize=8.5, 
+              ncol=1, facecolor="white", edgecolor="none", framealpha=1.0, bbox_to_anchor=(0.65, 1.03))
 
     stem = f"fig2_temperature_profiles_t{snap_time:.3f}ns"
     show(os.path.join(out_dir, stem + ".pdf"))

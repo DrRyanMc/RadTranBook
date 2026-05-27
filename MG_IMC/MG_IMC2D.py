@@ -989,7 +989,7 @@ def _transport_particles_2d_mg(
     return dep_cell, si_cell, boundary_loss, boundary_loss_by_group, boundary_loss_by_side, stats
 
 
-def _equilibrium_sample_xy_mg(N, Tr, x_edges, y_edges, energy_edges):
+def _equilibrium_sample_xy_mg(N, Tr, x_edges, y_edges, energy_edges, T_emit_floor=0.0):
     """Sample particles in equilibrium for XY geometry with multigroup."""
     nx = len(x_edges) - 1
     ny = len(y_edges) - 1
@@ -997,7 +997,10 @@ def _equilibrium_sample_xy_mg(N, Tr, x_edges, y_edges, energy_edges):
 
     # Total equilibrium energy
     volumes = _cell_volumes_xy(x_edges, y_edges)
-    E_eq = __a * np.sum(Tr**4 * volumes)
+    energy_per_zone = __a * Tr**4 * volumes
+    if T_emit_floor > 0.0:
+        energy_per_zone[Tr < T_emit_floor] = 0.0
+    E_eq = np.sum(energy_per_zone)
 
     if N <= 0 or E_eq <= 0.0:
         return (
@@ -1009,9 +1012,9 @@ def _equilibrium_sample_xy_mg(N, Tr, x_edges, y_edges, energy_edges):
     weights = np.full(N, E_eq / N)
 
     # Sample positions uniformly by volume — F-order so flat=i+j*nx matches % nx, // nx
-    vol_flat = volumes.flatten(order='F')
-    probs = vol_flat / np.sum(vol_flat)
-    flat_indices = np.random.choice(len(vol_flat), size=N, p=probs)
+    energy_flat = energy_per_zone.flatten(order='F')
+    probs = energy_flat / np.sum(energy_flat)
+    flat_indices = np.random.choice(len(energy_flat), size=N, p=probs)
     
     cell_i = flat_indices % nx
     cell_j = flat_indices // nx
@@ -1040,14 +1043,17 @@ def _equilibrium_sample_xy_mg(N, Tr, x_edges, y_edges, energy_edges):
     return weights, ux, uy, times, x, y, groups
 
 
-def _equilibrium_sample_rz_mg(N, Tr, r_edges, z_edges, energy_edges):
+def _equilibrium_sample_rz_mg(N, Tr, r_edges, z_edges, energy_edges, T_emit_floor=0.0):
     """Sample particles in equilibrium for RZ geometry with multigroup."""
     nr = len(r_edges) - 1
     nz = len(z_edges) - 1
     n_groups = len(energy_edges) - 1
 
     volumes = _cell_volumes_rz(r_edges, z_edges)
-    E_eq = __a * np.sum(Tr**4 * volumes)
+    energy_per_zone = __a * Tr**4 * volumes
+    if T_emit_floor > 0.0:
+        energy_per_zone[Tr < T_emit_floor] = 0.0
+    E_eq = np.sum(energy_per_zone)
 
     if N <= 0 or E_eq <= 0.0:
         return (
@@ -1059,9 +1065,9 @@ def _equilibrium_sample_rz_mg(N, Tr, r_edges, z_edges, energy_edges):
     weights = np.full(N, E_eq / N)
 
     # F-order so flat=i+j*nr matches % nr, // nr
-    vol_flat = volumes.flatten(order='F')
-    probs = vol_flat / np.sum(vol_flat)
-    flat_indices = np.random.choice(len(vol_flat), size=N, p=probs)
+    energy_flat = energy_per_zone.flatten(order='F')
+    probs = energy_flat / np.sum(energy_flat)
+    flat_indices = np.random.choice(len(energy_flat), size=N, p=probs)
     
     cell_i = flat_indices % nr
     cell_j = flat_indices // nr
@@ -1410,6 +1416,7 @@ def init_simulation(
     eos,
     inv_eos,
     Ntarget_ic=None,
+    T_emit_floor=0.0,
     geometry="xy",
 ):
     """Initialize multigroup particle arrays and material state for 2D IMC.
@@ -1434,6 +1441,9 @@ def init_simulation(
         Temperature as function of energy
     Ntarget_ic : int, optional
         Number of initial condition particles
+    T_emit_floor : float, optional
+        Suppress initial-condition radiation particles from cells with
+        Tr_init < T_emit_floor (keV).
     geometry : str
         'xy' or 'rz'
     
@@ -1453,9 +1463,15 @@ def init_simulation(
 
     N_ic = Ntarget if Ntarget_ic is None else Ntarget_ic
     if geometry == "xy":
-        p = _equilibrium_sample_xy_mg(N_ic, Tr_init, edges1, edges2, energy_edges)
+        p = _equilibrium_sample_xy_mg(
+            N_ic, Tr_init, edges1, edges2, energy_edges,
+            T_emit_floor=T_emit_floor,
+        )
     elif geometry == "rz":
-        p = _equilibrium_sample_rz_mg(N_ic, Tr_init, edges1, edges2, energy_edges)
+        p = _equilibrium_sample_rz_mg(
+            N_ic, Tr_init, edges1, edges2, energy_edges,
+            T_emit_floor=T_emit_floor,
+        )
     else:
         raise ValueError(f"Unknown geometry: {geometry}")
 
