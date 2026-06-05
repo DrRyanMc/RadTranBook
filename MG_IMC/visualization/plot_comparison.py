@@ -207,7 +207,7 @@ def fig_temperature_profiles(datasets, out_dir, snap_time=1.0,
     #ax.set_title(f"Temperature profiles,  t = {t_label} ns", fontproperties=font)
     ax.legend(loc="upper right", prop=font, fontsize=8.5, 
               ncol=1, facecolor="white", edgecolor="none", framealpha=1.0, bbox_to_anchor=(0.65, 1.03))
-
+    
     stem = f"fig2_temperature_profiles_t{snap_time:.3f}ns"
     show(os.path.join(out_dir, stem + ".pdf"))
     fig.savefig(os.path.join(out_dir, stem + ".png"), dpi=150, bbox_inches="tight")
@@ -304,6 +304,7 @@ def fig_Er_loglog(datasets, out_dir, snap_time=1.0):
 
     for i, (label, snapshots) in enumerate(datasets):
         col = _color(i)
+        ltype = _LS_CYCLE[i % len(_LS_CYCLE)]  
         try:
             snap = pick_snapshot(snapshots, snap_time)
         except RuntimeError as e:
@@ -314,7 +315,7 @@ def fig_Er_loglog(datasets, out_dir, snap_time=1.0):
         r  = snap["r_centers"]
         Er = snap["E_rad"]
 
-        ax.loglog(r, Er, color=col, lw=1.8, label=label)
+        ax.loglog(r, Er, color=col, lw=1.8, ls=ltype, label=label)
 
         if first_cav_Er is None:
             mask = r < R_1
@@ -325,8 +326,7 @@ def fig_Er_loglog(datasets, out_dir, snap_time=1.0):
     # Analytic free-streaming reference (normalised to first dataset)
     r_cav = np.linspace(R_S, R_1, 200)
     Er_fs = free_streaming_Er(r_cav)
-    ax.loglog(r_cav, Er_fs, "k--", lw=1.3,
-              label=r"$(R_S/r)^2$ free-stream")
+    #ax.loglog(r_cav, Er_fs, "k--", lw=1.3,              label=r"$(R_S/r)^2$ free-stream")
 
     ax.axvline(R_1, color="0.55", lw=1.0, ls="--")
     ax.axvline(R_2, color="0.55", lw=1.0, ls="--")
@@ -337,9 +337,10 @@ def fig_Er_loglog(datasets, out_dir, snap_time=1.0):
     t_label = f"{actual_t:.3f}" if actual_t is not None else f"{snap_time:.3f}"
     ax.set_xlabel("r  (cm)", fontproperties=font)
     ax.set_ylabel(r"$E_r$  (GJ / cm³)", fontproperties=font)
-    ax.set_title(f"Radiation energy density,  t = {t_label} ns", fontproperties=font)
-    ax.legend(prop=font, fontsize=8.5)
-
+    ax.set_ylim(bottom=1e-12,top=1e-2)  # better view of low-energy tail
+    ax.set_xlim(1,31)
+    #ax.set_title(f"Radiation energy density,  t = {t_label} ns", fontproperties=font)
+    ax.legend(prop=font, fontsize=8.5, edgecolor="none", facecolor="white", framealpha=1.0)
     stem = f"fig4_Er_loglog_t{snap_time:.3f}ns"
     show(os.path.join(out_dir, stem + ".pdf"))
     fig.savefig(os.path.join(out_dir, stem + ".png"), dpi=150, bbox_inches="tight")

@@ -149,7 +149,7 @@ def Bg_multigroup(energy_edges, T):
 def powerlaw_opacity_at_energy(T, E, rho=1.0):
     """Power-law opacity sigma_a(T,E) = 10 * rho * T^(-1/2) * E^(-3)."""
     T_use = np.maximum(T, 1e-2)
-    return np.minimum(10.0 * rho * (T_use ** -0.5) * (E ** -3.0), 1e14)
+    return np.minimum(10.0 * rho * (T_use ** -0.5) * (E ** -3.0), 1e8)
 
 
 def make_powerlaw_opacity_func(E_low, E_high, rho=1.0):

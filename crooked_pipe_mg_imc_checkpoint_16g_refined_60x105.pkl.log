@@ -1,0 +1,636 @@
+Generating refined mesh …
+  Refined mesh: 94 x 212 cells
+========================================================================
+CROOKED PIPE — MULTIGROUP IMC  2D Cylindrical (r-z)
+========================================================================
+  mode      = publication
+  n_groups  = 16
+  mesh      = 94 x 212  (refined)
+  Ntarget   = 1000000,  Nboundary = 1000000, Nmax = 5000000 -> 30000000 (growth 200000/step)
+  dt_init   = 0.01 ns,  dt_max = 0.1 ns,  growth = 1.025
+  T_bc ramp : 0.5 → 0.5 keV over 20.0 ns
+  output_times: [0.0001, 0.00013257113655901095, 0.00017575106248547912, 0.00023299518105153718, 0.00030888435964774815, 0.00040949150623804275, 0.0005428675439323859, 0.0007196856730011522, 0.0009540954763499944, 0.0012648552168552957, 0.0016768329368110084, 0.0022229964825261957, 0.0029470517025518097, 0.003906939937054617, 0.005179474679231213, 0.006866488450042998, 0.009102981779915217, 0.012067926406393288, 0.015998587196060572, 0.021209508879201904, 0.028117686979742307, 0.03727593720314938, 0.04941713361323833, 0.0655128556859551, 0.08685113737513521, 0.1151395399326447, 0.15264179671752334, 0.20235896477251575, 0.2682695795279725, 0.35564803062231287, 0.47148663634573945, 0.6250551925273969, 0.8286427728546842, 1.0985411419875573, 1.4563484775012443, 1.9306977288832496, 2.559547922699533, 3.39322177189533, 4.498432668969444, 5.963623316594637, 7.9060432109077015, 10.481131341546853, 13.89495494373136, 18.420699693267164, 24.420530945486497, 32.3745754281764, 42.91934260128778, 56.89866029018293, 75.43120063354607, 100.0]  (t_final=100.0 ns)
+  output dir: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212
+  checkpoint: crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+
+  Boundary condition type: SURFACE blackbody source (NOT volumetric)
+    Face: z=0 (zmin), r < 0.5 cm
+    Source area: pi*0.5^2 = 0.7854 cm^2
+    Emission weight per particle = (a*c/4) * T_bc^4 * A_cell * dt  (Planck half-flux)
+    All other boundary faces: vacuum (open)
+    Left (rmin): reflecting (cylindrical axis symmetry)
+    Expected boundary power at t=0: 5.0477e-03 GJ/ns
+========================================================================
+[MG_IMC2D] Loading Numba JIT cache ...
+[MG_IMC2D] JIT cache loaded in 0.4 s
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+Time	N	Total Energy	Total Internal Energy	Total Radiation Energy	Boundary Emission	Boundary Outgoing	Source Emission	Residual
+==============================================================================================================================================================
+0.000000e+00	0	3.689408e-01	3.689408e-01	0.000000e+00	0.000000e+00	0.000000e+00	0.000000e+00	0.000000e+00
+
+Starting from initial conditions.
+  Fiducial Point 1: r=0.0, z=0.25 -> cell (0,4) at (r=0.025, z=0.225)
+  Fiducial Point 2: r=0.0, z=2.75 -> cell (0,72) at (r=0.025, z=2.725)
+  Fiducial Point 3: r=1.25, z=3.5 -> cell (60,105) at (r=1.225, z=3.475)
+  Fiducial Point 4: r=0.0, z=4.25 -> cell (0,138) at (r=0.025, z=4.225)
+  Fiducial Point 5: r=0.0, z=6.75 -> cell (0,206) at (r=0.025, z=6.725)
+
+Checkpoint file: crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+Periodic checkpoints every 20 steps
+
+Time stepping …
+  Step     t (ns)    N_part     N_bc          E_bc         E_tot         E_int         E_rad       Resid
+---------------------------------------------------------------------------------------------------------
+[MG_IMC2D] Using 16 threads for transport
+     1    0.00010   4999870  1000000   5.04772e-07   3.68941e-01   3.68941e-01   4.99426e-07  -1.742e-11  [3.0s]
+  >> Snapshot at t = 0.0001 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00010ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00010ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00010ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00010ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+     2    0.00013   5198818  1000000   1.64410e-07   3.68941e-01   3.68941e-01   6.60139e-07  -1.555e-10  [4.2s]
+  >> Snapshot at t = 0.0001 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00013ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00013ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00013ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00013ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+     3    0.00018   5399350  1000000   2.17960e-07   3.68942e-01   3.68941e-01   8.72225e-07  -1.128e-10  [3.0s]
+  >> Snapshot at t = 0.0002 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00018ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00018ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00018ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00018ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+     4    0.00023   5598604  1000000   2.88953e-07   3.68942e-01   3.68941e-01   1.15147e-06  -2.970e-10  [3.9s]
+  >> Snapshot at t = 0.0002 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00023ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00023ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00023ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00023ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+     5    0.00031   5798059  1000000   3.83068e-07   3.68942e-01   3.68941e-01   1.51869e-06  -5.230e-10  [2.8s]
+  >> Snapshot at t = 0.0003 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00031ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00031ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00031ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00031ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+     6    0.00041   6000536  1000000   5.07837e-07   3.68943e-01   3.68941e-01   2.00198e-06   1.578e-10  [3.0s]
+  >> Snapshot at t = 0.0004 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00041ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00041ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00041ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00041ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+     7    0.00054   6198648  1000000   6.73245e-07   3.68944e-01   3.68941e-01   2.63474e-06  -6.069e-10  [3.1s]
+  >> Snapshot at t = 0.0005 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00054ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00054ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00054ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00054ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+     8    0.00072   6400142  1000000   8.92529e-07   3.68944e-01   3.68941e-01   3.46344e-06   4.019e-11  [5.4s]
+  >> Snapshot at t = 0.0007 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00072ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00072ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00072ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00072ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+     9    0.00095   6597870  1000000   1.18324e-06   3.68946e-01   3.68941e-01   4.54335e-06  -1.524e-09  [3.6s]
+  >> Snapshot at t = 0.0010 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00095ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00095ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00095ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00095ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    10    0.00126   6800833  1000000   1.56863e-06   3.68947e-01   3.68941e-01   5.95166e-06   6.537e-10  [3.9s]
+  >> Snapshot at t = 0.0013 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00126ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00126ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00126ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00126ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    11    0.00168   7001765  1000000   2.07955e-06   3.68949e-01   3.68941e-01   7.78030e-06   1.849e-09  [4.3s]
+  >> Snapshot at t = 0.0017 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00168ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00168ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00168ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00168ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    12    0.00222   7201303  1000000   2.75688e-06   3.68952e-01   3.68942e-01   1.01449e-05   1.692e-09  [6.3s]
+  >> Snapshot at t = 0.0022 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00222ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00222ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00222ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00222ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    13    0.00295   7398354  1000000   3.65483e-06   3.68956e-01   3.68942e-01   1.31890e-05  -3.128e-09  [5.8s]
+  >> Snapshot at t = 0.0029 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00295ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00295ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00295ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00295ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    14    0.00391   7601440  1000000   4.84525e-06   3.68960e-01   3.68943e-01   1.71037e-05   2.956e-09  [7.1s]
+  >> Snapshot at t = 0.0039 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00391ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00391ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00391ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00391ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    15    0.00518   7799717  1000000   6.42340e-06   3.68967e-01   3.68945e-01   2.21026e-05  -1.167e-09  [7.0s]
+  >> Snapshot at t = 0.0052 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00518ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00518ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00518ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00518ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    16    0.00687   8001579  1000000   8.51558e-06   3.68975e-01   3.68947e-01   2.84676e-05   5.163e-09  [7.1s]
+  >> Snapshot at t = 0.0069 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00687ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00687ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00687ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00687ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    17    0.00910   8197667  1000000   1.12892e-05   3.68986e-01   3.68949e-01   3.64830e-05  -1.114e-08  [7.8s]
+  >> Snapshot at t = 0.0091 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.00910ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.00910ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.00910ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.00910ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    18    0.01207   8401353  1000000   1.49662e-05   3.69000e-01   3.68954e-01   4.65702e-05   6.347e-09  [22.7s]
+  >> Snapshot at t = 0.0121 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.01207ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.01207ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.01207ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.01207ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    19    0.01600   8600268  1000000   1.98409e-05   3.69019e-01   3.68960e-01   5.90707e-05   2.157e-11  [29.5s]
+  >> Snapshot at t = 0.0160 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.01600ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.01600ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.01600ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.01600ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    20    0.02121   8801867  1000000   2.63033e-05   3.69043e-01   3.68969e-01   7.44054e-05   1.273e-08  [44.2s]
+  >> Snapshot at t = 0.0212 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.02121ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.02121ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.02121ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.02121ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py:444: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+  >> Periodic checkpoint (step 20) -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    21    0.02812   9000637  1000000   3.48706e-05   3.69074e-01   3.68981e-01   9.28691e-05   2.179e-09  [41.7s]
+  >> Snapshot at t = 0.0281 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.02812ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.02812ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.02812ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.02812ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    22    0.03728   9201845  1000000   4.62283e-05   3.69114e-01   3.68999e-01   1.14757e-04   1.660e-08  [63.8s]
+  >> Snapshot at t = 0.0373 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.03728ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.03728ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.03728ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.03728ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    23    0.04728   9398357  1000000   5.04772e-05   3.69157e-01   3.69022e-01   1.34126e-04  -3.320e-08  [75.5s]
+    24    0.04942   9599918  1000000   1.08082e-05   3.69166e-01   3.69035e-01   1.30795e-04  -8.753e-09  [15.0s]
+  >> Snapshot at t = 0.0494 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.04942ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.04942ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.04942ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.04942ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+    25    0.05967   9801268  1000000   5.17392e-05   3.69209e-01   3.69060e-01   1.49229e-04   5.912e-09  [64.6s]
+    26    0.06551   9999531  1000000   2.95076e-05   3.69233e-01   3.69082e-01   1.51396e-04  -2.086e-08  [35.8s]
+  >> Snapshot at t = 0.0655 ns
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_material_t_0.06551ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_radiation_t_0.06551ns.png
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_color_t_0.06551ns.png
+    Saved snapshot: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_snapshot_t_0.06551ns.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt1.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt2.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt3.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt4.pdf
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra_intermediate_pt5.pdf
+    Saved spectra:  results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_spectra.npz
+    Saved results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_fiducial_16g_refined_94x212.png
+    Saved fiducial: results/crooked_pipe_multigroup_imc/imc_16g_publication_refined_94x212/crooked_pipe_mg_imc_16g_refined_94x212_fiducial_history.npz
+  >> Checkpoint -> crooked_pipe_mg_imc_checkpoint_16g_refined_60x105.pkl
+Traceback (most recent call last):
+  File "/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py", line 1440, in <module>
+    main(
+  File "/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py", line 1240, in main
+    save_checkpoint(
+  File "/Users/rmcclarr/Dropbox/Papers/RadTranBook/MG_IMC/problems/crooked_pipe_multigroup_imc.py", line 635, in save_checkpoint
+    pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+KeyboardInterrupt
