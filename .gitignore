@@ -5,4 +5,5 @@
 *.pyc
 *.nbc
 *.nbi
+*.tmp
 __pycache__/**/*
