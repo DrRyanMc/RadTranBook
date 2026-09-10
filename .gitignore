@@ -6,4 +6,32 @@
 *.nbc
 *.nbi
 *.tmp
+.tmp_*
+*.zip
+*.log
+*.out
+*.aux
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.DS_Store
 __pycache__/**/*
+
+# Local environments and scratch output.
+/.venv*/
+/radtran312/
+/output/
+/tmp/
+
+# Private derivations and research notes must remain local and out of public releases.
+/private/
+/nonEquilibriumDiffusion/private/
+/IMC/private/
+/MG_IMC/private/
+/DiscreteOrdinates/private/
+/DiscreteOrdinates2D/private/
+
+# Source figures for the Compton IMC write-up.
+!MG_IMC/doc/figures/
+!MG_IMC/doc/figures/*.pdf
+!MG_IMC/doc/figures/*.png

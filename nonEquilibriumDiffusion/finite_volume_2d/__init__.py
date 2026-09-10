@@ -1,0 +1,1 @@
+"""Two-dimensional finite-volume non-equilibrium diffusion method."""

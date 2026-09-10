@@ -12,7 +12,7 @@ visualization
     Figure generation scripts for all benchmark problems.
 """
 
-from .MG_IMC2D import (
+from .fleck_cummings.src.MG_IMC2D import (
     # Main simulation functions
     init_simulation,
     step,
@@ -30,7 +30,7 @@ from .MG_IMC2D import (
     _sample_group_piecewise_constant,
 )
 
-from .mg_utils import (
+from .fleck_cummings.src.mg_utils import (
     # Energy group creation
     create_log_energy_groups,
     create_linear_energy_groups,
@@ -68,8 +68,8 @@ from .mg_utils import (
 
 # Sub-packages (imported lazily so that missing optional deps don't break the
 # top-level import).
-from . import problems      # noqa: F401
-from . import visualization # noqa: F401
+from .fleck_cummings import problems      # noqa: F401
+from .shared import visualization          # noqa: F401
 
 __version__ = "1.0.0"
 __author__ = "Based on IMC2D by Ryan McClarren"

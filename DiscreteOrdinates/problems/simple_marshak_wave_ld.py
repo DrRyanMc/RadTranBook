@@ -1,3 +1,10 @@
+import sys
+from pathlib import Path
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
+
 """
 Simple Marshak wave — Linear Discontinuous S_N solver.
 
@@ -22,8 +29,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import sn_solver_ld
-from sn_solver_ld import ac, a, c
+import DiscreteOrdinates.src.sn_solver_ld
+from DiscreteOrdinates.src.sn_solver_ld import ac, a, c
 
 
 def setup_and_run(I=50, N=8, L=0.20, tfinal=10.0,

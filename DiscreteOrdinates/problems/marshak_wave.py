@@ -1,3 +1,10 @@
+import sys
+from pathlib import Path
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
+
 """
 Inhomogeneous Marshak wave problem (Test 1).
 
@@ -20,7 +27,7 @@ from numba import jit, float64
 
 # Add parent directory so we can import the solver
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import sn_solver
+import DiscreteOrdinates.src.sn_solver
 
 
 def setup_and_run(I=200, order=3, N=8, tfinal=1.0,

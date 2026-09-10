@@ -1,0 +1,2588 @@
+"""MG_IMC2D.py - Multigroup Implicit Monte Carlo in 2D Cartesian (xy) and cylindrical (r-z).
+
+This module extends IMC2D.py to support multigroup radiation transport. Each particle
+carries a group index and a frequency within that group. The implementation follows
+the multigroup IMC equations with the Fleck factor:
+
+f = 1 / (1 + β c σ_P Δt)
+
+where σ_P is the Planck-weighted opacity, and the transport equation is:
+
+(1/c ∂/∂t + Ω·∇ + σ_g) I_g = (f σ_g b_g★ c a T_n^4) / 4π 
+                                + ((1-f) σ_g b_g★ / σ_P) Σ_g' σ_g' φ_g' / 4π + Q_g / 4π
+
+Key multigroup features:
+- Energy groups defined by energy_edges array
+- Particles carry group index and frequency
+- Initial conditions and boundary sources: frequency sampled from mixture of Gammas
+  (equations 10.23-10.27 in textbook)
+- Material emission and effective scatter: group sampled from piecewise constant 
+  distribution proportional to σ_a,g b_g★ (equation 10.18)
+- Group-dependent opacities σ_a,g(T)
+- Planck function integrals B_g(T) computed via external library
+
+Units consistent with IMC2D:
+- distance: cm
+- time: ns
+- temperature: keV
+- energy: GJ
+- frequency: keV (photon energy)
+"""
+
+from dataclasses import dataclass
+from typing import Optional
+import math
+import sys
+import numpy as np
+
+try:
+    from .compton_kernel import compton_scatter_3d
+except ImportError:
+    from compton_kernel import compton_scatter_3d
+try:
+    from .kompaneets_imc import implicit_kompaneets_census_update
+except ImportError:
+    from kompaneets_imc import implicit_kompaneets_census_update
+import random
+import time as _time
+
+# Numba cache artifacts can embed top-level module names from script-style
+# execution. Provide stable aliases when imported as MG_IMC.MG_IMC2D.
+if "MG_IMC2D" not in sys.modules:
+    sys.modules["MG_IMC2D"] = sys.modules[__name__]
+if "compton_kernel" not in sys.modules:
+    try:
+        from . import compton_kernel as _compton_kernel_module
+        sys.modules["compton_kernel"] = _compton_kernel_module
+    except Exception:
+        pass
+
+try:
+    from numba import jit, prange, get_thread_id, get_num_threads
+except Exception:
+    # Fallback path when numba/llvmlite are unavailable.
+    def jit(*jit_args, **jit_kwargs):
+        def decorator(func):
+            if jit_kwargs.get("cache"):
+                return func
+            if jit_kwargs.get("parallel"):
+                return func
+            return func
+        return decorator
+
+    def prange(*args):
+        return range(*args)
+
+    def get_thread_id():
+        return 0
+
+    def get_num_threads():
+        return 1
+
+# Import Planck integral library for multigroup calculations
+try:
+    from planck_integrals import Bg, dBgdT, Bg_multigroup, dBgdT_multigroup
+    _PLANCK_AVAILABLE = True
+except ImportError:
+    print("Warning: planck_integrals module not found. Using gray approximations.")
+    _PLANCK_AVAILABLE = False
+    
+    def Bg(E_low, E_high, T):
+        """Gray approximation: B = σT⁴/(4π)"""
+        C_LIGHT = 29.98  # cm/ns
+        A_RAD = 0.01372  # GJ/(cm³·keV⁴)
+        return (C_LIGHT * A_RAD / 4) * T**4 / (4 * np.pi)
+    
+    def dBgdT(E_low, E_high, T):
+        """Gray approximation: dB/dT = 4σT³/(4π)"""
+        C_LIGHT = 29.98
+        A_RAD = 0.01372
+        return (C_LIGHT * A_RAD) * T**3 / (4 * np.pi)
+    
+    def Bg_multigroup(energy_edges, T):
+        """Gray approximation for all groups"""
+        C_LIGHT = 29.98
+        A_RAD = 0.01372
+        n_groups = len(energy_edges) - 1
+        total_B = (C_LIGHT * A_RAD / 4) * T**4 / (4 * np.pi)
+        return np.full(n_groups, total_B / n_groups)
+    
+    def dBgdT_multigroup(energy_edges, T):
+        """Gray approximation derivatives for all groups"""
+        C_LIGHT = 29.98
+        A_RAD = 0.01372
+        n_groups = len(energy_edges) - 1
+        total_dB = (C_LIGHT * A_RAD) * T**3 / (4 * np.pi)
+        return np.full(n_groups, total_dB / n_groups)
+
+__c = 29.98
+__a = 0.01372
+
+_PLANCK_N_MAX = 200
+_PLANCK_N_VALUES = np.arange(1, _PLANCK_N_MAX + 1, dtype=np.float64)
+_PLANCK_MIXTURE_CDF = np.cumsum((1.0 / _PLANCK_N_VALUES**4) / np.sum(1.0 / _PLANCK_N_VALUES**4))
+
+_GEOM_XY = 0
+_GEOM_RZ = 1
+
+_CROSS_NONE = 0
+_CROSS_I_PLUS = 1
+_CROSS_I_MINUS = 2
+_CROSS_J_PLUS = 3
+_CROSS_J_MINUS = 4
+
+_EVT_CENSUS = 0
+_EVT_BOUNDARY = 1
+_EVT_SCATTER = 2
+
+
+@dataclass
+class SimulationState2DMG:
+    """Mutable 2D multigroup IMC state passed between timesteps."""
+
+    weights: np.ndarray
+    dir1: np.ndarray
+    dir2: np.ndarray
+    times: np.ndarray
+    pos1: np.ndarray
+    pos2: np.ndarray
+    cell_i: np.ndarray
+    cell_j: np.ndarray
+    groups: np.ndarray  # Group index for each particle
+    photon_energies: np.ndarray  # Continuous packet photon energy (keV)
+
+    internal_energy: np.ndarray
+    temperature: np.ndarray
+    radiation_temperature: np.ndarray
+    radiation_energy_by_group: np.ndarray  # (n_groups, nx, ny) or (nx, ny, n_groups)
+
+    time: float
+    previous_total_energy: float
+    count: int = 0
+    radiation_energy_by_group_postcomb: Optional[np.ndarray] = None
+
+
+def _shape_from_edges(edges1, edges2):
+    return len(edges1) - 1, len(edges2) - 1
+
+
+def _cell_volumes_xy(x_edges, y_edges):
+    dx = np.diff(x_edges)
+    dy = np.diff(y_edges)
+    return dx[:, None] * dy[None, :]
+
+
+def _cell_volumes_rz(r_edges, z_edges):
+    dr2 = r_edges[1:] ** 2 - r_edges[:-1] ** 2
+    dz = np.diff(z_edges)
+    # Axisymmetric full 3D cell volume after revolution.
+    return np.pi * dr2[:, None] * dz[None, :]
+
+
+def _cell_volumes(edges1, edges2, geometry):
+    if geometry == "xy":
+        return _cell_volumes_xy(edges1, edges2)
+    if geometry == "rz":
+        return _cell_volumes_rz(edges1, edges2)
+    raise ValueError(f"Unknown geometry: {geometry}")
+
+
+def _locate_indices(pos1, pos2, edges1, edges2):
+    i = np.searchsorted(edges1, pos1, side="right") - 1
+    j = np.searchsorted(edges2, pos2, side="right") - 1
+    return i, j
+
+
+def _flatten_index(i, j, nx):
+    return i + nx * j
+
+
+def _unflatten_index(idx, nx):
+    j = idx // nx
+    i = idx - nx * j
+    return i, j
+
+
+@jit(nopython=True, cache=True)
+def _sample_isotropic_xy(n):
+    """Sample isotropic directions for 2D-in-space, 3D-in-angle transport."""
+    uz  = np.random.uniform(-1.0, 1.0, n)
+    phi = np.random.uniform(0.0, 2.0 * np.pi, n)
+    r_xy = np.sqrt(np.maximum(0.0, 1.0 - uz * uz))
+    ux = r_xy * np.cos(phi)
+    uy = r_xy * np.sin(phi)
+    return ux, uy
+
+
+@jit(nopython=True, cache=True)
+def _sample_isotropic_rz(n):
+    """Sample axisymmetric direction pair (mu_perp, eta)."""
+    eta = np.random.uniform(-1.0, 1.0, n)
+    mu_perp = np.cos(2.0 * np.pi * np.random.uniform(0.0, 1.0, n))
+    return mu_perp, eta
+
+
+@jit(nopython=True, cache=True)
+def _sample_planck_spectrum_mixture_of_gammas_jit(n, T, energy_edges_low, energy_edges_high, cdf):
+    """Numba-jitted Planck spectrum sampling via mixture of Gammas.
+    
+    Much faster than the Python version. Returns frequencies and group indices.
+    """
+    if n <= 0:
+        return np.zeros(n), np.zeros(n, dtype=np.int32)
+    
+    if T <= 0.0:
+        return np.full(n, energy_edges_low[0]), np.zeros(n, dtype=np.int32)
+    
+    frequencies = np.zeros(n)
+    groups = np.zeros(n, dtype=np.int32)
+    n_groups = len(energy_edges_low)
+    
+    n_max = len(cdf)
+    
+    # Sample particles
+    for p in range(n):
+        # Sample n_s from CDF (rejection search)
+        xi = np.random.random()
+        n_s = float(n_max)
+        for i in range(n_max):
+            if xi <= cdf[i]:
+                n_s = float(i + 1)
+                break
+        
+        # Sample x from Gamma(k=4, r=n_s) via product of exponentials
+        r1 = -np.log(np.random.random() + 1e-300)
+        r2 = -np.log(np.random.random() + 1e-300)
+        r3 = -np.log(np.random.random() + 1e-300)
+        r4 = -np.log(np.random.random() + 1e-300)
+        x = (r1 + r2 + r3 + r4) / n_s
+        
+        # Convert to frequency
+        frequencies[p] = T * x
+        
+        # Determine group via search
+        freq = frequencies[p]
+        if freq < energy_edges_low[0]:
+            g = 0
+        elif freq >= energy_edges_high[n_groups - 1]:
+            g = n_groups - 1
+        else:
+            g = n_groups - 1
+            for i in range(n_groups):
+                if freq >= energy_edges_low[i] and freq < energy_edges_high[i]:
+                    g = i
+                    break
+        groups[p] = g
+    
+    return frequencies, groups
+
+
+@jit(nopython=True, cache=True)
+def _sample_group_piecewise_constant_jit(n, cdf_normalized):
+    """Numba-jitted group sampling from normalized CDF."""
+    if n <= 0:
+        return np.zeros(n, dtype=np.int32)
+    
+    groups = np.zeros(n, dtype=np.int32)
+    n_groups = len(cdf_normalized)
+    
+    for p in range(n):
+        xi = np.random.random()
+        # Search through CDF
+        g = n_groups - 1
+        for i in range(n_groups):
+            if xi <= cdf_normalized[i]:
+                g = i
+                break
+        groups[p] = g
+    
+    return groups
+
+
+def _sample_planck_spectrum_mixture_of_gammas(n, T, energy_edges):
+    """Sample frequency from Planck spectrum using mixture of Gammas.
+    
+    This implements equations 10.23-10.27 from the textbook for sampling
+    from the Planck distribution p(ν) = (15/π^4) x^3 e^(-x) where x = ν/T.
+    
+    Parameters
+    ----------
+    n : int
+        Number of samples
+    T : float
+        Temperature (keV)
+    energy_edges : array
+        Energy group edges (keV)
+    
+    Returns
+    -------
+    frequencies : array
+        Sampled frequencies (keV)
+    groups : array
+        Group indices for sampled frequencies
+    """
+    if n <= 0:
+        return np.array([]), np.array([], dtype=np.int32)
+    
+    n_groups = len(energy_edges) - 1
+    edges_low = energy_edges[:-1].astype(np.float64)
+    edges_high = energy_edges[1:].astype(np.float64)
+    
+    return _sample_planck_spectrum_mixture_of_gammas_jit(
+        n,
+        float(T),
+        edges_low,
+        edges_high,
+        _PLANCK_MIXTURE_CDF,
+    )
+
+
+def _sample_group_piecewise_constant(n, probabilities):
+    """Sample group from piecewise constant distribution.
+    
+    This implements equation 10.18 for sampling group g from emission/effective scatter
+    with probability P_g = σ_a,g b_g★ / σ_P.
+    
+    Parameters
+    ----------
+    n : int
+        Number of samples
+    probabilities : array
+        Probability for each group (must sum to 1)
+    
+    Returns
+    -------
+    groups : array (int)
+        Sampled group indices
+    """
+    if n <= 0:
+        return np.array([], dtype=np.int32)
+    
+    # Ensure probabilities are normalized
+    probabilities = np.asarray(probabilities, dtype=np.float64)
+    prob_sum = np.sum(probabilities)
+    if prob_sum > 0.0:
+        probabilities = probabilities / prob_sum
+    else:
+        probabilities = np.ones_like(probabilities) / len(probabilities)
+    
+    # Build CDF
+    cdf = np.cumsum(probabilities).astype(np.float64)
+    cdf[-1] = 1.0
+    
+    return _sample_group_piecewise_constant_jit(n, cdf)
+
+
+def _compute_Bg_multigroup_grid(energy_edges, temperature):
+    """Compute Planck integrals B_g for all groups and all cells efficiently.
+    
+    Returns array of shape (n_groups, nx, ny) with B_g values.
+    """
+    n_groups = len(energy_edges) - 1
+    nx, ny = temperature.shape
+    B_g = np.zeros((n_groups, nx, ny))
+    
+    # Vectorized: call Bg wrapper for each group only, not each cell
+    for g in range(n_groups):
+        E_low = energy_edges[g]
+        E_high = energy_edges[g + 1]
+        # This calls the external Bg function to handle vectorization
+        # If Bg is not vectorized, the loop below will be executed
+        try:
+            B_vals = Bg(E_low, E_high, temperature)
+            if np.isscalar(B_vals):
+                B_g[g, :, :] = B_vals
+            elif B_vals.shape == temperature.shape:
+                B_g[g, :, :] = B_vals
+            else:
+                # Fallback: call element-wise
+                for i in range(nx):
+                    for j in range(ny):
+                        B_g[g, i, j] = Bg(E_low, E_high, temperature[i, j])
+        except:
+            # Fallback: call element-wise if vectorization fails
+            for i in range(nx):
+                for j in range(ny):
+                    B_g[g, i, j] = Bg(E_low, E_high, temperature[i, j])
+    
+    return B_g
+
+
+def _boundary_temperature_value(Tb, t):
+    return Tb(t) if callable(Tb) else Tb
+
+
+def _sample_boundary_xy(n, side, T, dt, x_edges, y_edges, energy_edges, boundary_source_func=None):
+    """Half-Lambertian boundary source for Cartesian geometry with multigroup.
+    
+    Samples particles from boundary with frequencies from Planck spectrum.
+    """
+    if n <= 0:
+        return None
+    
+    if T <= 0.0 and boundary_source_func is None:
+        return None
+
+    x0 = x_edges[0]
+    x1 = x_edges[-1]
+    y0 = y_edges[0]
+    y1 = y_edges[-1]
+
+    if boundary_source_func is None:
+        if side in ("left", "right"):
+            area = y1 - y0
+        else:
+            area = x1 - x0
+        total_emission = __a * __c * T**4 / 4.0 * area * dt
+        weights = np.full(n, total_emission / n)
+        sample_cells = None
+    else:
+        # A spatially restricted source is needed, for example, for a pipe
+        # entrance occupying only part of the y=y_min boundary.  This mirrors
+        # the existing r-z sampler: choose a boundary cell in proportion to
+        # its blackbody emission, then sample uniformly within that cell.
+        if side in ("left", "right"):
+            fixed = x0 if side == "left" else x1
+            tangential_edges = y_edges
+            temperatures = np.array([
+                boundary_source_func(fixed, yc, side)
+                for yc in 0.5 * (y_edges[:-1] + y_edges[1:])
+            ])
+        elif side in ("bottom", "top"):
+            fixed = y0 if side == "bottom" else y1
+            tangential_edges = x_edges
+            temperatures = np.array([
+                boundary_source_func(xc, fixed, side)
+                for xc in 0.5 * (x_edges[:-1] + x_edges[1:])
+            ])
+        else:
+            raise ValueError(f"Unknown side: {side}")
+
+        active = temperatures > 0.0
+        if not np.any(active):
+            return None
+        active_indices = np.where(active)[0]
+        widths = np.diff(tangential_edges)[active]
+        emissions = __a * __c * temperatures[active]**4 / 4.0 * widths * dt
+        total_emission = float(np.sum(emissions))
+        sample_cells = np.random.choice(
+            active_indices, size=n, p=emissions / total_emission
+        )
+        weights = np.full(n, total_emission / n)
+
+    times = np.random.uniform(0.0, dt, n)
+
+    # 3D Lambertian
+    mu_n = np.sqrt(np.random.uniform(0.0, 1.0, n))
+    mu_t = np.sqrt(np.maximum(0.0, 1.0 - mu_n * mu_n))
+    phi  = np.random.uniform(0.0, 2.0 * np.pi, n)
+
+    if side == "left":
+        x = np.full(n, x0)
+        if sample_cells is None:
+            y = np.random.uniform(y0, y1, n)
+        else:
+            y = np.random.uniform(y_edges[sample_cells], y_edges[sample_cells + 1])
+        ux = mu_n
+        uy = mu_t * np.cos(phi)
+    elif side == "right":
+        x = np.full(n, x1)
+        if sample_cells is None:
+            y = np.random.uniform(y0, y1, n)
+        else:
+            y = np.random.uniform(y_edges[sample_cells], y_edges[sample_cells + 1])
+        ux = -mu_n
+        uy = mu_t * np.cos(phi)
+    elif side == "bottom":
+        if sample_cells is None:
+            x = np.random.uniform(x0, x1, n)
+        else:
+            x = np.random.uniform(x_edges[sample_cells], x_edges[sample_cells + 1])
+        y = np.full(n, y0)
+        ux = mu_t * np.cos(phi)
+        uy = mu_n
+    elif side == "top":
+        if sample_cells is None:
+            x = np.random.uniform(x0, x1, n)
+        else:
+            x = np.random.uniform(x_edges[sample_cells], x_edges[sample_cells + 1])
+        y = np.full(n, y1)
+        ux = mu_t * np.cos(phi)
+        uy = -mu_n
+    else:
+        raise ValueError(f"Unknown side: {side}")
+
+    # Sample frequencies from Planck spectrum (mixture of gammas)
+    if boundary_source_func is None:
+        frequencies, groups = _sample_planck_spectrum_mixture_of_gammas(n, T, energy_edges)
+    else:
+        frequencies = np.empty(n)
+        groups = np.empty(n, dtype=np.int32)
+        for cell in np.unique(sample_cells):
+            mask = sample_cells == cell
+            local_T = temperatures[cell]
+            local_frequencies, local_groups = _sample_planck_spectrum_mixture_of_gammas(
+                int(np.sum(mask)), local_T, energy_edges
+            )
+            frequencies[mask] = local_frequencies
+            groups[mask] = local_groups
+
+    return weights, ux, uy, times, x, y, groups
+
+
+def _sample_boundary_rz(n, side, T, dt, r_edges, z_edges, energy_edges, boundary_source_func=None):
+    """Boundary source for cylindrical r-z geometry with multigroup."""
+    if n <= 0:
+        return None
+    if T <= 0.0 and boundary_source_func is None:
+        return None
+
+    r0 = r_edges[0]
+    r1 = r_edges[-1]
+    z0 = z_edges[0]
+    z1 = z_edges[-1]
+
+    if side in ("rmin", "rmax"):
+        r_side = r0 if side == "rmin" else r1
+        area = 2.0 * np.pi * r_side * (z1 - z0)
+    else:
+        area = np.pi * (r1**2 - r0**2)
+
+    # Position-dependent boundary emission via boundary_source_func
+    if boundary_source_func is not None:
+        if side in ("rmin", "rmax"):
+            R = r0 if side == "rmin" else r1
+            z_centers = 0.5 * (z_edges[:-1] + z_edges[1:])
+            cell_temps = np.array([boundary_source_func(R, z_c, side) for z_c in z_centers])
+            emit_mask = cell_temps > 0.0
+            if not np.any(emit_mask):
+                return None
+            dz_arr = np.diff(z_edges)
+            cell_areas = 2.0 * np.pi * R * dz_arr[emit_mask]
+            cell_temps_emit = cell_temps[emit_mask]
+            cell_emissions = __a * __c * cell_temps_emit**4 / 4.0 * cell_areas * dt
+            total_emission_bsf = float(np.sum(cell_emissions))
+            cell_fractions = cell_emissions / total_emission_bsf
+            n_per_cell = np.random.multinomial(n, cell_fractions)
+            emit_indices = np.where(emit_mask)[0]
+            r_all, z_all, groups_all = [], [], []
+            for list_idx, (grid_idx, n_cell) in enumerate(zip(emit_indices, n_per_cell)):
+                if n_cell > 0:
+                    offset = 1e-12 if side == "rmin" else -1e-12
+                    r_all.append(np.full(n_cell, R + offset))
+                    z_all.append(np.random.uniform(z_edges[grid_idx], z_edges[grid_idx + 1], n_cell))
+                    _, cg = _sample_planck_spectrum_mixture_of_gammas(n_cell, float(cell_temps_emit[list_idx]), energy_edges)
+                    groups_all.append(cg)
+        else:  # zmin or zmax
+            Z = z0 if side == "zmin" else z1
+            r_centers_bsf = 0.5 * (r_edges[:-1] + r_edges[1:])
+            cell_temps = np.array([boundary_source_func(r_c, Z, side) for r_c in r_centers_bsf])
+            emit_mask = cell_temps > 0.0
+            if not np.any(emit_mask):
+                return None
+            r_inner = r_edges[:-1][emit_mask]
+            r_outer = r_edges[1:][emit_mask]
+            cell_areas = np.pi * (r_outer**2 - r_inner**2)
+            cell_temps_emit = cell_temps[emit_mask]
+            cell_emissions = __a * __c * cell_temps_emit**4 / 4.0 * cell_areas * dt
+            total_emission_bsf = float(np.sum(cell_emissions))
+            cell_fractions = cell_emissions / total_emission_bsf
+            n_per_cell = np.random.multinomial(n, cell_fractions)
+            emit_indices = np.where(emit_mask)[0]
+            r_all, z_all, groups_all = [], [], []
+            for list_idx, (grid_idx, n_cell) in enumerate(zip(emit_indices, n_per_cell)):
+                if n_cell > 0:
+                    r_in = r_edges[grid_idx]
+                    r_out = r_edges[grid_idx + 1]
+                    xi = np.random.uniform(0.0, 1.0, n_cell)
+                    r_all.append(np.sqrt(r_in**2 + xi * (r_out**2 - r_in**2)))
+                    offset = 1e-12 if side == "zmin" else -1e-12
+                    z_all.append(np.full(n_cell, Z + offset))
+                    _, cg = _sample_planck_spectrum_mixture_of_gammas(n_cell, float(cell_temps_emit[list_idx]), energy_edges)
+                    groups_all.append(cg)
+        if not r_all:
+            return None
+        r_bsf = np.concatenate(r_all)
+        z_bsf = np.concatenate(z_all)
+        groups_bsf = np.concatenate(groups_all)
+        n_bsf = len(r_bsf)
+        w_bsf = np.full(n_bsf, total_emission_bsf / n_bsf)
+        t_bsf = np.random.uniform(0.0, dt, n_bsf)
+        eta_bsf = np.random.uniform(-1.0, 1.0, n_bsf)
+        mu_abs_bsf = np.sqrt(np.random.uniform(0.0, 1.0, n_bsf))
+        if side == "rmin":
+            mu_perp_bsf = mu_abs_bsf
+        elif side == "rmax":
+            mu_perp_bsf = -mu_abs_bsf
+        elif side == "zmin":
+            mu_perp_bsf = np.cos(2.0 * np.pi * np.random.uniform(0.0, 1.0, n_bsf))
+            eta_bsf = mu_abs_bsf
+        else:  # zmax
+            mu_perp_bsf = np.cos(2.0 * np.pi * np.random.uniform(0.0, 1.0, n_bsf))
+            eta_bsf = -mu_abs_bsf
+        return w_bsf, mu_perp_bsf, eta_bsf, t_bsf, r_bsf, z_bsf, groups_bsf
+
+    total_emission = __a * __c * T**4 / 4.0 * area * dt
+    weights = np.full(n, total_emission / n)
+    times = np.random.uniform(0.0, dt, n)
+
+    eta = np.random.uniform(-1.0, 1.0, n)
+    mu_abs = np.sqrt(np.random.uniform(0.0, 1.0, n))
+
+    if side == "rmin":
+        r = np.full(n, r0)
+        z = np.random.uniform(z0, z1, n)
+        mu_perp = mu_abs
+    elif side == "rmax":
+        r = np.full(n, r1)
+        z = np.random.uniform(z0, z1, n)
+        mu_perp = -mu_abs
+    elif side == "zmin":
+        r_2 = r0**2 + np.random.uniform(0.0, 1.0, n) * (r1**2 - r0**2)
+        r = np.sqrt(r_2)
+        z = np.full(n, z0)
+        mu_perp = np.cos(2.0 * np.pi * np.random.uniform(0.0, 1.0, n))
+        eta = mu_abs
+    elif side == "zmax":
+        r_2 = r0**2 + np.random.uniform(0.0, 1.0, n) * (r1**2 - r0**2)
+        r = np.sqrt(r_2)
+        z = np.full(n, z1)
+        mu_perp = np.cos(2.0 * np.pi * np.random.uniform(0.0, 1.0, n))
+        eta = -mu_abs
+    else:
+        raise ValueError(f"Unknown side: {side}")
+
+    # Sample frequencies from Planck spectrum
+    frequencies, groups = _sample_planck_spectrum_mixture_of_gammas(n, T, energy_edges)
+
+    return weights, mu_perp, eta, times, r, z, groups
+
+
+@jit(nopython=True, cache=True)
+def _move_particle_xy(weight, ux, uy, x, y, i, j, x_edges, y_edges, sigma_a, sigma_s, distance_to_census):
+    """Move one Cartesian particle to next event (boundary/scatter/census)."""
+    x_l = x_edges[i]
+    x_r = x_edges[i + 1]
+    y_l = y_edges[j]
+    y_r = y_edges[j + 1]
+
+    sx = 1e30
+    sy = 1e30
+
+    if ux > 0.0:
+        sx = (x_r - x) / (ux + 1e-300)
+    elif ux < 0.0:
+        sx = (x_l - x) / (ux - 1e-300)
+
+    if uy > 0.0:
+        sy = (y_r - y) / (uy + 1e-300)
+    elif uy < 0.0:
+        sy = (y_l - y) / (uy - 1e-300)
+
+    if sigma_s > 1e-12:
+        s_scat = -np.log(np.random.uniform(0.0, 1.0)) / sigma_s
+    else:
+        s_scat = 1e30
+
+    s_min = min(sx, sy, s_scat, distance_to_census)
+    
+    # Stabilization for extremely small distances
+    if s_min < 1e-14:
+        s_min = max(s_min, sx, sy, distance_to_census)
+
+    x_new = x + ux * s_min
+    y_new = y + uy * s_min
+
+    # Absorption
+    if sigma_a > 1e-12:
+        w_new = weight * np.exp(-sigma_a * s_min)
+        deposited = weight - w_new
+    else:
+        w_new = weight
+        deposited = 0.0
+
+    # Determine event type
+    crossing = _CROSS_NONE
+    evt = _EVT_CENSUS
+
+    if s_min == distance_to_census:
+        evt = _EVT_CENSUS
+    elif s_min == s_scat:
+        evt = _EVT_SCATTER
+    elif s_min == sx:
+        if ux > 0.0:
+            crossing = _CROSS_I_PLUS
+        else:
+            crossing = _CROSS_I_MINUS
+        evt = _EVT_BOUNDARY
+    elif s_min == sy:
+        if uy > 0.0:
+            crossing = _CROSS_J_PLUS
+        else:
+            crossing = _CROSS_J_MINUS
+        evt = _EVT_BOUNDARY
+
+    return x_new, y_new, w_new, deposited, s_min, evt, crossing
+
+
+@jit(nopython=True, cache=True)
+def _distance_to_radial_boundary_rz(r, mu_perp, eta, R):
+    """Distance to cross radial boundary at radius R in cylindrical geometry.
+
+    Uses the correct transverse-path formulation: the transverse (off-axis)
+    displacement is l = s * sqrt(1 - eta^2), not s * sqrt(1 - mu_perp^2).
+    Matches the gray IMC _distance_to_radial_boundary_rz_jit.
+    """
+    one_minus_eta2 = 1.0 - eta * eta
+    if one_minus_eta2 < 1e-15:
+        # Particle moving purely axially — never crosses a radial boundary.
+        return 1e30
+
+    # Impact parameter squared: b^2 = r^2 * (1 - mu_perp^2)
+    b2 = r * r * (1.0 - mu_perp * mu_perp)
+    disc = R * R - b2
+    if disc <= 0.0:
+        return 1e30
+
+    root = np.sqrt(disc)
+    # Transverse distances to the two intersections: l = -r*mu_perp ± root
+    l_plus  = -r * mu_perp + root
+    l_minus = -r * mu_perp - root
+
+    # Convert transverse distance to path length: s = l / sqrt(1 - eta^2)
+    denom = np.sqrt(one_minus_eta2)
+    s_min = 1e30
+    if l_plus > 1e-15:
+        s = l_plus / denom
+        if s < s_min:
+            s_min = s
+    if l_minus > 1e-15:
+        s = l_minus / denom
+        if s < s_min:
+            s_min = s
+    return s_min
+
+@jit(nopython=True, cache=True)
+
+def _move_particle_rz(weight, mu_perp, eta, r, z, i, j, r_edges, z_edges, sigma_a, sigma_s, distance_to_census):
+    """Move one cylindrical particle to next event."""
+    r_l = r_edges[i]
+    r_r = r_edges[i + 1]
+    z_l = z_edges[j]
+    z_r = z_edges[j + 1]
+
+    # Distance to radial boundaries.
+    # Never cross r=0 (cylindrical axis) — it is not a physical surface.
+    # Matches the gray IMC which returns 1e30 when r_in==0.
+    sr_l = _distance_to_radial_boundary_rz(r, mu_perp, eta, r_l) if r_l > 0.0 else 1e30
+    sr_r = _distance_to_radial_boundary_rz(r, mu_perp, eta, r_r)
+    sr = min(sr_l, sr_r)
+
+    # Distance to axial boundaries
+    sz = 1e30
+    if abs(eta) > 1e-12:
+        if eta > 0.0:
+            sz = (z_r - z) / (eta + 1e-300)
+        else:
+            sz = (z_l - z) / (eta - 1e-300)
+
+    # Distance to scatter
+    if sigma_s > 1e-12:
+        s_scat = -np.log(np.random.uniform(0.0, 1.0)) / sigma_s
+    else:
+        s_scat = 1e30
+
+    s_min = min(sr, sz, s_scat, distance_to_census)
+    if s_min < 1e-14:
+        # Particle is effectively stuck (e.g. sitting exactly on a boundary).
+        # Return a zero-move census event so the transport loop can discard it
+        # cleanly.  Using max() here would teleport the particle, which is wrong.
+        s_min = 1e-14
+
+    # New position — use the correct transverse path length l = s * sqrt(1 - eta^2),
+    # matching the gray IMC formula (NOT sqrt(1 - mu_perp^2)).
+    one_minus_eta2 = max(0.0, 1.0 - eta * eta)
+    l = s_min * np.sqrt(one_minus_eta2)   # transverse (off-axis) displacement
+    r_new_sq = r * r + 2.0 * r * mu_perp * l + l * l
+    if r_new_sq < 0.0:
+        r_new_sq = 0.0
+    r_new = np.sqrt(r_new_sq)
+    z_new = z + eta * s_min
+
+    # Geometric update of mu_perp (direction cosine w.r.t. local radial unit vector
+    # changes as the particle moves in cylindrical geometry).
+    if r_new > 1e-15 and l > 0.0:
+        mu_perp_new = (r * mu_perp + l) / r_new
+        if mu_perp_new > 1.0:
+            mu_perp_new = 1.0
+        elif mu_perp_new < -1.0:
+            mu_perp_new = -1.0
+    else:
+        mu_perp_new = mu_perp
+
+    # Absorption
+    if sigma_a > 1e-12:
+        w_new = weight * np.exp(-sigma_a * s_min)
+        deposited = weight - w_new
+    else:
+        w_new = weight
+        deposited = 0.0
+
+    # Determine event
+    crossing = _CROSS_NONE
+    evt = _EVT_CENSUS
+
+    if s_min == distance_to_census:
+        evt = _EVT_CENSUS
+    elif s_min == s_scat:
+        evt = _EVT_SCATTER
+    elif s_min == sr:
+        if abs(sr_l - sr) < 1e-14:
+            crossing = _CROSS_I_MINUS
+        else:
+            crossing = _CROSS_I_PLUS
+        evt = _EVT_BOUNDARY
+    elif s_min == sz:
+        if eta > 0.0:
+            crossing = _CROSS_J_PLUS
+        else:
+            crossing = _CROSS_J_MINUS
+        evt = _EVT_BOUNDARY
+
+    return r_new, z_new, mu_perp_new, w_new, deposited, s_min, evt, crossing
+
+
+@jit(nopython=True, cache=True)
+def _transport_particles_2d_mg(
+    weights,
+    dir1,
+    dir2,
+    times,
+    pos1,
+    pos2,
+    cell_i,
+    cell_j,
+    groups,
+    edges1,
+    edges2,
+    sigma_a,  # (n_groups, nx, ny)
+    sigma_s,  # (n_groups, nx, ny)
+    sigma_s_true,  # (n_groups, nx, ny)
+    group_centers,
+    photon_energies,
+    energy_edges,
+    material_temperature,
+    use_compton,
+    volumes,
+    dt,
+    reflect,
+    max_events_per_particle,
+    geometry_code,
+    weight_floor,
+):
+    """Transport multigroup particles with JIT compilation.
+    
+    This is the core transport kernel for multigroup IMC.
+    """
+    n = len(weights)
+    nx = len(edges1) - 1
+    ny = len(edges2) - 1
+    n_groups = sigma_a.shape[0]
+
+    # Output arrays
+    dep_cell = np.zeros((n_groups, nx, ny))
+    si_cell = np.zeros((n_groups, nx, ny))
+    scatter_count = np.zeros((n_groups, nx, ny))
+    scatter_weight = np.zeros((n_groups, nx, ny))
+    scatter_mu_weight = np.zeros((n_groups, nx, ny))
+    scatter_p2_weight = np.zeros((n_groups, nx, ny))
+    scatter_backward_weight = np.zeros((n_groups, nx, ny))
+    scatter_energy_ratio_weight = np.zeros((n_groups, nx, ny))
+    scatter_mu_energy_ratio_weight = np.zeros((n_groups, nx, ny))
+    
+    # Statistics
+    n_events = 0
+    n_boundary_cross = 0
+    n_abs_continue = 0
+    n_census = 0
+    n_abs_capture = 0
+    n_weight_floor_kills = 0
+    n_reflect = 0
+    n_event_cap = 0
+
+    boundary_loss = 0.0
+    boundary_loss_by_group = np.zeros(n_groups)
+    boundary_loss_by_side = np.zeros(4)
+
+    reflect_l, reflect_r, reflect_b, reflect_t = reflect
+
+    for p in range(n):
+        w = weights[p]
+        d1 = dir1[p]
+        d2 = dir2[p]
+        t = times[p]
+        x = pos1[p]
+        y = pos2[p]
+        i = cell_i[p]
+        j = cell_j[p]
+        g = groups[p]
+
+        if w <= weight_floor:
+            continue
+
+        for evt_count in range(max_events_per_particle):
+            if i < 0 or i >= nx or j < 0 or j >= ny:
+                boundary_loss += w
+                boundary_loss_by_group[g] += w
+                if i < 0:
+                    boundary_loss_by_side[0] += w
+                elif i >= nx:
+                    boundary_loss_by_side[1] += w
+                elif j < 0:
+                    boundary_loss_by_side[2] += w
+                else:
+                    boundary_loss_by_side[3] += w
+                n_boundary_cross += 1
+                break
+
+            if w <= weight_floor:
+                n_weight_floor_kills += 1
+                break
+
+            distance_to_census = __c * (dt - t)
+
+            # Get opacities for this group and cell
+            sig_a = sigma_a[g, i, j]
+            sig_s = sigma_s[g, i, j]
+
+            if geometry_code == _GEOM_XY:
+                x_new, y_new, w_new, deposited, s_min, evt, crossing = _move_particle_xy(
+                    w, d1, d2, x, y, i, j, edges1, edges2, sig_a, sig_s, distance_to_census
+                )
+            else:
+                x_new, y_new, d1_new, w_new, deposited, s_min, evt, crossing = _move_particle_rz(
+                    w, d1, d2, x, y, i, j, edges1, edges2, sig_a, sig_s, distance_to_census
+                )
+                d1 = d1_new   # geometric update of mu_perp in cylindrical coordinates
+
+            # Record deposition and scalar intensity
+            dep_cell[g, i, j] += deposited / volumes[i, j]
+            # Gray-style path-length estimator per group:
+            #   I_g ~= deposited / (sigma_a * dt * volume)
+            # with the sigma_a -> 0 limit using w * s_min.
+            if sig_a > 1e-12:
+                deposited_intensity = deposited / sig_a
+            else:
+                deposited_intensity = w * s_min
+            si_cell[g, i, j] += deposited_intensity / (dt * volumes[i, j])
+
+            x = x_new
+            y = y_new
+            w = w_new
+            t = t + s_min / __c
+
+            n_events += 1
+
+            if evt == _EVT_CENSUS:
+                n_census += 1
+                break
+            elif evt == _EVT_SCATTER:
+                is_true_scatter = (
+                    use_compton and sigma_s_true[g, i, j] > 0.0 and
+                    sig_s > 0.0 and
+                    np.random.random() < sigma_s_true[g, i, j] / sig_s
+                )
+                if is_true_scatter:
+                    old_energy = photon_energies[p]
+                    incident_group = g
+                    if geometry_code == _GEOM_XY:
+                        hidden_direction = math.sqrt(max(0.0, 1.0 - d1 * d1 - d2 * d2))
+                        if np.random.random() < 0.5:
+                            hidden_direction = -hidden_direction
+                        in_x, in_y, in_z = d1, d2, hidden_direction
+                        new_energy, out_x, out_y, out_z, material_deposit = compton_scatter_3d(
+                            old_energy, d1, d2, hidden_direction,
+                            material_temperature[i, j]
+                        )
+                        d1 = out_x
+                        d2 = out_y
+                        projected_norm = math.sqrt(d1 * d1 + d2 * d2)
+                        if projected_norm > 1.0:
+                            d1 /= projected_norm
+                            d2 /= projected_norm
+                    else:
+                        in_x, in_y, in_z = d1, 0.0, d2
+                        new_energy, out_x, out_y, out_z, material_deposit = compton_scatter_3d(
+                            old_energy, d1, 0.0, d2, material_temperature[i, j]
+                        )
+                        d1 = np.sqrt(out_x * out_x + out_y * out_y)
+                        d2 = out_z
+                        out_norm = max(np.sqrt(d1 * d1 + d2 * d2), 1e-30)
+                        d1 /= out_norm
+                        d2 /= out_norm
+                    # These are angular diagnostics, not energy-deposition
+                    # diagnostics.  In particular, a nearly elastic event
+                    # must still contribute to the measured scattering
+                    # anisotropy.
+                    mu_lab = min(1.0, max(-1.0,
+                        in_x * out_x + in_y * out_y + in_z * out_z
+                    ))
+                    scatter_count[incident_group, i, j] += 1.0
+                    scatter_weight[incident_group, i, j] += w
+                    scatter_mu_weight[incident_group, i, j] += w * mu_lab
+                    scatter_p2_weight[incident_group, i, j] += w * (
+                        0.5 * (3.0 * mu_lab * mu_lab - 1.0)
+                    )
+                    energy_ratio = new_energy / old_energy
+                    scatter_energy_ratio_weight[incident_group, i, j] += w * energy_ratio
+                    scatter_mu_energy_ratio_weight[incident_group, i, j] += (
+                        w * mu_lab * energy_ratio
+                    )
+                    if mu_lab < 0.0:
+                        scatter_backward_weight[incident_group, i, j] += w
+                    material_deposit_weight = w * material_deposit / old_energy
+                    dep_cell[g, i, j] += material_deposit_weight / volumes[i, j]
+                    w *= new_energy / old_energy
+                    photon_energies[p] = new_energy
+                    g = np.searchsorted(energy_edges, new_energy) - 1
+                    g = max(0, min(n_groups - 1, g))
+                    groups[p] = g
+                else:
+                    # Effective scattering - direction change only
+                    if geometry_code == _GEOM_XY:
+                        d1, d2 = _sample_isotropic_xy(1)
+                        d1 = d1[0]
+                        d2 = d2[0]
+                    else:
+                        d1, d2 = _sample_isotropic_rz(1)
+                        d1 = d1[0]
+                        d2 = d2[0]
+                n_abs_continue += 1
+            elif evt == _EVT_BOUNDARY:
+                n_boundary_cross += 1
+
+                # Move to neighboring cell first. Most boundary events are
+                # interior cell crossings, not domain exits.
+                if crossing == _CROSS_I_PLUS:
+                    i += 1
+                elif crossing == _CROSS_I_MINUS:
+                    i -= 1
+                elif crossing == _CROSS_J_PLUS:
+                    j += 1
+                elif crossing == _CROSS_J_MINUS:
+                    j -= 1
+
+                # Reflect or lose only if particle actually exited the domain.
+                if i < 0:
+                    if reflect_l:
+                        d1 = -d1
+                        n_reflect += 1
+                    else:
+                        boundary_loss += w
+                        boundary_loss_by_group[g] += w
+                        boundary_loss_by_side[0] += w
+                        w = 0.0
+                        break
+                elif i >= nx:
+                    if reflect_r:
+                        d1 = -d1
+                        i = nx - 1
+                        n_reflect += 1
+                    else:
+                        boundary_loss += w
+                        boundary_loss_by_group[g] += w
+                        boundary_loss_by_side[1] += w
+                        w = 0.0
+                        break
+                elif j < 0:
+                    if reflect_b:
+                        d2 = -d2
+                        j = 0
+                        n_reflect += 1
+                    else:
+                        boundary_loss += w
+                        boundary_loss_by_group[g] += w
+                        boundary_loss_by_side[2] += w
+                        w = 0.0
+                        break
+                elif j >= ny:
+                    if reflect_t:
+                        d2 = -d2
+                        j = ny - 1
+                        n_reflect += 1
+                    else:
+                        boundary_loss += w
+                        boundary_loss_by_group[g] += w
+                        boundary_loss_by_side[3] += w
+                        w = 0.0
+                        break
+
+            if evt_count == max_events_per_particle - 1:
+                n_event_cap += 1
+
+        # Write updated values back to arrays
+        weights[p] = w
+        dir1[p] = d1
+        dir2[p] = d2
+        times[p] = t
+        pos1[p] = x
+        pos2[p] = y
+        cell_i[p] = i
+        cell_j[p] = j
+
+    stats = np.array([
+        float(n_events),
+        float(n_boundary_cross),
+        float(n_abs_continue),
+        float(n_census),
+        float(n_abs_capture),
+        float(n_weight_floor_kills),
+        float(n_reflect),
+        float(n_event_cap),
+    ])
+
+    return (
+        dep_cell, si_cell, boundary_loss, boundary_loss_by_group,
+        boundary_loss_by_side, stats, scatter_count, scatter_weight,
+        scatter_mu_weight, scatter_p2_weight, scatter_backward_weight,
+        scatter_energy_ratio_weight, scatter_mu_energy_ratio_weight,
+    )
+
+
+def _equilibrium_sample_xy_mg(N, Tr, x_edges, y_edges, energy_edges, T_emit_floor=0.0):
+    """Sample particles in equilibrium for XY geometry with multigroup."""
+    nx = len(x_edges) - 1
+    ny = len(y_edges) - 1
+    n_groups = len(energy_edges) - 1
+
+    # Total equilibrium energy
+    volumes = _cell_volumes_xy(x_edges, y_edges)
+    energy_per_zone = __a * Tr**4 * volumes
+    if T_emit_floor > 0.0:
+        energy_per_zone[Tr < T_emit_floor] = 0.0
+    E_eq = np.sum(energy_per_zone)
+
+    if N <= 0 or E_eq <= 0.0:
+        return (
+            np.array([]), np.array([]), np.array([]),
+            np.array([]), np.array([]), np.array([]),
+            np.array([], dtype=np.int32)
+        )
+
+    weights = np.full(N, E_eq / N)
+
+    # Sample positions uniformly by volume — F-order so flat=i+j*nx matches % nx, // nx
+    energy_flat = energy_per_zone.flatten(order='F')
+    probs = energy_flat / np.sum(energy_flat)
+    flat_indices = np.random.choice(len(energy_flat), size=N, p=probs)
+    
+    cell_i = flat_indices % nx
+    cell_j = flat_indices // nx
+
+    # Sample within cells
+    x = x_edges[cell_i] + np.random.uniform(0.0, 1.0, N) * np.diff(x_edges)[cell_i]
+    y = y_edges[cell_j] + np.random.uniform(0.0, 1.0, N) * np.diff(y_edges)[cell_j]
+
+    # Isotropic directions
+    ux, uy = _sample_isotropic_xy(N)
+
+    # Times uniformly in [0, dt) - here we use 0
+    times = np.zeros(N)
+
+    # Sample groups and frequencies from local Planck spectrum
+    T_local = Tr[cell_i, cell_j]
+    frequencies = np.zeros(N)
+    groups = np.zeros(N, dtype=np.int32)
+    
+    for p in range(N):
+        freq, grp = _sample_planck_spectrum_mixture_of_gammas(1, T_local[p], energy_edges)
+        if len(freq) > 0:
+            frequencies[p] = freq[0]
+            groups[p] = grp[0]
+
+    return weights, ux, uy, times, x, y, groups
+
+
+def _equilibrium_sample_rz_mg(N, Tr, r_edges, z_edges, energy_edges, T_emit_floor=0.0):
+    """Sample particles in equilibrium for RZ geometry with multigroup."""
+    nr = len(r_edges) - 1
+    nz = len(z_edges) - 1
+    n_groups = len(energy_edges) - 1
+
+    volumes = _cell_volumes_rz(r_edges, z_edges)
+    energy_per_zone = __a * Tr**4 * volumes
+    if T_emit_floor > 0.0:
+        energy_per_zone[Tr < T_emit_floor] = 0.0
+    E_eq = np.sum(energy_per_zone)
+
+    if N <= 0 or E_eq <= 0.0:
+        return (
+            np.array([]), np.array([]), np.array([]),
+            np.array([]), np.array([]), np.array([]),
+            np.array([], dtype=np.int32)
+        )
+
+    weights = np.full(N, E_eq / N)
+
+    # F-order so flat=i+j*nr matches % nr, // nr
+    energy_flat = energy_per_zone.flatten(order='F')
+    probs = energy_flat / np.sum(energy_flat)
+    flat_indices = np.random.choice(len(energy_flat), size=N, p=probs)
+    
+    cell_i = flat_indices % nr
+    cell_j = flat_indices // nr
+
+    # Sample r uniformly in volume (r^2 weighting)
+    r_l = r_edges[cell_i]
+    r_r = r_edges[cell_i + 1]
+    r2 = r_l**2 + np.random.uniform(0.0, 1.0, N) * (r_r**2 - r_l**2)
+    r = np.sqrt(r2)
+
+    z = z_edges[cell_j] + np.random.uniform(0.0, 1.0, N) * np.diff(z_edges)[cell_j]
+
+    mu_perp, eta = _sample_isotropic_rz(N)
+    times = np.zeros(N)
+
+    # Sample groups from local Planck
+    T_local = Tr[cell_i, cell_j]
+    groups = np.zeros(N, dtype=np.int32)
+    
+    for p in range(N):
+        _, grp = _sample_planck_spectrum_mixture_of_gammas(1, T_local[p], energy_edges)
+        if len(grp) > 0:
+            groups[p] = grp[0]
+
+    return weights, mu_perp, eta, times, r, z, groups
+
+
+def _sample_source_xy_mg(N, source, dt, x_edges, y_edges, energy_edges, temperature):
+    """Sample external source particles for XY geometry with multigroup.
+    
+    source can be:
+    - scalar: uniform in space and gray
+    - (nx, ny): spatially varying, gray
+    - (n_groups, nx, ny): spatially varying, multigroup
+    """
+    nx = len(x_edges) - 1
+    ny = len(y_edges) - 1
+    n_groups = len(energy_edges) - 1
+
+    source = np.asarray(source)
+    
+    if source.ndim == 0:
+        # Scalar - uniform gray
+        source_mg = np.zeros((n_groups, nx, ny))
+        source_mg[0, :, :] = source  # Put all in lowest group
+    elif source.ndim == 2:
+        # (nx, ny) - spatial gray, distribute to groups
+        source_mg = np.zeros((n_groups, nx, ny))
+        source_mg[0, :, :] = source
+    elif source.ndim == 3:
+        # Already multigroup
+        source_mg = source
+    else:
+        raise ValueError(f"source shape {source.shape} not supported")
+
+    # source_mg has units of energy/(volume*time), so multiply by volumes to get energy/time
+    volumes = _cell_volumes_xy(x_edges, y_edges)
+    # source_mg has units of energy/(volume*time), so multiply by volumes to get energy/time
+    volumes = _cell_volumes_xy(x_edges, y_edges)
+    total_source = np.sum(source_mg * volumes[np.newaxis, :, :]) * dt
+    if N <= 0 or total_source <= 0.0:
+        return (
+            np.array([]), np.array([]), np.array([]),
+            np.array([]), np.array([]), np.array([]),
+            np.array([], dtype=np.int32), np.array([], dtype=np.int32)
+        )
+
+    # Sample by group then by space (use source*volume for proper weighting)
+    source_by_group = np.sum(source_mg * volumes[np.newaxis, :, :], axis=(1, 2)) * dt
+    group_probs = source_by_group / (total_source + 1e-300)
+    
+    groups_sampled = _sample_group_piecewise_constant(N, group_probs)
+    
+    # For each particle, sample spatial location within its group
+    cell_i = np.zeros(N, dtype=np.int32)
+    cell_j = np.zeros(N, dtype=np.int32)
+    
+    for g in range(n_groups):
+        mask = (groups_sampled == g)
+        n_g = np.sum(mask)
+        if n_g > 0:
+            # Weight cells by source*volume, not just source
+            source_g_flat = (source_mg[g, :, :] * volumes).flatten(order='F')
+            if np.sum(source_g_flat) > 0:
+                probs_g = source_g_flat / np.sum(source_g_flat)
+                flat_idx = np.random.choice(len(source_g_flat), size=n_g, p=probs_g)
+                cell_i[mask] = flat_idx % nx
+                cell_j[mask] = flat_idx // nx
+
+    weights = np.full(N, total_source / N)
+    
+    x = x_edges[cell_i] + np.random.uniform(0.0, 1.0, N) * np.diff(x_edges)[cell_i]
+    y = y_edges[cell_j] + np.random.uniform(0.0, 1.0, N) * np.diff(y_edges)[cell_j]
+    
+    ux, uy = _sample_isotropic_xy(N)
+    times = np.random.uniform(0.0, dt, N)
+
+    return weights, ux, uy, times, x, y, cell_i, cell_j, groups_sampled
+
+
+def _sample_source_rz_mg(N, source, dt, r_edges, z_edges, energy_edges, temperature):
+    """Sample external source particles for RZ geometry with multigroup."""
+    nr = len(r_edges) - 1
+    nz = len(z_edges) - 1
+    n_groups = len(energy_edges) - 1
+
+    source = np.asarray(source)
+    
+    if source.ndim == 0:
+        source_mg = np.zeros((n_groups, nr, nz))
+        source_mg[0, :, :] = source
+    elif source.ndim == 2:
+        source_mg = np.zeros((n_groups, nr, nz))
+        source_mg[0, :, :] = source
+    elif source.ndim == 3:
+        source_mg = source
+    else:
+        raise ValueError(f"source shape {source.shape} not supported")
+
+    # source_mg has units of energy/(volume*time), so multiply by volumes to get energy/time
+    volumes = _cell_volumes_rz(r_edges, z_edges)
+    total_source = np.sum(source_mg * volumes[np.newaxis, :, :]) * dt
+    if N <= 0 or total_source <= 0.0:
+        return (
+            np.array([]), np.array([]), np.array([]),
+            np.array([]), np.array([]), np.array([]),
+            np.array([], dtype=np.int32), np.array([], dtype=np.int32),
+            np.array([], dtype=np.int32)
+        )
+
+    # Sample by group then by space (use source*volume for proper weighting)
+    source_by_group = np.sum(source_mg * volumes[np.newaxis, :, :], axis=(1, 2)) * dt
+    group_probs = source_by_group / (total_source + 1e-300)
+    groups_sampled = _sample_group_piecewise_constant(N, group_probs)
+    
+    cell_i = np.zeros(N, dtype=np.int32)
+    cell_j = np.zeros(N, dtype=np.int32)
+    
+    for g in range(n_groups):
+        mask = (groups_sampled == g)
+        n_g = np.sum(mask)
+        if n_g > 0:
+            # Weight cells by source*volume, not just source
+            source_g_flat = (source_mg[g, :, :] * volumes).flatten(order='F')
+            if np.sum(source_g_flat) > 0:
+                probs_g = source_g_flat / np.sum(source_g_flat)
+                flat_idx = np.random.choice(len(source_g_flat), size=n_g, p=probs_g)
+                cell_i[mask] = flat_idx % nr
+                cell_j[mask] = flat_idx // nr
+
+    weights = np.full(N, total_source / N)
+    
+    # Sample r with r^2 weighting
+    r_l = r_edges[cell_i]
+    r_r = r_edges[cell_i + 1]
+    r2 = r_l**2 + np.random.uniform(0.0, 1.0, N) * (r_r**2 - r_l**2)
+    r = np.sqrt(r2)
+    
+    z = z_edges[cell_j] + np.random.uniform(0.0, 1.0, N) * np.diff(z_edges)[cell_j]
+    
+    mu_perp, eta = _sample_isotropic_rz(N)
+    times = np.random.uniform(0.0, dt, N)
+
+    return weights, mu_perp, eta, times, r, z, cell_i, cell_j, groups_sampled
+
+
+@jit(nopython=True, cache=True)
+def _sample_groups_for_emission_jit(Ntarget, cell_i, cell_j, emission_by_group):
+    """Numba-jitted vectorized group sampling for emission particles.
+    
+    For each particle at (cell_i[p], cell_j[p]), sample group from local distribution.
+    Much faster than calling _sample_group_piecewise_constant in a loop.
+    """
+    g_sampled = np.zeros(Ntarget, dtype=np.int32)
+    n_groups = emission_by_group.shape[0]
+    
+    for p in range(Ntarget):
+        i_p = cell_i[p]
+        j_p = cell_j[p]
+        
+        # Get local probabilities
+        probs = emission_by_group[:, i_p, j_p]
+        total_prob = np.sum(probs)
+        
+        if total_prob > 0.0:
+            # Sample group from unnormalized distribution
+            xi = np.random.random() * total_prob
+            cumsum = 0.0
+            for g in range(n_groups):
+                cumsum += probs[g]
+                if xi <= cumsum:
+                    g_sampled[p] = g
+                    break
+        else:
+            g_sampled[p] = 0
+    
+    return g_sampled
+
+
+@jit(nopython=True, cache=True)
+def _comb_mg_jit(weights, photon_energies, cell_i, cell_j, groups, dir1,
+                 dir2, times, pos1, pos2, bin_id, ew, n_arr, r_vals):
+    # Pass 1: count
+    total_n = 0
+    N_in = len(weights)
+    for k in range(N_in):
+        b = int(bin_id[k])
+        w_target = ew[b]
+        if w_target > 0.0:
+            n = int(weights[k] / w_target + r_vals[k])
+            n_arr[k] = n
+            total_n += n
+            
+    # Pass 2: allocate and fill
+    nw = np.zeros(total_n, dtype=np.float64)
+    ni = np.zeros(total_n, dtype=np.int32)
+    nj = np.zeros(total_n, dtype=np.int32)
+    ng = np.zeros(total_n, dtype=np.int32)
+    nd1 = np.zeros(total_n, dtype=np.float64)
+    nd2 = np.zeros(total_n, dtype=np.float64)
+    nt = np.zeros(total_n, dtype=np.float64)
+    np1 = np.zeros(total_n, dtype=np.float64)
+    np2 = np.zeros(total_n, dtype=np.float64)
+    ne = np.zeros(total_n, dtype=np.float64)
+    
+    idx = 0
+    for k in range(N_in):
+        n = n_arr[k]
+        if n > 0:
+            b = int(bin_id[k])
+            w_target = ew[b]
+            for _ in range(n):
+                nw[idx] = w_target
+                ni[idx] = cell_i[k]
+                nj[idx] = cell_j[k]
+                ng[idx] = groups[k]
+                nd1[idx] = dir1[k]
+                nd2[idx] = dir2[k]
+                nt[idx] = times[k]
+                np1[idx] = pos1[k]
+                np2[idx] = pos2[k]
+                ne[idx] = photon_energies[k]
+                idx += 1
+                
+    return nw, ni, nj, ng, nd1, nd2, nt, np1, np2, ne
+
+def _comb_mg(weights, photon_energies, cell_i, cell_j, groups, dir1, dir2,
+             times, pos1, pos2, Nmax, nx, ny, n_groups):
+    """Per-cell-group stochastic comb to cap total particle count.
+    
+    Ensures at least 1 particle per (cell_i, cell_j, group) bin to avoid losing
+    energy in any region or group. Stochastically splits/merges particles within
+    each bin to target Nmax total.
+    """
+    # Keep all positive-weight particles. For robustness, clip indices into
+    # valid cell bounds rather than discarding out-of-range particles.
+    alive = (weights > 0.0)
+    weights = weights[alive]
+    cell_i = np.clip(cell_i[alive], 0, nx - 1)
+    cell_j = np.clip(cell_j[alive], 0, ny - 1)
+    groups = groups[alive]
+    dir1 = dir1[alive]
+    dir2 = dir2[alive]
+    times = times[alive]
+    pos1 = pos1[alive]
+    pos2 = pos2[alive]
+    photon_energies = photon_energies[alive]
+    
+    if len(weights) == 0:
+        return (weights, cell_i, cell_j, groups, dir1, dir2, times, pos1,
+                pos2, photon_energies, np.zeros((n_groups, nx, ny)))
+    if len(weights) <= Nmax:
+        return (weights, cell_i, cell_j, groups, dir1, dir2, times, pos1,
+                pos2, photon_energies, np.zeros((n_groups, nx, ny)))
+    
+    # Compute energy per (cell_i, cell_j, group) bin before combing
+    # bin_id = cell_i + cell_j * nx + group * nx * ny
+    n_bins = nx * ny * n_groups
+    bin_id = cell_i + cell_j * nx + groups * (nx * ny)
+    bin_id = bin_id.astype(np.int32)
+    
+    ecen = np.bincount(bin_id, weights=weights, minlength=n_bins)
+    E = np.sum(ecen)
+    if E <= 0.0:
+        return (weights, cell_i, cell_j, groups, dir1, dir2, times, pos1,
+            pos2, photon_energies, np.zeros((n_groups, nx, ny)))
+    
+    # Desired number of particles per bin: at least 1 if bin has energy
+    desired = np.where(ecen > 0.0, np.maximum(1, np.round(Nmax * ecen / E).astype(int)), 0)
+    ew = np.zeros_like(ecen)
+    nonzero_desired = desired > 0
+    ew[nonzero_desired] = ecen[nonzero_desired] / desired[nonzero_desired]
+    
+    n_arr = np.zeros(len(weights), dtype=np.int32)
+    r_vals = np.random.random(len(weights))
+    nw, ni, nj, ng, nd1, nd2, nt, np1, np2, ne = _comb_mg_jit(
+        weights, photon_energies, cell_i, cell_j, groups, dir1, dir2,
+        times, pos1, pos2, bin_id, ew, n_arr, r_vals
+    )
+    
+    # Compute pre- and post-comb radiation energy by group/cell.
+    # The returned array is the comb-induced discrepancy: pre - post.
+    n_bins = nx * ny * n_groups
+    flat_indices = cell_i + cell_j * nx + groups * (nx * ny)
+    rad_energy_before = np.bincount(
+        flat_indices, weights=weights, minlength=n_bins
+    ).reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1)
+
+    if len(nw) > 0:
+        flat_indices_new = ni + nj * nx + ng * (nx * ny)
+        rad_energy_after = np.bincount(
+            flat_indices_new, weights=nw, minlength=n_bins
+        ).reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1)
+    else:
+        rad_energy_after = np.zeros((n_groups, nx, ny))
+
+    comb_energy_discrepancy = rad_energy_before - rad_energy_after
+
+    return (nw, ni, nj, ng, nd1, nd2, nt, np1, np2, ne,
+            comb_energy_discrepancy)
+
+
+def warmup_jit():
+    """Force Numba to load (deserialize) the cached JIT kernels now.
+
+    Calling this at init time moves the ~15-45 s cache-load delay out of the
+    first ``step()`` call and into setup, where it is clearly visible.
+    """
+    t0 = _time.perf_counter()
+    print("[MG_IMC2D] Loading Numba JIT cache ...", flush=True)
+    _edges = np.array([0.0, 1.0])
+    _sigma = np.zeros((1, 1, 1))
+    _vols  = np.ones((1, 1))
+    _temperature = np.zeros((1, 1))
+    _empty = np.empty(0, dtype=np.float64)
+    _emptyi = np.empty(0, dtype=np.int64)
+    _transport_particles_2d_mg(
+        _empty, _empty, _empty, _empty, _empty, _empty,
+        _emptyi, _emptyi, _emptyi,
+        _edges, _edges,
+        _sigma, _sigma, _sigma, np.array([1.0]), _empty, _edges,
+        _temperature, False,
+        _vols,
+        1.0,
+        (False, False, False, False),
+        1000,
+        _GEOM_XY,
+        0.0,
+    )
+    dt = _time.perf_counter() - t0
+    print(f"[MG_IMC2D] JIT cache loaded in {dt:.1f} s", flush=True)
+
+
+def init_simulation(
+    Ntarget,
+    Tinit,
+    Tr_init,
+    edges1,
+    edges2,
+    energy_edges,
+    eos,
+    inv_eos,
+    Ntarget_ic=None,
+    T_emit_floor=0.0,
+    geometry="xy",
+):
+    """Initialize multigroup particle arrays and material state for 2D IMC.
+    
+    Parameters
+    ----------
+    Ntarget : int
+        Target number of particles for material emission
+    Tinit : array (nx, ny)
+        Initial material temperature (keV)
+    Tr_init : array (nx, ny)
+        Initial radiation temperature (keV)
+    edges1 : array
+        x or r edges
+    edges2 : array
+        y or z edges
+    energy_edges : array
+        Energy group edges (keV)
+    eos : callable
+        Material energy as function of temperature
+    inv_eos : callable
+        Temperature as function of energy
+    Ntarget_ic : int, optional
+        Number of initial condition particles
+    T_emit_floor : float, optional
+        Suppress initial-condition radiation particles from cells with
+        Tr_init below this temperature (keV).
+    geometry : str
+        'xy' or 'rz'
+    
+    Returns
+    -------
+    state : SimulationState2DMG
+        Initial state
+    """
+    warmup_jit()
+    nx, ny = _shape_from_edges(edges1, edges2)
+    n_groups = len(energy_edges) - 1
+    group_centers = 0.5 * (energy_edges[:-1] + energy_edges[1:])
+    volumes = _cell_volumes(edges1, edges2, geometry)
+
+    internal_energy = eos(Tinit)
+    temperature = Tinit.copy()
+    assert np.allclose(inv_eos(internal_energy), Tinit), "Inverse EOS failed"
+
+    N_ic = Ntarget if Ntarget_ic is None else Ntarget_ic
+    if geometry == "xy":
+        p = _equilibrium_sample_xy_mg(
+            N_ic, Tr_init, edges1, edges2, energy_edges,
+            T_emit_floor=T_emit_floor,
+        )
+    elif geometry == "rz":
+        p = _equilibrium_sample_rz_mg(
+            N_ic, Tr_init, edges1, edges2, energy_edges,
+            T_emit_floor=T_emit_floor,
+        )
+    else:
+        raise ValueError(f"Unknown geometry: {geometry}")
+
+    weights, dir1, dir2, times, pos1, pos2, groups = p
+    photon_energies = group_centers[groups] if len(groups) else np.empty(0)
+
+    # Locate particles in cells
+    cell_i, cell_j = _locate_indices(pos1, pos2, edges1, edges2)
+
+    # Compute radiation energy by group
+    valid_mask = (weights > 0.0) & (cell_i >= 0) & (cell_i < nx) & (cell_j >= 0) & (cell_j < ny)
+    if np.any(valid_mask):
+        flat_indices = cell_i[valid_mask] + cell_j[valid_mask] * nx + groups[valid_mask] * (nx * ny)
+        rad_energy_flat = np.bincount(flat_indices, weights=weights[valid_mask], minlength=nx * ny * n_groups)
+        radiation_energy_by_group = rad_energy_flat.reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1) / volumes
+    else:
+        radiation_energy_by_group = np.zeros((n_groups, nx, ny))
+
+    # Overall radiation temperature
+    total_rad = np.sum(radiation_energy_by_group, axis=0)
+    radiation_temperature = (total_rad / __a) ** 0.25
+
+    total_internal = float(np.sum(internal_energy * volumes))
+    total_rad = float(np.sum(weights))
+    previous_total = total_internal + total_rad
+
+    print(
+        "Time",
+        "N",
+        "Total Energy",
+        "Total Internal Energy",
+        "Total Radiation Energy",
+        "Boundary Emission",
+        "Boundary Outgoing",
+        "Source Emission",
+        "Residual",
+        sep="\t",
+    )
+    print("=" * 158)
+    print(
+        "{:.6e}".format(0.0),
+        len(weights),
+        "{:.6e}".format(previous_total),
+        "{:.6e}".format(total_internal),
+        "{:.6e}".format(total_rad),
+        "{:.6e}".format(0.0),
+        "{:.6e}".format(0.0),
+        "{:.6e}".format(0.0),
+        "{:.6e}".format(0.0),
+        sep="\t",
+    )
+
+    return SimulationState2DMG(
+        weights=weights,
+        dir1=dir1,
+        dir2=dir2,
+        times=times,
+        pos1=pos1,
+        pos2=pos2,
+        cell_i=cell_i,
+        cell_j=cell_j,
+        groups=groups,
+        photon_energies=photon_energies,
+        internal_energy=internal_energy,
+        temperature=temperature,
+        radiation_temperature=radiation_temperature,
+        radiation_energy_by_group=radiation_energy_by_group,
+        time=0.0,
+        previous_total_energy=previous_total,
+        count=0,
+    )
+
+
+def _estimate_boundary_emission_energy(geometry, edges1, edges2, b_left, b_right, b_bottom, b_top, dt, boundary_source_func=None):
+    """Compute total boundary emission energy analytically (no particle sampling).
+
+    Mirrors the area-weighted integral in ``_sample_boundary_rz/xy`` so that
+    the result is exactly the weight sum that would be produced if we did sample.
+
+    Parameters
+    ----------
+    geometry : "xy" or "rz"
+    edges1, edges2 : boundary coordinate arrays
+    b_left, b_right, b_bottom, b_top : float
+        Uniform boundary temperatures already resolved by
+        ``_boundary_temperature_value``.
+    dt : float
+    boundary_source_func : callable(r, z, side) → T, optional
+
+    Returns
+    -------
+    E_bc : float
+        Total boundary emission energy this step.
+    """
+    E_bc = 0.0
+    r0, r1 = edges1[0], edges1[-1]
+    z0, z1 = edges2[0], edges2[-1]
+
+    if geometry == "xy":
+        uniform = {
+            "left":   (b_left,   lambda: 2.0 * (z1 - z0)),
+            "right":  (b_right,  lambda: 2.0 * (z1 - z0)),
+            "bottom": (b_bottom, lambda: (r1 - r0)),
+            "top":    (b_top,    lambda: (r1 - r0)),
+        }
+        for side, (Tb, area_fn) in uniform.items():
+            if boundary_source_func is not None:
+                if side in ("left", "right"):
+                    R = r0 if side == "left" else r1
+                    z_centers = 0.5 * (edges2[:-1] + edges2[1:])
+                    dz = np.diff(edges2)
+                    for kz, z_c in enumerate(z_centers):
+                        T_bc = boundary_source_func(R, z_c, side)
+                        if T_bc > 0.0:
+                            E_bc += __a * __c * T_bc**4 / 4.0 * 2.0 * dz[kz] * dt
+                else:
+                    Z = z0 if side == "bottom" else z1
+                    x_centers = 0.5 * (edges1[:-1] + edges1[1:])
+                    dx = np.diff(edges1)
+                    for kx, x_c in enumerate(x_centers):
+                        T_bc = boundary_source_func(x_c, Z, side)
+                        if T_bc > 0.0:
+                            E_bc += __a * __c * T_bc**4 / 4.0 * dx[kx] * dt
+            elif Tb > 0.0:
+                E_bc += __a * __c * Tb**4 / 4.0 * area_fn() * dt
+    else:  # rz
+        uniform = {
+            "rmin": b_left,
+            "rmax": b_right,
+            "zmin": b_bottom,
+            "zmax": b_top,
+        }
+        for side, Tb in uniform.items():
+            if boundary_source_func is not None:
+                if side in ("rmin", "rmax"):
+                    R = r0 if side == "rmin" else r1
+                    z_centers = 0.5 * (edges2[:-1] + edges2[1:])
+                    dz = np.diff(edges2)
+                    for kz, z_c in enumerate(z_centers):
+                        T_bc = boundary_source_func(R, z_c, side)
+                        if T_bc > 0.0:
+                            E_bc += __a * __c * T_bc**4 / 4.0 * 2.0 * np.pi * R * dz[kz] * dt
+                else:
+                    Z = z0 if side == "zmin" else z1
+                    r_centers = 0.5 * (edges1[:-1] + edges1[1:])
+                    for kr, r_c in enumerate(r_centers):
+                        T_bc = boundary_source_func(r_c, Z, side)
+                        if T_bc > 0.0:
+                            r_in  = edges1[kr]
+                            r_out = edges1[kr + 1]
+                            E_bc += __a * __c * T_bc**4 / 4.0 * np.pi * (r_out**2 - r_in**2) * dt
+            elif Tb > 0.0:
+                if side in ("rmin", "rmax"):
+                    R = r0 if side == "rmin" else r1
+                    area = 2.0 * np.pi * R * (z1 - z0)
+                else:
+                    area = np.pi * (r1**2 - r0**2)
+                E_bc += __a * __c * Tb**4 / 4.0 * area * dt
+
+    return E_bc
+
+
+def step(
+    state,
+    Ntarget,
+    Nboundary,
+    Nsource,
+    Nmax,
+    T_boundary,
+    dt,
+    edges1,
+    edges2,
+    energy_edges,
+    sigma_a_funcs,  # List of callables: sigma_a_g(T) for each group
+    inv_eos,
+    cv,
+    source,
+    reflect=(False, False, False, False),
+    theta=1.0,
+    use_scalar_intensity_Tr=True,
+    conserve_comb_energy=False,
+    geometry="xy",
+    max_events_per_particle=1_000_000,
+    boundary_source_func=None,
+    emission_fractions=None,
+    Ntotal=0,
+    Ntotal_T_floor=0.0,
+    particle_budget_fmin=0.1,
+    T_emit_floor=0.0,
+    Nmax_growth=0,
+    Nmax_final=None,
+    _timing=False,
+    sigma_s_funcs=None,
+    use_compton=False,
+    kompaneets_options=None,
+):
+    """Advance one 2D multigroup IMC step.
+    
+    Parameters
+    ----------
+    state : SimulationState2DMG
+        Current state
+    sigma_a_funcs : list of callables
+        List of absorption opacity functions, one per group
+        Each function takes temperature array and returns opacity array
+    sigma_s_funcs : optional list of true-scattering opacity functions, one per group
+    use_compton : if true, true-scatter events use explicit thermal Compton kinematics
+    kompaneets_options : dict or None
+        If supplied, Compton collisions are omitted from transport and a
+        cell-local implicit Kompaneets update is applied to census particles.
+        The required entry is ``thomson_opacity``.  ``sigma_s_funcs`` may
+        still be supplied to retain the elastic, isotropic angular transport
+        approximation between frequency-redistribution updates.
+    ... (other parameters similar to IMC2D.step)
+    
+    Returns
+    -------
+    state : SimulationState2DMG
+        Updated state
+    info : dict
+        Step information
+    """
+    nx, ny = _shape_from_edges(edges1, edges2)
+    n_groups = len(energy_edges) - 1
+    group_centers = 0.5 * (energy_edges[:-1] + energy_edges[1:])
+    volumes = _cell_volumes(edges1, edges2, geometry)
+
+    weights = state.weights
+    dir1 = state.dir1
+    dir2 = state.dir2
+    times = state.times
+    pos1 = state.pos1
+    pos2 = state.pos2
+    cell_i = state.cell_i
+    cell_j = state.cell_j
+    groups = state.groups
+    photon_energies = state.photon_energies.copy()
+    internal_energy = state.internal_energy
+    temperature = state.temperature
+
+    if kompaneets_options is not None:
+        if use_compton:
+            raise ValueError("explicit Compton and Kompaneets splitting are mutually exclusive")
+        if "thomson_opacity" not in kompaneets_options:
+            raise ValueError("kompaneets_options requires 'thomson_opacity'")
+
+    t_step_start = _time.perf_counter()
+
+    # Compute group-dependent opacities and Fleck factors
+    sigma_a = np.zeros((n_groups, nx, ny))
+    for g in range(n_groups):
+        sigma_a[g, :, :] = sigma_a_funcs[g](temperature)
+
+    sigma_s_true = np.zeros((n_groups, nx, ny))
+    if sigma_s_funcs is not None:
+        if len(sigma_s_funcs) != n_groups:
+            raise ValueError("sigma_s_funcs must have one callable per group")
+        for g in range(n_groups):
+            sigma_s_true[g, :, :] = sigma_s_funcs[g](temperature)
+        sigma_s_true = np.maximum(sigma_s_true, 0.0)
+
+    # Compute Planck-weighted opacity for Fleck factor (vectorized)
+    B_g = _compute_Bg_multigroup_grid(energy_edges, temperature)  # (n_groups, nx, ny)
+
+    sigma_P = np.sum(sigma_a * B_g, axis=0) / (np.sum(B_g, axis=0) + 1e-300)
+
+    # Fleck factor (scalar, independent of group)
+    beta = 4.0 * __a * temperature**3 / cv(temperature)
+    f = 1.0 / (1.0 + theta * beta * sigma_P * __c * dt)
+    f = np.clip(f, 0.0, 1.0)
+
+    # Effective scattering and absorption by group
+    sigma_s = sigma_a * (1.0 - f) + sigma_s_true
+    sigma_a = sigma_a * f
+
+    # ── Energy-proportional particle split ────────────────────────────────────
+    # When Ntotal > 0, ignore the caller-supplied Ntarget / Nboundary and instead
+    # split the total budget in proportion to the expected energy emitted from
+    # the boundary and from material absorption-re-emission this step.
+    E_bc_est  = float('nan')
+    E_mat_est = float('nan')
+    if Ntotal > 0:
+        b_left_pre   = _boundary_temperature_value(T_boundary[0], state.time)
+        b_right_pre  = _boundary_temperature_value(T_boundary[1], state.time)
+        b_bottom_pre = _boundary_temperature_value(T_boundary[2], state.time)
+        b_top_pre    = _boundary_temperature_value(T_boundary[3], state.time)
+
+        E_bc_est = _estimate_boundary_emission_energy(
+            geometry, edges1, edges2,
+            b_left_pre, b_right_pre, b_bottom_pre, b_top_pre,
+            dt, boundary_source_func,
+        )
+
+        # Material emission: sum_g sigma_a[g] * (B_g[g]/b_sum) * a*c*T^4*dt*V
+        # B_g and sigma_a are already Fleck-modified; this is exactly E_emit.
+        # Cells at or below Ntotal_T_floor are excluded so that a uniformly cold
+        # domain does not swamp the boundary in the split (only cells that have
+        # been heated above the floor count toward E_mat_est).
+        b_sum_pre  = np.sum(B_g, axis=0) + 1e-300
+        b_star_pre = B_g / b_sum_pre[None, :, :]
+        cell_emiss = np.sum(sigma_a * b_star_pre, axis=0) * __a * __c * temperature**4 * dt * volumes
+        if Ntotal_T_floor > 0.0:
+            cell_emiss = np.where(temperature > Ntotal_T_floor, cell_emiss, 0.0)
+        E_mat_est = float(np.sum(cell_emiss))
+
+        E_total_est = E_bc_est + E_mat_est
+        if E_total_est > 0.0:
+            frac_bc = E_bc_est / E_total_est
+        else:
+            frac_bc = 0.5
+
+        # Clamp split so each active channel gets at least fmin of Ntotal.
+        # For a two-way split, fmin must be in [0, 0.5].
+        fmin = float(np.clip(particle_budget_fmin, 0.0, 0.5))
+        frac_bc = float(np.clip(frac_bc, fmin, 1.0 - fmin))
+
+        Nboundary = int(round(Ntotal * frac_bc))
+        Ntarget   = Ntotal - Nboundary
+
+    # Boundary injection
+    b_left = _boundary_temperature_value(T_boundary[0], state.time)
+    b_right = _boundary_temperature_value(T_boundary[1], state.time)
+    b_bottom = _boundary_temperature_value(T_boundary[2], state.time)
+    b_top = _boundary_temperature_value(T_boundary[3], state.time)
+
+    boundary_emission = 0.0
+    boundary_emission_by_group = np.zeros(n_groups)
+    boundary_emission_by_side = np.zeros(4)
+
+    if Nboundary > 0:
+        if geometry == "xy":
+            for side, Tb in (
+                ("left", b_left),
+                ("right", b_right),
+                ("bottom", b_bottom),
+                ("top", b_top),
+            ):
+                if side == "left":
+                    side_idx = 0
+                elif side == "right":
+                    side_idx = 1
+                elif side == "bottom":
+                    side_idx = 2
+                else:
+                    side_idx = 3
+                s = _sample_boundary_xy(Nboundary, side, Tb, dt, edges1, edges2, energy_edges, boundary_source_func)
+                if s is None:
+                    continue
+                w, d1, d2, t, p1, p2, g = s
+                ci, cj = _locate_indices(p1, p2, edges1, edges2)
+                weights = np.concatenate((weights, w))
+                dir1 = np.concatenate((dir1, d1))
+                dir2 = np.concatenate((dir2, d2))
+                times = np.concatenate((times, t))
+                pos1 = np.concatenate((pos1, p1))
+                pos2 = np.concatenate((pos2, p2))
+                cell_i = np.concatenate((cell_i, ci))
+                cell_j = np.concatenate((cell_j, cj))
+                groups = np.concatenate((groups, g))
+                photon_energies = np.concatenate((photon_energies, group_centers[g]))
+                boundary_emission += float(np.sum(w))
+                boundary_emission_by_side[side_idx] += float(np.sum(w))
+                if len(g) > 0:
+                    boundary_emission_by_group += np.bincount(g, weights=w, minlength=n_groups)
+        else:
+            for side, Tb in (
+                ("rmin", b_left),
+                ("rmax", b_right),
+                ("zmin", b_bottom),
+                ("zmax", b_top),
+            ):
+                if side == "rmin":
+                    side_idx = 0
+                elif side == "rmax":
+                    side_idx = 1
+                elif side == "zmin":
+                    side_idx = 2
+                else:
+                    side_idx = 3
+                s = _sample_boundary_rz(Nboundary, side, Tb, dt, edges1, edges2, energy_edges, boundary_source_func)
+                if s is None:
+                    continue
+                w, d1, d2, t, p1, p2, g = s
+                ci, cj = _locate_indices(p1, p2, edges1, edges2)
+                valid = (ci >= 0) & (ci < nx) & (cj >= 0) & (cj < ny)
+                if np.any(valid):
+                    weights = np.concatenate((weights, w[valid]))
+                    dir1 = np.concatenate((dir1, d1[valid]))
+                    dir2 = np.concatenate((dir2, d2[valid]))
+                    times = np.concatenate((times, t[valid]))
+                    pos1 = np.concatenate((pos1, p1[valid]))
+                    pos2 = np.concatenate((pos2, p2[valid]))
+                    cell_i = np.concatenate((cell_i, ci[valid]))
+                    cell_j = np.concatenate((cell_j, cj[valid]))
+                    groups = np.concatenate((groups, g[valid]))
+                    photon_energies = np.concatenate((photon_energies, group_centers[g[valid]]))
+                    boundary_emission += float(np.sum(w[valid]))
+                    boundary_emission_by_side[side_idx] += float(np.sum(w[valid]))
+                    if np.any(valid):
+                        boundary_emission_by_group += np.bincount(g[valid], weights=w[valid], minlength=n_groups)
+
+    # Fixed source
+    source_emission = 0.0
+    if Nsource > 0 and np.max(source) > 0.0:
+        if geometry == "xy":
+            s = _sample_source_xy_mg(Nsource, source, dt, edges1, edges2, energy_edges, temperature)
+        else:
+            s = _sample_source_rz_mg(Nsource, source, dt, edges1, edges2, energy_edges, temperature)
+        
+        if len(s[0]) > 0:
+            w, d1, d2, t, p1, p2, ci, cj, g = s
+            weights = np.concatenate((weights, w))
+            dir1 = np.concatenate((dir1, d1))
+            dir2 = np.concatenate((dir2, d2))
+            times = np.concatenate((times, t))
+            pos1 = np.concatenate((pos1, p1))
+            pos2 = np.concatenate((pos2, p2))
+            cell_i = np.concatenate((cell_i, ci))
+            cell_j = np.concatenate((cell_j, cj))
+            groups = np.concatenate((groups, g))
+            photon_energies = np.concatenate((photon_energies, group_centers[g]))
+            source_emission = float(np.sum(w))
+
+    # Material emission: sample groups from piecewise constant distribution
+    # proportional to σ_a,g b_g★ (equation 10.18)
+    emission_by_group = np.zeros((n_groups, nx, ny))
+    
+    if Ntarget > 0:
+        # Compute emission probabilities by group
+        if emission_fractions is not None:
+            # Use custom emission fractions (e.g., for picket fence problem)
+            b_star = np.zeros((n_groups, nx, ny))
+            for g in range(n_groups):
+                b_star[g, :, :] = emission_fractions[g]
+        else:
+            # Reuse B_g computed above for Fleck factors to avoid duplicate work.
+            b_star = B_g.copy()
+            
+            # Normalize b_star so it sums to 1 across groups
+            # This ensures we emit the full acT^4 energy even when groups don't cover full spectrum
+            # Guard against zero b_sum (cold cells where all B_g ≈ 0) to prevent NaN propagation.
+            b_sum = np.sum(b_star, axis=0)  # Sum over groups
+            b_star = b_star / (b_sum[None, :, :] + 1e-300)  # Normalize
+
+        # Emission rate by group: σ_a,g f b_g★ c a T^4 Δt V
+        # Note: sigma_a has already been modified by Fleck factor (f) at line 1280
+        emission_by_group = sigma_a * b_star * __a * __c * temperature[None, :, :]**4 * dt * volumes[None, :, :]
+
+        # Zero out cells below the emission temperature floor (if set).
+        if T_emit_floor > 0.0:
+            cold_mask = temperature < T_emit_floor   # shape (nx, ny)
+            emission_by_group[:, cold_mask] = 0.0
+
+        # Sample particles: first by position weighted by total emission, then by group
+        total_emission_per_cell = np.sum(emission_by_group, axis=0)
+        E_emit = float(np.sum(total_emission_per_cell))
+        
+        if E_emit > 0.0:
+            # Sample cell locations — use F-order flatten so flat_index = i + j*nx,
+            # consistent with ci = flat % nx, cj = flat // nx used throughout.
+            emission_flat = total_emission_per_cell.flatten(order='F')
+            probs_cell = emission_flat / E_emit
+            # Clip and renormalize to guard against floating-point noise that
+            # could leave tiny negative values or NaNs in the probability array.
+            probs_cell = np.clip(probs_cell, 0.0, None)
+            p_sum = probs_cell.sum()
+            if p_sum > 0.0:
+                probs_cell /= p_sum
+            flat_indices = np.random.choice(len(emission_flat), size=Ntarget, p=probs_cell)
+            
+            ci = flat_indices % nx
+            cj = flat_indices // nx
+            
+            # Vectorized group sampling using JIT-compiled function
+            g_sampled = _sample_groups_for_emission_jit(Ntarget, ci, cj, emission_by_group)
+            
+            # Sample positions within cells
+            if geometry == "xy":
+                p1 = edges1[ci] + np.random.uniform(0.0, 1.0, Ntarget) * np.diff(edges1)[ci]
+                p2 = edges2[cj] + np.random.uniform(0.0, 1.0, Ntarget) * np.diff(edges2)[cj]
+                d1, d2 = _sample_isotropic_xy(Ntarget)
+            else:
+                r_l = edges1[ci]
+                r_r = edges1[ci + 1]
+                r2 = r_l**2 + np.random.uniform(0.0, 1.0, Ntarget) * (r_r**2 - r_l**2)
+                p1 = np.sqrt(r2)
+                p2 = edges2[cj] + np.random.uniform(0.0, 1.0, Ntarget) * np.diff(edges2)[cj]
+                d1, d2 = _sample_isotropic_rz(Ntarget)
+            
+            t = np.random.uniform(0.0, dt, Ntarget)
+            w = np.full(Ntarget, E_emit / Ntarget)
+            
+            weights = np.concatenate((weights, w))
+            dir1 = np.concatenate((dir1, d1))
+            dir2 = np.concatenate((dir2, d2))
+            times = np.concatenate((times, t))
+            pos1 = np.concatenate((pos1, p1))
+            pos2 = np.concatenate((pos2, p2))
+            cell_i = np.concatenate((cell_i, ci))
+            cell_j = np.concatenate((cell_j, cj))
+            groups = np.concatenate((groups, g_sampled))
+            photon_energies = np.concatenate((photon_energies, group_centers[g_sampled]))
+
+    # Transport particles
+    t_transport_start = _time.perf_counter()
+    n_particles_transported = len(weights)
+    geometry_code = _GEOM_XY if geometry == "xy" else _GEOM_RZ
+    weight_floor = 1e-10 * float(np.sum(weights)) / max(len(weights), 1)
+    
+    if state.count == 0:
+        print(f"[MG_IMC2D] Using {get_num_threads()} threads for transport")
+    
+    (
+        dep_cell, si_cell, boundary_loss, boundary_loss_by_group,
+        boundary_loss_by_side, stats, scatter_count, scatter_weight,
+        scatter_mu_weight, scatter_p2_weight, scatter_backward_weight,
+        scatter_energy_ratio_weight, scatter_mu_energy_ratio_weight,
+    ) = _transport_particles_2d_mg(
+        weights,
+        dir1,
+        dir2,
+        times,
+        pos1,
+        pos2,
+        cell_i,
+        cell_j,
+        groups,
+        edges1,
+        edges2,
+        sigma_a,
+        sigma_s,
+        sigma_s_true,
+        group_centers,
+        photon_energies,
+        energy_edges,
+        temperature,
+        use_compton,
+        volumes,
+        dt,
+        reflect,
+        max_events_per_particle,
+        geometry_code,
+        weight_floor,
+    )
+    t_post_start = _time.perf_counter()
+
+    # Material/radiation update
+    total_deposited = np.sum(dep_cell, axis=0)
+    total_emitted = np.sum(emission_by_group if Ntarget > 0 else 0.0, axis=0) / volumes
+    
+    internal_energy = internal_energy + total_deposited - total_emitted
+    temperature = inv_eos(internal_energy)
+
+    # Implicit, cell-local frequency redistribution after ordinary IMC
+    # transport.  The helper rescales census weights and resamples frequencies
+    # while retaining the positions and directions in this 2-D state.
+    kompaneets_diagnostics = None
+    if kompaneets_options is not None:
+        options = dict(kompaneets_options)
+        thomson_opacity = options.pop("thomson_opacity")
+        mean_energy = options.pop("group_mean_energy_kev", None)
+        tolerance = options.pop("tolerance", 1.0e-8)
+        max_iterations = options.pop("max_iterations", 100)
+        induced_scattering = options.pop("induced_scattering", False)
+        scalar_capacity = options.pop("group_scalar_capacity", None)
+        if options:
+            raise ValueError("unrecognized Kompaneets options: " + ", ".join(sorted(options)))
+        if callable(thomson_opacity):
+            def flat_thomson_opacity(flat_temperature):
+                field_temperature = np.asarray(flat_temperature, dtype=float).reshape(
+                    (nx, ny), order="F"
+                )
+                field_opacity = np.asarray(thomson_opacity(field_temperature), dtype=float)
+                return np.broadcast_to(field_opacity, (nx, ny)).ravel(order="F")[:, None]
+        else:
+            opacity_field = np.broadcast_to(
+                np.asarray(thomson_opacity, dtype=float), (nx, ny)
+            ).ravel(order="F")[:, None]
+            flat_thomson_opacity = opacity_field
+        valid_cells = ((cell_i >= 0) & (cell_i < nx)
+                       & (cell_j >= 0) & (cell_j < ny))
+        flat_cells = np.where(
+            valid_cells, cell_i.astype(np.int64) + cell_j.astype(np.int64) * nx, -1,
+        )
+        (weights, groups, photon_energies, energy_flat, temperature_flat,
+         kompaneets_diagnostics) = implicit_kompaneets_census_update(
+            weights, flat_cells, groups, photon_energies, volumes.ravel(order="F"),
+            internal_energy.ravel(order="F"), temperature.ravel(order="F"),
+            dt, energy_edges, flat_thomson_opacity, __c, inv_eos,
+            group_mean_energy_kev=mean_energy, tolerance=tolerance,
+            max_iterations=max_iterations, induced_scattering=induced_scattering,
+            group_scalar_capacity=scalar_capacity,
+        )
+        internal_energy = energy_flat.reshape((nx, ny), order="F")
+        temperature = temperature_flat.reshape((nx, ny), order="F")
+
+    # Pre-comb radiation energy by group for diagnostics/output.
+    # With use_scalar_intensity_Tr=True this is a per-group path-length estimate.
+    radiation_energy_by_group_precomb = np.zeros((n_groups, nx, ny))
+    if use_scalar_intensity_Tr:
+        path_radiation_temperature = (
+            np.sum(si_cell, axis=0) / __a / __c
+        ) ** 0.25
+    else:
+        path_radiation_temperature = np.zeros((nx, ny))
+    if use_scalar_intensity_Tr:
+        # si_cell stores scalar intensity by group. Convert to group energy
+        # density via E_g = I_g / c, then Tr from sum_g(E_g).
+        radiation_energy_by_group_precomb = si_cell / __c
+    else:
+        valid_mask = (weights > 0.0) & (cell_i >= 0) & (cell_i < nx) & (cell_j >= 0) & (cell_j < ny)
+        if np.any(valid_mask):
+            flat_indices = cell_i[valid_mask] + cell_j[valid_mask] * nx + groups[valid_mask] * (nx * ny)
+            rad_energy_flat = np.bincount(flat_indices, weights=weights[valid_mask], minlength=nx * ny * n_groups)
+            radiation_energy_by_group_precomb = rad_energy_flat.reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1) / volumes
+
+    if kompaneets_options is not None:
+        # The path-length tally belongs to the pre-Kompaneets state.  Report
+        # the post-split census spectrum instead.
+        valid_mask = (weights > 0.0) & (cell_i >= 0) & (cell_i < nx) & (cell_j >= 0) & (cell_j < ny)
+        if np.any(valid_mask):
+            flat_indices = cell_i[valid_mask] + cell_j[valid_mask] * nx + groups[valid_mask] * (nx * ny)
+            rad_energy_flat = np.bincount(flat_indices, weights=weights[valid_mask], minlength=nx * ny * n_groups)
+            radiation_energy_by_group_precomb = rad_energy_flat.reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1) / volumes
+        else:
+            radiation_energy_by_group_precomb = np.zeros((n_groups, nx, ny))
+
+    valid_mask = (weights > 0.0) & (cell_i >= 0) & (cell_i < nx) & (cell_j >= 0) & (cell_j < ny)
+    if np.any(valid_mask):
+        flat_indices = cell_i[valid_mask] + cell_j[valid_mask] * nx + groups[valid_mask] * (nx * ny)
+        census_flat = np.bincount(
+            flat_indices, weights=weights[valid_mask],
+            minlength=nx * ny * n_groups,
+        )
+        census_energy_by_group = (
+            census_flat.reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1)
+            / volumes
+        )
+    else:
+        census_energy_by_group = np.zeros((n_groups, nx, ny))
+    census_radiation_temperature = (
+        np.sum(census_energy_by_group, axis=0) / __a
+    ) ** 0.25
+
+    # Combing
+    (
+        weights,
+        cell_i,
+        cell_j,
+        groups,
+        dir1,
+        dir2,
+        times,
+        pos1,
+        pos2,
+        photon_energies,
+        comb_disc,
+    ) = _comb_mg(
+        weights, photon_energies, cell_i, cell_j, groups, dir1, dir2,
+        times, pos1, pos2, Nmax, nx, ny, n_groups,
+    )
+
+    if conserve_comb_energy:
+        total_comb_disc = np.sum(comb_disc, axis=0)
+        internal_energy = internal_energy + total_comb_disc / volumes
+        temperature = inv_eos(internal_energy)
+
+    # Rebuild radiation group energies from post-comb particle weights so
+    # state and diagnostics are consistent with the final particle population.
+    valid_mask = (weights > 0.0) & (cell_i >= 0) & (cell_i < nx) & (cell_j >= 0) & (cell_j < ny)
+    if np.any(valid_mask):
+        flat_indices = cell_i[valid_mask] + cell_j[valid_mask] * nx + groups[valid_mask] * (nx * ny)
+        rad_energy_flat = np.bincount(flat_indices, weights=weights[valid_mask], minlength=nx * ny * n_groups)
+        radiation_energy_by_group_postcomb = rad_energy_flat.reshape(nx, ny, n_groups, order='F').transpose(2, 0, 1) / volumes
+    else:
+        radiation_energy_by_group_postcomb = np.zeros((n_groups, nx, ny))
+
+    postcomb_radiation_temperature = (
+        np.sum(radiation_energy_by_group_postcomb, axis=0) / __a
+    ) ** 0.25
+
+    # Use the pre-comb diagnostic tally for reported radiation temperature.
+    total_rad_energy = np.sum(radiation_energy_by_group_precomb, axis=0)
+    radiation_temperature = (total_rad_energy / __a) ** 0.25
+
+    times = np.zeros_like(times)
+
+    total_internal = float(np.sum(internal_energy * volumes))
+    total_rad = float(np.sum(weights))
+    total_energy = total_internal + total_rad
+    dE_system = total_energy - state.previous_total_energy
+    energy_residual = (
+        dE_system
+        - boundary_emission
+        + boundary_loss
+        - source_emission
+    )
+    energy_loss = energy_residual
+
+    state.weights = weights
+    state.dir1 = dir1
+    state.dir2 = dir2
+    state.times = times
+    state.pos1 = pos1
+    state.pos2 = pos2
+    state.cell_i = cell_i
+    state.cell_j = cell_j
+    state.groups = groups
+    state.photon_energies = photon_energies
+    state.internal_energy = internal_energy
+    state.temperature = temperature
+    state.radiation_temperature = radiation_temperature
+    state.radiation_energy_by_group = radiation_energy_by_group_precomb
+    state.radiation_energy_by_group_postcomb = radiation_energy_by_group_postcomb
+    state.time += dt
+    state.previous_total_energy = total_energy
+    state.count += 1
+
+    t_end = _time.perf_counter()
+    events_total = int(stats[0])
+    n_transported = max(int(n_particles_transported), 1)
+
+    info = {
+        "time": state.time,
+        "temperature": temperature,
+        "radiation_temperature": radiation_temperature,
+        "radiation_temperature_pathlength": path_radiation_temperature,
+        "radiation_temperature_census": census_radiation_temperature,
+        "radiation_temperature_postcomb": postcomb_radiation_temperature,
+        "radiation_energy_by_group": radiation_energy_by_group_precomb,
+        "radiation_energy_by_group_postcomb": radiation_energy_by_group_postcomb,
+        "N_particles": len(weights),
+        "N_boundary": Nboundary,
+        "N_target": Ntarget,
+        "E_boundary_est": E_bc_est,
+        "E_material_est": E_mat_est,
+        "total_energy": total_energy,
+        "total_internal_energy": total_internal,
+        "total_radiation_energy": total_rad,
+        "boundary_emission": boundary_emission,
+        "boundary_emission_by_group": boundary_emission_by_group.copy(),
+        "boundary_emission_by_side": boundary_emission_by_side.copy(),
+        "boundary_loss": boundary_loss,
+        "boundary_outgoing": boundary_loss,
+        "boundary_outgoing_by_group": boundary_loss_by_group.copy(),
+        "boundary_outgoing_by_side": boundary_loss_by_side.copy(),
+        "source_emission": source_emission,
+        "incoming_energy_total": boundary_emission + source_emission,
+        "outgoing_energy_total": boundary_loss,
+        "dE_system": dE_system,
+        "energy_expected_dE": boundary_emission + source_emission - boundary_loss,
+        "energy_residual": energy_residual,
+        "kompaneets": kompaneets_diagnostics,
+        "energy_loss": energy_loss,
+        "compton_scattering": {
+            "count": scatter_count,
+            "weight": scatter_weight,
+            "mu_weighted_sum": scatter_mu_weight,
+            "p2_weighted_sum": scatter_p2_weight,
+            "backward_weight": scatter_backward_weight,
+            "energy_ratio_weighted_sum": scatter_energy_ratio_weight,
+            "mu_energy_ratio_weighted_sum": scatter_mu_energy_ratio_weight,
+        },
+        "Nmax_next": (min(Nmax + Nmax_growth, Nmax_final)
+                      if Nmax_final is not None
+                      else Nmax + Nmax_growth)
+                     if Nmax_growth > 0 else Nmax,
+        "profiling": {
+            "phase_times_s": {
+                "sampling": t_transport_start - t_step_start,
+                "transport": t_post_start - t_transport_start,
+                "postprocess": t_end - t_post_start,
+                "total": t_end - t_step_start,
+            },
+            "transport_events": {
+                "total": events_total,
+                "boundary_crossings": int(stats[1]),
+                "absorption_continue_events": int(stats[2]),
+                "census_events": int(stats[3]),
+                "absorption_capture_events": int(stats[4]),
+                "weight_floor_kills": int(stats[5]),
+                "reflections": int(stats[6]),
+                "event_cap_hits": int(stats[7]),
+                "avg_events_per_particle": events_total / n_transported,
+                "n_particles_transported": int(n_transported),
+            },
+        },
+    }
+
+    return state, info
+
+
+def run_simulation(
+    Ntarget,
+    Nboundary,
+    Nsource,
+    Nmax,
+    Tinit,
+    Tr_init,
+    T_boundary,
+    dt,
+    edges1,
+    edges2,
+    energy_edges,
+    sigma_a_funcs,
+    eos,
+    inv_eos,
+    cv,
+    source,
+    final_time,
+    reflect=(False, False, False, False),
+    output_freq=1,
+    theta=1.0,
+    use_scalar_intensity_Tr=True,
+    Ntarget_ic=None,
+    conserve_comb_energy=False,
+    geometry="xy",
+    max_events_per_particle=1_000_000,
+    emission_fractions=None,
+    T_emit_floor=0.0,
+    Nmax_growth=0,
+    Nmax_final=None,
+    sigma_s_funcs=None,
+    use_compton=False,
+    kompaneets_options=None,
+):
+    """Run full multigroup IMC simulation.
+    
+    Parameters
+    ----------
+    energy_edges : array
+        Energy group boundaries (keV), length n_groups + 1
+    sigma_a_funcs : list of callables
+        Absorption opacity functions for each group
+    emission_fractions : array or None, optional
+        Custom emission fractions (must sum to 1.0). If None, uses Planck integrals.
+        For picket fence problems, use np.array([0.5, 0.5]) for equal emission.
+    ... (other parameters similar to IMC2D.run_simulation)
+    
+    Returns
+    -------
+    history : list of info dicts
+        Simulation history
+    state : SimulationState2DMG
+        Final state
+    """
+    state = init_simulation(
+        Ntarget,
+        Tinit,
+        Tr_init,
+        edges1,
+        edges2,
+        energy_edges,
+        eos,
+        inv_eos,
+        Ntarget_ic=Ntarget_ic,
+        geometry=geometry,
+    )
+
+    history = []
+    t = 0.0
+    step_count = 0
+    cumulative_residual = 0.0
+
+    time_tol = max(1e-15, 1e-12 * max(final_time, 1.0))
+    while t < final_time - time_tol:
+        dt_step = min(dt, final_time - t)
+        if dt_step <= time_tol:
+            break
+        
+        state, info = step(
+            state,
+            Ntarget,
+            Nboundary,
+            Nsource,
+            Nmax,
+            T_boundary,
+            dt_step,
+            edges1,
+            edges2,
+            energy_edges,
+            sigma_a_funcs,
+            inv_eos,
+            cv,
+            source,
+            reflect=reflect,
+            theta=theta,
+            use_scalar_intensity_Tr=use_scalar_intensity_Tr,
+            conserve_comb_energy=conserve_comb_energy,
+            geometry=geometry,
+            max_events_per_particle=max_events_per_particle,
+            emission_fractions=emission_fractions,
+            T_emit_floor=T_emit_floor,
+            Nmax_growth=Nmax_growth,
+            Nmax_final=Nmax_final,
+            sigma_s_funcs=sigma_s_funcs,
+            use_compton=use_compton,
+            kompaneets_options=kompaneets_options,
+        )
+
+        t = state.time
+        Nmax = info["Nmax_next"]
+        step_count += 1
+        cumulative_residual += info["energy_residual"]
+
+        if step_count % 10 == 0:
+            net_boundary = info["boundary_emission"] - info["boundary_outgoing"]
+            print(
+                "[diag]",
+                f"step={step_count}",
+                f"t={t:.6e}",
+                f"net_boundary={net_boundary:.6e}",
+                f"cum_residual={cumulative_residual:.6e}",
+            )
+
+        if step_count % output_freq == 0 or (final_time - t) < time_tol:
+            info["cumulative_energy_residual"] = cumulative_residual
+            info["net_boundary_energy"] = info["boundary_emission"] - info["boundary_outgoing"]
+            history.append(info)
+            print(
+                "{:.6e}".format(t),
+                info["N_particles"],
+                "{:.6e}".format(info["total_energy"]),
+                "{:.6e}".format(info["total_internal_energy"]),
+                "{:.6e}".format(info["total_radiation_energy"]),
+                "{:.6e}".format(info["boundary_emission"]),
+                "{:.6e}".format(info["boundary_outgoing"]),
+                "{:.6e}".format(info["source_emission"]),
+                "{:.6e}".format(info["energy_residual"]),
+                sep="\t",
+            )
+
+    return history, state
+
+
+if __name__ == "__main__":
+    print("Multigroup IMC 2D - Core module loaded successfully")
+    print(f"Planck integrals available: {_PLANCK_AVAILABLE}")

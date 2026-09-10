@@ -1,0 +1,1 @@
+"""Fleck-Cummings regression tests."""

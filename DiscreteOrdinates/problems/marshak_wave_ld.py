@@ -1,3 +1,10 @@
+import sys
+from pathlib import Path
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
+
 """
 Inhomogeneous Marshak wave problem (Test 1) — Linear Discontinuous S_N solver.
 
@@ -25,7 +32,7 @@ import matplotlib.pyplot as plt
 from numba import jit, float64
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import sn_solver_ld
+import DiscreteOrdinates.src.sn_solver_ld
 
 
 def setup_and_run(I=200, N=8, tfinal=1.0,

@@ -4,7 +4,8 @@ This directory contains a multigroup extension of the IMC2D.py code for solving 
 
 ## Overview
 
-**MG_IMC2D.py** extends IMC2D.py to support multigroup radiation transport. Each Monte Carlo particle carries:
+`MG_IMC/fleck_cummings/src/MG_IMC2D.py` extends the 2-D IMC solver to support
+multigroup radiation transport. Each Monte Carlo particle carries:
 - A **group index** (g = 0, 1, ..., G-1)
 - A **frequency** within that group (sampled from appropriate distributions)
 - All standard particle attributes (position, direction, weight, time)
@@ -90,9 +91,12 @@ The transport kernel `_transport_particles_2d_mg()` is JIT-compiled with Numba f
 
 ```
 MG_IMC/
-├── MG_IMC2D.py              # Main multigroup IMC module
-├── test_2group_marshak.py   # Example: 2-group Marshak wave
-└── README.md                # This file
+├── fleck_cummings/
+│   ├── src/                 # Main multigroup IMC implementation
+│   ├── problems/            # Benchmark drivers
+│   └── tests/               # Validation suite
+├── shared/visualization/    # Analysis plots
+└── README.md
 ```
 
 ## Usage
@@ -100,7 +104,7 @@ MG_IMC/
 ### Basic Example
 
 ```python
-from MG_IMC2D import run_simulation
+from MG_IMC.fleck_cummings.src.MG_IMC2D import run_simulation
 import numpy as np
 
 # Define energy groups (keV)
@@ -115,6 +119,13 @@ def sigma_a_group_1(T):
     return 0.5 * T**(-3)  # Group 1 opacity
 
 sigma_a_funcs = [sigma_a_group_0, sigma_a_group_1]
+
+# Optional true scattering opacity.  Set use_compton=True to apply the
+# explicit thermal Compton kernel at these events.
+sigma_s_funcs = [
+    lambda T: 0.2 * np.ones_like(T),
+    lambda T: 0.2 * np.ones_like(T),
+]
 
 # Spatial mesh
 x_edges = np.linspace(0, 5, 51)
@@ -148,6 +159,8 @@ history, state = run_simulation(
     edges2=y_edges,
     energy_edges=energy_edges,
     sigma_a_funcs=sigma_a_funcs,
+    sigma_s_funcs=sigma_s_funcs,
+    use_compton=True,
     eos=eos,
     inv_eos=inv_eos,
     cv=cv,
@@ -176,6 +189,8 @@ Advance simulation by one time step.
 **New Parameters:**
 - `energy_edges`: Energy group boundaries
 - `sigma_a_funcs`: List of opacity functions, one per group
+- `sigma_s_funcs`: Optional list of true-scattering opacity functions, one per group
+- `use_compton`: If true, true-scatter events use explicit thermal Compton kinematics
 
 **Returns:**
 - `state`: Updated state
@@ -199,6 +214,8 @@ Extends `SimulationState2D` with multigroup data:
 
 **New Fields:**
 - `groups`: Array of group indices for each particle
+- `photon_energies`: Continuous packet photon energies (keV), initialized from
+  group centers and updated by explicit Compton scattering
 - `radiation_energy_by_group`: Array of shape `(n_groups, nx, ny)` containing radiation energy density by group
 
 ### Helper Functions
@@ -211,7 +228,7 @@ Sample group indices from discrete distribution.
 
 ## Physical Units
 
-Consistent with IMC2D.py:
+Consistent with the gray IMC solver:
 - **Distance**: cm
 - **Time**: ns
 - **Temperature**: keV
@@ -243,8 +260,7 @@ The implementation follows the multigroup IMC formulation in:
 Run the example test:
 
 ```bash
-cd MG_IMC
-python test_2group_marshak.py
+python -m MG_IMC.fleck_cummings.tests.test_2group_marshak
 ```
 
 This will run a 2-group Marshak wave problem and generate diagnostic plots.

@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
+
 """
 Spherical S_N verification and demonstration examples.
 
@@ -38,14 +45,14 @@ _project_root = os.path.dirname(_sn_dir)        # RadTranBook/
 sys.path.insert(0, _sn_dir)
 sys.path.insert(0, _project_root)
 
-from sn_solver_ld_sphere import (
+from DiscreteOrdinates.src.sn_solver_ld_sphere import (
     single_sweep_phi_sph_ld,
     single_sweep_psi_sph_ld,
     temp_solve_sph_ld,
     _compute_sph_quad_data,
     _compute_geometric_moments,
 )
-from sn_solver import _get_quadrature, a as A_RAD, c as C_LIGHT, ac as AC
+from DiscreteOrdinates.src.sn_solver import _get_quadrature, a as A_RAD, c as C_LIGHT, ac as AC
 
 # ---------------------------------------------------------------------------
 # Figure style helpers

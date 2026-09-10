@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
+
 """
 Zeldovich Wave Problem - Spherical LD-S_N Transport
 
@@ -33,8 +40,8 @@ from numba import njit
 
 # ── solver import ─────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from sn_solver_ld_sphere import temp_solve_sph_ld
-from sn_solver import a as A_RAD, c as C_LIGHT, ac as AC
+from DiscreteOrdinates.src.sn_solver_ld_sphere import temp_solve_sph_ld
+from DiscreteOrdinates.src.sn_solver import a as A_RAD, c as C_LIGHT, ac as AC
 
 # ── project-root utilities ────────────────────────────────────────────────────
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(
@@ -276,8 +283,8 @@ def plot_results(results, savefile=''):
 
     ax.set_xlabel('Radius $r$ (cm)', fontsize=14)
     ax.set_ylabel('Temperature $T$ (keV)', fontsize=14)
-    ax.set_title('Zeldovich Wave — Spherical LD-S$_N$ vs Self-Similar',
-                 fontsize=13)
+    #ax.set_title('Zeldovich Wave — Spherical LD-S$_N$ vs Self-Similar',
+    #             fontsize=13)
     ax.set_xlim(0.0, R_MAX)
     ax.set_ylim(bottom=0.0)
     ax.grid(True, alpha=0.3)

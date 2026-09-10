@@ -1,0 +1,1 @@
+"""One-dimensional multigroup regression tests."""

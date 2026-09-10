@@ -102,7 +102,7 @@ Both geometries from IMC2D.py supported:
 ## API Example
 
 ```python
-from MG_IMC2D import run_simulation
+from MG_IMC.fleck_cummings.src.MG_IMC2D import run_simulation
 from mg_utils import (
     create_log_energy_groups, 
     powerlaw_opacity_functions,
