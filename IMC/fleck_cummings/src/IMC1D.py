@@ -1056,9 +1056,12 @@ def step(state, Ntarget, Nboundary, Nsource, NMax, T_boundary, dt, mesh,
         weights = weights[keep]; mus = mus[keep]; times = times[keep]
         positions = positions[keep]; cell_indices = cell_indices[keep]
 
-    # --- Particle combing ---
-    weights, cell_indices, mus, times, positions, comb_discrepancy = comb(
-        weights, cell_indices, mus, times, positions, NMax, I)
+    # --- Particle combing (NMax == 0 disables combing, as in the MG solvers) ---
+    if NMax > 0:
+        weights, cell_indices, mus, times, positions, comb_discrepancy = comb(
+            weights, cell_indices, mus, times, positions, NMax, I)
+    else:
+        comb_discrepancy = np.zeros(I)
 
     if conserve_comb_energy:
         internal_energy = internal_energy + comb_discrepancy / volumes
