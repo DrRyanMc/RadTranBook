@@ -14,7 +14,11 @@ import math
 import numpy as np
 
 try:
-    from .MG_IMC1D import _compute_Bg_1d, _sample_planck_spectrum_mg
+    from .MG_IMC1D import (
+        _compute_Bg_1d,
+        _sample_planck_spectrum_mg,
+        _seed_numba_random,
+    )
     from .material_motion import (
         C_LIGHT,
         fluid_group_from_lab_photon,
@@ -26,7 +30,7 @@ try:
         validate_material_velocity,
     )
 except ImportError:
-    from MG_IMC1D import _compute_Bg_1d, _sample_planck_spectrum_mg
+    from MG_IMC1D import _compute_Bg_1d, _sample_planck_spectrum_mg, _seed_numba_random
     from material_motion import (
         C_LIGHT,
         fluid_group_from_lab_photon,
@@ -40,6 +44,20 @@ except ImportError:
 
 
 A_RAD = 0.01372  # GJ / cm^3 / keV^4
+
+
+def seed_moving_imc_random(seed):
+    """Seed every random stream used by the moving-material solver."""
+    if (
+        isinstance(seed, (bool, np.bool_))
+        or not isinstance(seed, (int, np.integer))
+        or seed < 0
+        or seed >= 2**32
+    ):
+        raise ValueError("seed must be an integer in [0, 2**32)")
+    integer_seed = int(seed)
+    np.random.seed(integer_seed)
+    _seed_numba_random(integer_seed)
 
 
 @dataclass

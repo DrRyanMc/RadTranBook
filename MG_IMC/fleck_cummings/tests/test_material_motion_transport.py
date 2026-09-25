@@ -8,6 +8,7 @@ from MG_IMC.fleck_cummings.src.MG_IMC1DMoving import (
     A_RAD,
     C_LIGHT,
     create_state_from_particles,
+    seed_moving_imc_random,
     step,
     transport_particles,
 )
@@ -122,7 +123,7 @@ def test_crossing_velocity_discontinuity_recomputes_fluid_group():
 
 
 def test_effective_scattering_preserves_energy_and_tallies_momentum_change():
-    np.random.seed(42)
+    seed_moving_imc_random(42)
     mesh = np.array([[-100.0, 100.0]])
     energy_edges = np.array([0.0, 100.0])
     initial_direction = np.array([1.0, 0.0, 0.0])
@@ -187,7 +188,7 @@ def test_vacuum_escape_records_boundary_energy_and_momentum():
 
 
 def test_closed_step_combines_source_transport_and_closes_energy_momentum():
-    np.random.seed(9)
+    seed_moving_imc_random(9)
     mesh = np.array([[0.0, 1.0]])
     energy_edges = np.array([0.0, 100.0])
     beta = np.array([0.0, 0.6, 0.0])

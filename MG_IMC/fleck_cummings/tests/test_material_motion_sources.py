@@ -12,6 +12,7 @@ from MG_IMC.fleck_cummings.src.MG_IMC1DMoving import (
     init_simulation,
     sample_moving_equilibrium_particles,
     sample_moving_volume_source,
+    seed_moving_imc_random,
 )
 
 
@@ -26,7 +27,7 @@ def _six_sigma_momentum_bound(total_energy, particle_count):
 
 @pytest.mark.parametrize("seed", [1201, 1204, 1207])
 def test_stationary_volume_source_energy_groups_and_isotropy(seed):
-    np.random.seed(seed)
+    seed_moving_imc_random(seed)
     mesh = np.array([[0.0, 1.0]])
     energy_edges = np.array([0.0, 1.0, 3.0, 10.0])
     temperature = np.array([1.0])
@@ -76,7 +77,7 @@ def test_stationary_volume_source_energy_groups_and_isotropy(seed):
 
 @pytest.mark.parametrize("seed", [1203, 1206, 1209, 1212])
 def test_moving_volume_source_recovers_lorentz_energy_and_momentum(seed):
-    np.random.seed(seed)
+    seed_moving_imc_random(seed)
     target = 60_000
     dt = 0.2
     beta = np.array([0.2, -0.3, 0.45])
@@ -105,7 +106,7 @@ def test_moving_volume_source_recovers_lorentz_energy_and_momentum(seed):
 
 @pytest.mark.parametrize("seed", [1202, 1205, 1208, 1211])
 def test_moving_equilibrium_recovers_analytic_moments_and_temperature(seed):
-    np.random.seed(seed)
+    seed_moving_imc_random(seed)
     target = 60_000
     radiation_temperature = 1.3
     beta = np.array([0.2, -0.3, 0.45])
@@ -133,7 +134,7 @@ def test_moving_equilibrium_recovers_analytic_moments_and_temperature(seed):
         <= _six_sigma_momentum_bound(expected_lab_energy, target)
     )
 
-    np.random.seed(seed)
+    seed_moving_imc_random(seed)
     state = init_simulation(
         target,
         np.array([1.0]),

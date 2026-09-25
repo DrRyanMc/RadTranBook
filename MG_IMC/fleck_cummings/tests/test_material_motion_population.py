@@ -9,6 +9,7 @@ from MG_IMC.fleck_cummings.src.MG_IMC1DMoving import (
     C_LIGHT,
     create_state_from_particles,
     population_control,
+    seed_moving_imc_random,
     step,
 )
 
@@ -60,7 +61,7 @@ def _particle_records(state):
 
 
 def test_population_control_preserves_cell_energy_and_complete_particle_records():
-    np.random.seed(5101)
+    seed_moving_imc_random(5101)
     state = _population_state()
     records_before = _particle_records(state)
     energy_by_cell_before = state.radiation_energy_lab.copy()
@@ -119,7 +120,7 @@ def test_population_target_must_represent_every_energetic_cell():
 
 
 def test_step_population_control_reports_physics_and_sampling_residuals_separately():
-    np.random.seed(5102)
+    seed_moving_imc_random(5102)
     mesh = np.array([[0.0, 1.0]])
     energy_edges = np.array([0.0, 100.0])
     initial_count = 200

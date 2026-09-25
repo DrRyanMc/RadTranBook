@@ -163,6 +163,12 @@ class SimulationState1DMG:
 # ===========================================================================
 
 @jit(nopython=True, cache=True)
+def _seed_numba_random(seed):
+    """Seed Numba's thread-local NumPy random state."""
+    np.random.seed(seed)
+
+
+@jit(nopython=True, cache=True)
 def _sample_planck_spectrum_mg_jit(n, T, energy_edges_low, energy_edges_high, cdf):
     """Numba-compiled Planck sampler (mixture of Gamma(4, n_s) distributions).
 

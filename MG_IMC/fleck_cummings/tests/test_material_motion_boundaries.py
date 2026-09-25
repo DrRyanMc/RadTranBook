@@ -15,6 +15,7 @@ from MG_IMC.fleck_cummings.src.MG_IMC1DMoving import (
     create_state_from_particles,
     moving_face_flux_factor,
     sample_moving_face_source,
+    seed_moving_imc_random,
     step,
 )
 
@@ -59,7 +60,7 @@ def _face_direction_moments(beta_tangent, beta_normal):
 
 @pytest.mark.parametrize("seed", [4101, 4102, 4103])
 def test_stationary_face_recovers_cosine_law_and_blackbody_flux(seed):
-    np.random.seed(seed)
+    seed_moving_imc_random(seed)
     target = 30_000
     dt = 0.1
     particles = sample_moving_face_source(
@@ -109,7 +110,7 @@ def test_face_table_normalizes_published_density(beta_tangent, beta_normal):
 
 
 def test_moving_face_angular_moments_match_independent_quadrature():
-    np.random.seed(4110)
+    seed_moving_imc_random(4110)
     target = 60_000
     beta_normal = 0.4
     beta_tangent = 0.3
@@ -139,7 +140,7 @@ def test_moving_face_angular_moments_match_independent_quadrature():
 
 
 def test_right_face_uses_inward_normal_and_adjacent_cell_velocity():
-    np.random.seed(4111)
+    seed_moving_imc_random(4111)
     beta = np.array([0.2, 0.3, 0.0])
     particles = sample_moving_face_source(
         20_000,
@@ -163,7 +164,7 @@ def test_right_face_uses_inward_normal_and_adjacent_cell_velocity():
 
 
 def test_step_accounts_for_face_energy_and_momentum_injection():
-    np.random.seed(4112)
+    seed_moving_imc_random(4112)
     mesh = np.array([[0.0, 1.0]])
     energy_edges = np.array([0.0, 100.0])
     state = create_state_from_particles(
