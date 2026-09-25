@@ -122,6 +122,19 @@ class FaceAngularTable:
     normalization_integral: float
 
 
+@dataclass
+class PopulationControlResult:
+    """Energy-conserving census resampling diagnostics."""
+
+    particle_count_before: int
+    particle_count_after: int
+    energy_before: float
+    energy_after: float
+    energy_change: float
+    momentum_change_lab: np.ndarray
+    momentum_change_lab_by_cell: np.ndarray
+
+
 def _validate_mesh(mesh):
     mesh_array = np.asarray(mesh, dtype=np.float64)
     if mesh_array.ndim != 2 or mesh_array.shape[1] != 2:
@@ -755,6 +768,139 @@ def _refresh_state_radiation(state, mesh_array):
     ) ** 0.25
 
 
+def _population_counts_by_cell(target, energy_by_cell):
+    active_cells = np.flatnonzero(energy_by_cell > 0.0)
+    if len(active_cells) == 0:
+        return np.zeros(len(energy_by_cell), dtype=np.int64)
+    if target < len(active_cells):
+        raise ValueError(
+            "population target must be at least the number of energetic cells"
+        )
+    counts = np.zeros(len(energy_by_cell), dtype=np.int64)
+    counts[active_cells] = 1
+    remaining = target - len(active_cells)
+    if remaining == 0:
+        return counts
+    active_energy = energy_by_cell[active_cells]
+    shares = remaining * active_energy / np.sum(active_energy)
+    additions = np.floor(shares).astype(np.int64)
+    counts[active_cells] += additions
+    leftover = remaining - int(np.sum(additions))
+    if leftover:
+        order = np.argsort(-(shares - additions), kind="stable")
+        counts[active_cells[order[:leftover]]] += 1
+    return counts
+
+
+def population_control(state, target, mesh, energy_edges):
+    """Systematically resample complete particle records within each cell.
+
+    Cell radiation energy is retained exactly.  Momentum is not forced; its
+    stochastic change is returned explicitly for conservation diagnostics.
+    """
+    if (
+        isinstance(target, (bool, np.bool_))
+        or not isinstance(target, (int, np.integer))
+        or target <= 0
+    ):
+        raise ValueError("population target must be a positive integer")
+    mesh_array = _validate_mesh(mesh)
+    edges = _validate_energy_edges(energy_edges)
+    n_cells = len(mesh_array)
+    count_before = len(state.weights)
+    energy_before = float(np.sum(state.weights))
+    momentum_before_by_cell = state.radiation_momentum_lab.copy()
+    momentum_before = np.sum(momentum_before_by_cell, axis=0)
+
+    positive = state.weights > 0.0
+    positive_count = int(np.count_nonzero(positive))
+    if positive_count <= target:
+        if positive_count != count_before:
+            state.weights = np.ascontiguousarray(state.weights[positive])
+            state.dir_x = np.ascontiguousarray(state.dir_x[positive])
+            state.dir_y = np.ascontiguousarray(state.dir_y[positive])
+            state.dir_z = np.ascontiguousarray(state.dir_z[positive])
+            state.photon_energies_lab = np.ascontiguousarray(
+                state.photon_energies_lab[positive]
+            )
+            state.positions = np.ascontiguousarray(state.positions[positive])
+            state.times = np.ascontiguousarray(state.times[positive])
+            state.cell_indices = np.ascontiguousarray(state.cell_indices[positive])
+            state.lab_groups = np.ascontiguousarray(
+                lab_groups_from_energies(state.photon_energies_lab, edges)
+            )
+            _refresh_state_radiation(state, mesh_array)
+        momentum_after_by_cell = state.radiation_momentum_lab.copy()
+        momentum_change_by_cell = momentum_after_by_cell - momentum_before_by_cell
+        return PopulationControlResult(
+            particle_count_before=count_before,
+            particle_count_after=positive_count,
+            energy_before=energy_before,
+            energy_after=float(np.sum(state.weights)),
+            energy_change=float(np.sum(state.weights)) - energy_before,
+            momentum_change_lab=np.sum(momentum_change_by_cell, axis=0),
+            momentum_change_lab_by_cell=momentum_change_by_cell,
+        )
+
+    cell_energy = np.bincount(
+        state.cell_indices[positive],
+        weights=state.weights[positive],
+        minlength=n_cells,
+    ).astype(np.float64)
+    counts = _population_counts_by_cell(target, cell_energy)
+    selected_parts = []
+    new_weights = []
+    for cell, new_count in enumerate(counts):
+        if new_count <= 0:
+            continue
+        candidates = np.flatnonzero(positive & (state.cell_indices == cell))
+        candidate_weights = state.weights[candidates]
+        cumulative = np.cumsum(candidate_weights)
+        cumulative /= cumulative[-1]
+        points = (np.random.random() + np.arange(new_count)) / new_count
+        selected = candidates[np.searchsorted(cumulative, points, side="right")]
+        weights = np.full(new_count, cell_energy[cell] / new_count)
+        weights[-1] += cell_energy[cell] - float(np.cumsum(weights)[-1])
+        selected_parts.append(selected)
+        new_weights.append(weights)
+
+    if selected_parts:
+        selected = np.concatenate(selected_parts)
+        weights = np.concatenate(new_weights)
+    else:
+        selected = np.empty(0, dtype=np.int64)
+        weights = np.empty(0, dtype=np.float64)
+    state.weights = np.ascontiguousarray(weights)
+    state.dir_x = np.ascontiguousarray(state.dir_x[selected])
+    state.dir_y = np.ascontiguousarray(state.dir_y[selected])
+    state.dir_z = np.ascontiguousarray(state.dir_z[selected])
+    state.photon_energies_lab = np.ascontiguousarray(
+        state.photon_energies_lab[selected]
+    )
+    state.positions = np.ascontiguousarray(state.positions[selected])
+    state.times = np.ascontiguousarray(state.times[selected])
+    state.cell_indices = np.ascontiguousarray(state.cell_indices[selected])
+    state.lab_groups = np.ascontiguousarray(
+        lab_groups_from_energies(state.photon_energies_lab, edges)
+    )
+    _refresh_state_radiation(state, mesh_array)
+
+    energy_after = float(np.sum(state.weights))
+    momentum_after_by_cell = state.radiation_momentum_lab.copy()
+    momentum_change_by_cell = momentum_after_by_cell - momentum_before_by_cell
+    return PopulationControlResult(
+        particle_count_before=count_before,
+        particle_count_after=len(state.weights),
+        energy_before=energy_before,
+        energy_after=energy_after,
+        energy_change=energy_after - energy_before,
+        momentum_change_lab=(
+            np.sum(momentum_after_by_cell, axis=0) - momentum_before
+        ),
+        momentum_change_lab_by_cell=momentum_change_by_cell,
+    )
+
+
 def transport_particles(
     state,
     dt,
@@ -1009,6 +1155,7 @@ def step(
     boundary_temperature=(0.0, 0.0),
     face_mu_points=1025,
     face_phi_points=2049,
+    population_target=0,
 ):
     """Advance the moving-material solver by one source/transport step.
 
@@ -1025,6 +1172,12 @@ def step(
         raise ValueError("dt must be finite and positive")
     if not np.isfinite(theta) or theta < 0.0 or theta > 1.0:
         raise ValueError("theta must be finite and lie in [0, 1]")
+    if (
+        isinstance(population_target, (bool, np.bool_))
+        or not isinstance(population_target, (int, np.integer))
+        or population_target < 0
+    ):
+        raise ValueError("population_target must be a nonnegative integer")
     if material_velocity is not None:
         state.material_velocity = validate_material_velocity(
             material_velocity, n_cells=n_cells, c=C_LIGHT
@@ -1134,6 +1287,20 @@ def step(
         raise ValueError("inv_eos(internal_energy) must return one value per cell")
     if not np.all(np.isfinite(state.temperature)) or np.any(state.temperature < 0.0):
         raise ValueError("inv_eos(internal_energy) returned an invalid temperature")
+
+    population_result = PopulationControlResult(
+        particle_count_before=len(state.weights),
+        particle_count_after=len(state.weights),
+        energy_before=float(np.sum(state.weights)),
+        energy_after=float(np.sum(state.weights)),
+        energy_change=0.0,
+        momentum_change_lab=np.zeros(3),
+        momentum_change_lab_by_cell=np.zeros((n_cells, 3)),
+    )
+    if population_target > 0:
+        population_result = population_control(
+            state, population_target, mesh_array, edges
+        )
     state.time += dt
     state.count += 1
 
@@ -1141,20 +1308,28 @@ def step(
     total_radiation_energy = float(np.sum(state.weights))
     total_energy = total_internal_energy + total_radiation_energy
     boundary_energy_loss = float(np.sum(transport.boundary_energy_loss_lab))
-    energy_residual = (
+    energy_residual_including_population_control = (
         total_energy
         - old_total_energy
         - np.sum(boundary_energy_injection)
         + boundary_energy_loss
     )
+    energy_residual = (
+        energy_residual_including_population_control
+        - population_result.energy_change
+    )
     radiation_momentum = np.sum(state.radiation_momentum_lab, axis=0)
-    momentum_residual = (
+    momentum_residual_including_population_control = (
         radiation_momentum
         - old_radiation_momentum
         + np.sum(material_momentum_exchange, axis=0)
         + np.sum(transport.boundary_momentum_loss_lab, axis=0)
         + np.sum(transport.wall_momentum_exchange_lab, axis=0)
         - np.sum(boundary_momentum_injection, axis=0)
+    )
+    momentum_residual = (
+        momentum_residual_including_population_control
+        - population_result.momentum_change_lab
     )
     state.previous_total_energy = total_energy
 
@@ -1180,11 +1355,35 @@ def step(
             transport.track_length_energy_lab_by_fluid_group
         ),
         "event_counts": transport.event_counts,
+        "event_count_labels": (
+            "segments",
+            "boundary_crossings",
+            "effective_scatters",
+            "census_events",
+            "reflections",
+        ),
+        "population_control": population_result,
         "total_internal_energy": total_internal_energy,
         "total_radiation_energy": total_radiation_energy,
         "total_energy": total_energy,
         "energy_residual": energy_residual,
+        "energy_residual_including_population_control": (
+            energy_residual_including_population_control
+        ),
         "momentum_residual_lab": momentum_residual,
+        "momentum_residual_lab_including_population_control": (
+            momentum_residual_including_population_control
+        ),
+        "radiation_energy_lab_by_cell": state.radiation_energy_lab.copy(),
+        "radiation_momentum_lab_by_cell": state.radiation_momentum_lab.copy(),
+        "radiation_energy_fluid_by_cell": state.radiation_energy_fluid.copy(),
+        "radiation_momentum_fluid_by_cell": state.radiation_momentum_fluid.copy(),
+        "radiation_energy_lab_global": float(np.sum(state.radiation_energy_lab)),
+        "radiation_momentum_lab_global": radiation_momentum.copy(),
+        "radiation_energy_fluid_sum": float(np.sum(state.radiation_energy_fluid)),
+        "radiation_momentum_fluid_sum": np.sum(
+            state.radiation_momentum_fluid, axis=0
+        ),
     }
     return state, info
 
