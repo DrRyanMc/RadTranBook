@@ -1174,6 +1174,7 @@ def step(
     face_mu_points=1025,
     face_phi_points=2049,
     population_target=0,
+    include_gamma_in_fleck=True,
 ):
     """Advance the moving-material solver by one source/transport step.
 
@@ -1190,6 +1191,8 @@ def step(
         raise ValueError("dt must be finite and positive")
     if not np.isfinite(theta) or theta < 0.0 or theta > 1.0:
         raise ValueError("theta must be finite and lie in [0, 1]")
+    if not isinstance(include_gamma_in_fleck, (bool, np.bool_)):
+        raise ValueError("include_gamma_in_fleck must be boolean")
     if (
         isinstance(population_target, (bool, np.bool_))
         or not isinstance(population_target, (int, np.integer))
@@ -1220,6 +1223,7 @@ def step(
         _validate_sampling_controls(boundary_count, 0.0)
 
     old_radiation_momentum = np.sum(state.radiation_momentum_lab, axis=0).copy()
+    old_radiation_energy = float(np.sum(state.radiation_energy_lab))
     old_total_energy = float(state.previous_total_energy)
     opacity = _evaluate_group_opacities(
         sigma_a_funcs, state.temperature, n_groups
@@ -1239,8 +1243,9 @@ def step(
     b_fraction = b_group / np.maximum(np.sum(b_group, axis=0)[None, :], 1.0e-300)
     planck_opacity = np.sum(opacity * b_fraction, axis=0)
     fleck_beta = 4.0 * A_RAD * state.temperature**3 / heat_capacity
+    fleck_gamma = gamma if include_gamma_in_fleck else np.ones_like(gamma)
     fleck = 1.0 / (
-        1.0 + theta * fleck_beta * gamma * C_LIGHT * planck_opacity * dt
+        1.0 + theta * fleck_beta * fleck_gamma * C_LIGHT * planck_opacity * dt
     )
 
     boundary_energy_injection = np.zeros(2, dtype=np.float64)
@@ -1336,6 +1341,17 @@ def step(
         energy_residual_including_population_control
         - population_result.energy_change
     )
+    exchange_energy_residual_including_population_control = (
+        total_radiation_energy
+        - old_radiation_energy
+        + np.sum(material_energy_exchange)
+        - np.sum(boundary_energy_injection)
+        + boundary_energy_loss
+    )
+    exchange_energy_residual = (
+        exchange_energy_residual_including_population_control
+        - population_result.energy_change
+    )
     radiation_momentum = np.sum(state.radiation_momentum_lab, axis=0)
     momentum_residual_including_population_control = (
         radiation_momentum
@@ -1357,6 +1373,7 @@ def step(
         "radiation_temperature": state.radiation_temperature.copy(),
         "N_particles": len(state.weights),
         "fleck_factors": fleck,
+        "include_gamma_in_fleck": bool(include_gamma_in_fleck),
         "planck_opacity": planck_opacity,
         "material_energy_exchange_lab": material_energy_exchange,
         "material_momentum_exchange_lab": material_momentum_exchange,
@@ -1385,8 +1402,12 @@ def step(
         "total_radiation_energy": total_radiation_energy,
         "total_energy": total_energy,
         "energy_residual": energy_residual,
+        "exchange_energy_residual": exchange_energy_residual,
         "energy_residual_including_population_control": (
             energy_residual_including_population_control
+        ),
+        "exchange_energy_residual_including_population_control": (
+            exchange_energy_residual_including_population_control
         ),
         "momentum_residual_lab": momentum_residual,
         "momentum_residual_lab_including_population_control": (

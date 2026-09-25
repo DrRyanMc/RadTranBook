@@ -231,7 +231,46 @@ def test_closed_step_combines_source_transport_and_closes_energy_momentum():
         + info["transport_momentum_exchange_lab"],
     )
     assert abs(info["energy_residual"]) < 5.0e-13
+    assert abs(info["exchange_energy_residual"]) < 5.0e-13
     assert np.linalg.norm(info["momentum_residual_lab"], ord=np.inf) < 5.0e-15
     assert np.all(info["boundary_energy_loss_lab"] == 0.0)
     assert state.time == dt
     assert state.count == 1
+
+
+def test_original_fleck_factor_can_be_selected_for_validation():
+    mesh = np.array([[0.0, 1.0]])
+    energy_edges = np.array([0.0, 100.0])
+    beta = 0.9
+    dt = 0.01
+
+    def run(include_gamma):
+        state = _state(
+            mesh=mesh,
+            energy_edges=energy_edges,
+            directions=np.empty((0, 3)),
+            photon_energies=np.empty(0),
+            positions=np.empty(0),
+            cells=np.empty(0, dtype=np.int64),
+            material_velocity=np.array([[0.0, 0.0, beta * C_LIGHT]]),
+        )
+        return step(
+            state,
+            target=0,
+            dt=dt,
+            mesh=mesh,
+            energy_edges=energy_edges,
+            sigma_a_funcs=[lambda temperature: np.full_like(temperature, 2.0)],
+            inv_eos=lambda internal_energy: internal_energy / 100.0,
+            cv=lambda temperature: np.full_like(temperature, 100.0),
+            include_gamma_in_fleck=include_gamma,
+        )[1]
+
+    corrected = run(True)
+    original = run(False)
+    gamma = 1.0 / np.sqrt(1.0 - beta**2)
+    coefficient = 4.0 * A_RAD * C_LIGHT * 2.0 * dt / 100.0
+    assert np.isclose(corrected["fleck_factors"][0], 1.0 / (1.0 + gamma * coefficient))
+    assert np.isclose(original["fleck_factors"][0], 1.0 / (1.0 + coefficient))
+    assert corrected["include_gamma_in_fleck"] is True
+    assert original["include_gamma_in_fleck"] is False
