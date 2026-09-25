@@ -88,7 +88,31 @@ def equilibrium_config_from_args(args):
     return config
 
 
-def run_equilibrium(config, output_path=None):
+def _atomic_savez(output_path, result):
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.tmp.npz")
+    np.savez_compressed(temporary, **result)
+    temporary.replace(output)
+
+
+def _validate_equilibrium_resume(saved, config):
+    expected = {
+        "problem": "moving_equilibrium",
+        "n_cells": config.n_cells,
+        "particles_per_step": config.particles,
+        "steps": config.steps,
+    }
+    for key, value in expected.items():
+        if key not in saved or saved[key].item() != value:
+            raise ValueError(f"resume artifact {key} does not match requested configuration")
+    if not np.array_equal(saved["velocities_beta"], config.velocities):
+        raise ValueError("resume artifact velocities do not match requested configuration")
+    if not np.array_equal(saved["seeds"], config.seeds):
+        raise ValueError("resume artifact seeds do not match requested configuration")
+
+
+def run_equilibrium(config, output_path=None, resume=False):
     """Run the normalized moving-equilibrium sweep and return result arrays."""
     mesh_edges = np.linspace(0.0, 10.0, config.n_cells + 1)
     mesh = np.column_stack((mesh_edges[:-1], mesh_edges[1:]))
@@ -110,14 +134,71 @@ def run_equilibrium(config, output_path=None):
         return np.full_like(value, volumetric_cv)
 
     shape = (len(config.seeds), len(config.velocities))
-    census = np.empty(shape)
-    path_length = np.empty(shape)
-    fluid_temperature = np.empty(shape)
-    maximum_energy_residual = np.empty(shape)
-    runtime_seconds = np.empty(shape)
+    cell_shape = shape + (config.n_cells,)
+    census = np.full(shape, np.nan)
+    path_length = np.full(shape, np.nan)
+    fluid_temperature = np.full(shape, np.nan)
+    census_by_cell = np.full(cell_shape, np.nan)
+    path_length_by_cell = np.full(cell_shape, np.nan)
+    fluid_temperature_by_cell = np.full(cell_shape, np.nan)
+    maximum_energy_residual = np.full(shape, np.nan)
+    runtime_seconds = np.full(shape, np.nan)
+    completed_cases = np.zeros(shape, dtype=bool)
+
+    velocities = np.asarray(config.velocities)
+    gamma = 1.0 / np.sqrt(1.0 - velocities**2)
+    analytic = gamma**2 * (1.0 + velocities**2 / 3.0)
+
+    def assemble_result():
+        return {
+            "problem": np.array("moving_equilibrium"),
+            "preset": np.array(config.preset),
+            "n_cells": np.int64(config.n_cells),
+            "particles_per_step": np.int64(config.particles),
+            "steps": np.int64(config.steps),
+            "seeds": np.asarray(config.seeds, dtype=np.int64),
+            "velocities_beta": velocities,
+            "dt_code": np.float64(dt),
+            "middle_cell": np.int64(middle),
+            "analytic_lab_energy_density_normalized": analytic,
+            "census_lab_energy_density_normalized": census,
+            "path_lab_energy_density_normalized": path_length,
+            "fluid_radiation_temperature": fluid_temperature,
+            "census_lab_energy_density_normalized_by_cell": census_by_cell,
+            "path_lab_energy_density_normalized_by_cell": path_length_by_cell,
+            "fluid_radiation_temperature_by_cell": fluid_temperature_by_cell,
+            "maximum_absolute_exchange_energy_residual": maximum_energy_residual,
+            "runtime_seconds": runtime_seconds,
+            "completed_cases": completed_cases,
+        }
+
+    output = Path(output_path) if output_path is not None else None
+    if resume:
+        if output is None:
+            raise ValueError("resume requires an output path")
+        if output.exists():
+            with np.load(output) as saved_file:
+                saved = {key: saved_file[key] for key in saved_file.files}
+            _validate_equilibrium_resume(saved, config)
+            for key, array in (
+                ("census_lab_energy_density_normalized", census),
+                ("path_lab_energy_density_normalized", path_length),
+                ("fluid_radiation_temperature", fluid_temperature),
+                ("census_lab_energy_density_normalized_by_cell", census_by_cell),
+                ("path_lab_energy_density_normalized_by_cell", path_length_by_cell),
+                ("fluid_radiation_temperature_by_cell", fluid_temperature_by_cell),
+                ("maximum_absolute_exchange_energy_residual", maximum_energy_residual),
+                ("runtime_seconds", runtime_seconds),
+            ):
+                array[...] = saved[key]
+            completed_cases[...] = saved["completed_cases"]
 
     for seed_index, seed in enumerate(config.seeds):
         for velocity_index, beta in enumerate(config.velocities):
+            if completed_cases[seed_index, velocity_index]:
+                print(f"skipping completed equilibrium case seed={seed}, beta={beta:g}", flush=True)
+                continue
+            print(f"running equilibrium case seed={seed}, beta={beta:g}", flush=True)
             seed_moving_imc_random(seed)
             velocity = np.zeros((config.n_cells, 3))
             velocity[:, 0] = beta * C_LIGHT
@@ -148,43 +229,100 @@ def run_equilibrium(config, output_path=None):
                 residuals.append(abs(info["exchange_energy_residual"]))
             runtime_seconds[seed_index, velocity_index] = time.perf_counter() - started
 
-            census[seed_index, velocity_index] = (
-                state.radiation_energy_lab[middle] / widths[middle] / A_RAD
+            census_cells = state.radiation_energy_lab / widths / A_RAD
+            path_length_cells = (
+                np.sum(info["track_length_energy_lab_by_fluid_group"], axis=0)
+                / (C_LIGHT * dt * widths * A_RAD)
             )
-            path_length[seed_index, velocity_index] = (
-                np.sum(info["track_length_energy_lab_by_fluid_group"][:, middle])
-                / (C_LIGHT * dt * widths[middle] * A_RAD)
+            census_by_cell[seed_index, velocity_index] = census_cells
+            path_length_by_cell[seed_index, velocity_index] = path_length_cells
+            fluid_temperature_by_cell[seed_index, velocity_index] = (
+                state.radiation_temperature
             )
-            fluid_temperature[seed_index, velocity_index] = (
-                state.radiation_temperature[middle]
-            )
+            census[seed_index, velocity_index] = census_cells[middle]
+            path_length[seed_index, velocity_index] = path_length_cells[middle]
+            fluid_temperature[seed_index, velocity_index] = state.radiation_temperature[middle]
             maximum_energy_residual[seed_index, velocity_index] = max(residuals)
+            completed_cases[seed_index, velocity_index] = True
+            if output is not None:
+                _atomic_savez(output, assemble_result())
 
-    velocities = np.asarray(config.velocities)
-    gamma = 1.0 / np.sqrt(1.0 - velocities**2)
-    analytic = gamma**2 * (1.0 + velocities**2 / 3.0)
+    result = assemble_result()
+    if output is not None:
+        _atomic_savez(output, result)
+    return result
+
+
+def run_equilibrium_convergence(config, particle_counts, output_path=None):
+    """Run a particle-count sweep and collect cellwise convergence diagnostics."""
+    counts = np.asarray(tuple(particle_counts), dtype=np.int64)
+    if counts.ndim != 1 or counts.size < 2 or np.any(counts <= 0):
+        raise ValueError("particle_counts must contain at least two positive values")
+    if np.any(np.diff(counts) <= 0):
+        raise ValueError("particle_counts must be strictly increasing")
+
+    runs = []
+    for particles in counts:
+        print(f"running equilibrium convergence case with {particles:,} particles per step", flush=True)
+        runs.append(run_equilibrium(replace(config, particles=int(particles))))
+
+    stacked_keys = (
+        "census_lab_energy_density_normalized",
+        "path_lab_energy_density_normalized",
+        "fluid_radiation_temperature",
+        "census_lab_energy_density_normalized_by_cell",
+        "path_lab_energy_density_normalized_by_cell",
+        "fluid_radiation_temperature_by_cell",
+        "maximum_absolute_exchange_energy_residual",
+        "runtime_seconds",
+    )
     result = {
-        "problem": np.array("moving_equilibrium"),
-        "preset": np.array(config.preset),
-        "n_cells": np.int64(config.n_cells),
-        "particles_per_step": np.int64(config.particles),
-        "steps": np.int64(config.steps),
-        "seeds": np.asarray(config.seeds, dtype=np.int64),
-        "velocities_beta": velocities,
-        "dt_code": np.float64(dt),
-        "middle_cell": np.int64(middle),
-        "analytic_lab_energy_density_normalized": analytic,
-        "census_lab_energy_density_normalized": census,
-        "path_lab_energy_density_normalized": path_length,
-        "fluid_radiation_temperature": fluid_temperature,
-        "maximum_absolute_exchange_energy_residual": maximum_energy_residual,
-        "runtime_seconds": runtime_seconds,
+        key: value
+        for key, value in runs[0].items()
+        if key not in stacked_keys and key != "particles_per_step"
     }
+    result["problem"] = np.array("moving_equilibrium_convergence")
+    result["particle_counts"] = counts
+    for key in stacked_keys:
+        result[key] = np.stack([run[key] for run in runs])
+
     if output_path is not None:
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(output, **result)
     return result
+
+
+def equilibrium_convergence_metrics(result):
+    """Return central-cell error statistics and particle-count noise slopes."""
+    counts = result["particle_counts"]
+    analytic = result["analytic_lab_energy_density_normalized"]
+    n_cells = int(result["n_cells"])
+    central = slice(n_cells // 4, n_cells - n_cells // 4)
+    census = result["census_lab_energy_density_normalized_by_cell"][..., central]
+    path = result["path_lab_energy_density_normalized_by_cell"][..., central]
+    temperature = result["fluid_radiation_temperature_by_cell"][..., central]
+
+    census_relative = census / analytic[None, None, :, None] - 1.0
+    path_relative = path / analytic[None, None, :, None] - 1.0
+    census_rms = np.sqrt(np.mean(census_relative**2, axis=(1, 3)))
+    path_rms = np.sqrt(np.mean(path_relative**2, axis=(1, 3)))
+    temperature_rms = np.sqrt(np.mean((temperature - 1.0) ** 2, axis=(1, 3)))
+
+    census_noise = np.std(census_relative, axis=(1, 3), ddof=1)
+    slopes = np.array(
+        [
+            np.polyfit(np.log(counts), np.log(census_noise[:, velocity]), 1)[0]
+            for velocity in range(analytic.size)
+        ]
+    )
+    return {
+        "census_relative_rms_by_velocity": census_rms,
+        "path_relative_rms_by_velocity": path_rms,
+        "fluid_temperature_rms_by_velocity": temperature_rms,
+        "census_relative_noise_by_velocity": census_noise,
+        "census_noise_slope_by_velocity": slopes,
+    }
 
 
 def _print_equilibrium_summary(result, output_path):
@@ -209,6 +347,22 @@ def _print_equilibrium_summary(result, output_path):
     print(f"artifact: {output_path}")
 
 
+def _print_equilibrium_convergence_summary(result, output_path):
+    metrics = equilibrium_convergence_metrics(result)
+    print("particles   max census RMS   max path RMS   max fluid-T RMS")
+    for index, particles in enumerate(result["particle_counts"]):
+        print(
+            f"{particles:9d}   "
+            f"{np.max(metrics['census_relative_rms_by_velocity'][index]):14.6e}   "
+            f"{np.max(metrics['path_relative_rms_by_velocity'][index]):12.6e}   "
+            f"{np.max(metrics['fluid_temperature_rms_by_velocity'][index]):15.6e}"
+        )
+    slopes = metrics["census_noise_slope_by_velocity"]
+    print("census noise slopes by velocity: " + ", ".join(f"{value:.3f}" for value in slopes))
+    print(f"median census noise slope: {np.median(slopes):.3f}")
+    print(f"artifact: {output_path}")
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Run published moving-material IMC validation problems."
@@ -222,7 +376,17 @@ def parse_args(argv=None):
     equilibrium.add_argument(
         "--velocities", type=lambda text: _parse_csv_values(text, float)
     )
+    equilibrium.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume completed seed/velocity cases from the output artifact.",
+    )
     equilibrium.add_argument("--seeds", type=lambda text: _parse_csv_values(text, int))
+    equilibrium.add_argument(
+        "--particle-counts",
+        type=lambda text: _parse_csv_values(text, int),
+        help="Run a convergence sweep over increasing particle counts.",
+    )
     equilibrium.add_argument("--output", type=Path)
     return parser.parse_args(argv)
 
@@ -241,8 +405,21 @@ def main(argv=None):
                 / config.preset
                 / "results.npz"
             )
-        result = run_equilibrium(config, output)
-        _print_equilibrium_summary(result, output)
+        if args.particle_counts is None:
+            result = run_equilibrium(config, output, resume=args.resume)
+            _print_equilibrium_summary(result, output)
+        else:
+            if args.output is None:
+                output = (
+                    REPOSITORY_ROOT
+                    / "results"
+                    / "moving_material_published"
+                    / "equilibrium"
+                    / "convergence"
+                    / "results.npz"
+                )
+            result = run_equilibrium_convergence(config, args.particle_counts, output)
+            _print_equilibrium_convergence_summary(result, output)
         return 0
     raise ValueError(f"unsupported problem {args.problem}")
 
